@@ -1,5 +1,5 @@
 import { app } from 'electron'
-import { open } from 'node:fs/promises'
+import { mkdir, open } from 'node:fs/promises'
 import { basename, extname, join } from 'node:path'
 
 export function getDefaultDownloadsDir(): string {
@@ -56,4 +56,34 @@ export async function reserveDestinationPath(directory: string, fileName: string
   }
 
   throw new Error(`Could not find an unused file name for "${fileName}" in ${directory}`)
+}
+
+/**
+ * Claims <directory>/<name>, or <name> (1), (2), ... if taken, by creating it as a directory.
+ *
+ * The multi-file counterpart to `reserveDestinationPath`, and atomic for the same reason: a
+ * non-recursive `mkdir` fails with EEXIST when the name is already in use, so whoever's call
+ * succeeds owns the name. A multi-file torrent builds its tree in here.
+ *
+ * Unlike the file version the counter goes on the end rather than before an extension — a
+ * torrent's directory name can contain dots, and none of them is a suffix.
+ */
+export async function reserveDestinationDirectory(
+  directory: string,
+  name: string
+): Promise<string> {
+  const safeName = sanitizeFileName(name)
+
+  for (let counter = 0; counter < MAX_NAME_ATTEMPTS; counter += 1) {
+    const candidate =
+      counter === 0 ? join(directory, safeName) : join(directory, `${safeName} (${counter})`)
+    try {
+      await mkdir(candidate)
+      return candidate
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error
+    }
+  }
+
+  throw new Error(`Could not find an unused folder name for "${safeName}" in ${directory}`)
 }

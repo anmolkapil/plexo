@@ -23,6 +23,17 @@ type ProbeState =
 const PROBE_DEBOUNCE_MS = 600
 const PRESET_STREAMS = [1, 2, 4, 8] as const
 
+/** Peer counts, an order of magnitude above the HTTP stream presets. A BitTorrent peer serves
+ * only while it chooses to unchoke you and most of a tracker's list is stale, so throughput
+ * comes from holding many connections — a handful leaves a torrent crawling. */
+const PRESET_PEERS = [10, 25, 50, 100] as const
+
+/** Matched in the renderer purely to word the UI — the main process does its own parsing and
+ * is the one that decides what a link actually is. */
+function looksLikeMagnet(value: string): boolean {
+  return value.trim().toLowerCase().startsWith('magnet:')
+}
+
 const fieldLabelStyle: React.CSSProperties = {
   font: `500 10px/1 ${FONT_MONO}`,
   letterSpacing: '0.14em',
@@ -46,6 +57,9 @@ export function IdleScreen(): React.JSX.Element {
   const [probe, setProbe] = useState<ProbeState>({ status: 'idle' })
   const [deselectedInterfaceIds, setDeselectedInterfaceIds] = useState<string[]>([])
   const [chunksPerNetwork, setChunksPerNetwork] = useState(2)
+  // Tracked separately from the HTTP stream count so switching between a URL and a magnet
+  // can't carry an HTTP-sized figure (2) onto a torrent, where it means two peers.
+  const [peersPerNetwork, setPeersPerNetwork] = useState(50)
   const [starting, setStarting] = useState(false)
   const [startError, setStartError] = useState<string | null>(null)
   const [fileNameOverride, setFileNameOverride] = useState<string | null>(null)
@@ -132,14 +146,15 @@ export function IdleScreen(): React.JSX.Element {
     setStartError(null)
     try {
       await window.plexo.startDownload({
+        kind: probe.result.kind,
         url: probe.result.finalUrl,
         destinationDir,
         suggestedFileName: fileNameOverride?.trim() || probe.result.suggestedFileName,
         totalBytes: probe.result.totalBytes ?? 0,
         supportsRanges: probe.multiChunkAllowed,
         interfaceIds: selectedInterfaceIds,
-        chunkCount: probe.multiChunkAllowed ? selectedInterfaceIds.length * chunksPerNetwork : 1,
-        connectionsPerNetwork: probe.multiChunkAllowed ? chunksPerNetwork : 1,
+        chunkCount: probe.multiChunkAllowed ? selectedInterfaceIds.length * perNetwork : 1,
+        connectionsPerNetwork: probe.multiChunkAllowed ? perNetwork : 1,
         etag: probe.result.etag,
         lastModified: probe.result.lastModified
       })
@@ -155,8 +170,28 @@ export function IdleScreen(): React.JSX.Element {
     selectedInterfaceIds.length > 0 &&
     Boolean(destinationDir) &&
     !starting
+  // While probing there is no result to read a kind off yet, so the wording leans on the
+  // text in the box; once resolved, the main process's answer takes over.
+  const isMagnetInput = looksLikeMagnet(url)
+  const torrent = probe.status === 'ready' ? probe.result.torrent : undefined
+  const isTorrent = isMagnetInput || Boolean(torrent)
+  const streamsLabel = isTorrent ? 'PEERS / NETWORK' : 'PARALLEL STREAMS'
+  const presets: readonly number[] = isTorrent ? PRESET_PEERS : PRESET_STREAMS
+  const perNetwork = isTorrent ? peersPerNetwork : chunksPerNetwork
+  const setPerNetwork = isTorrent ? setPeersPerNetwork : setChunksPerNetwork
+
   const effectiveNetworkCount = Math.max(1, selectedInterfaceIds.length)
-  const totalChunks = isSingleRangeServer ? 1 : effectiveNetworkCount * chunksPerNetwork
+  const totalChunks = isSingleRangeServer ? 1 : effectiveNetworkCount * perNetwork
+
+  let peerOrStreamLabel: string
+  if (isTorrent) peerOrStreamLabel = totalChunks === 1 ? 'peer connection' : 'peer connections'
+  else peerOrStreamLabel = totalChunks === 1 ? 'stream' : 'parallel streams'
+
+  let startButtonLabel = 'Start'
+  if (starting) startButtonLabel = 'Starting…'
+  // Resolving a magnet means asking the swarm for its metadata, which takes noticeably
+  // longer than an HTTP probe — worth naming so the wait doesn't look like a hang.
+  else if (probe.status === 'probing') startButtonLabel = isMagnetInput ? 'Finding…' : 'Checking…'
 
   return (
     <div
@@ -185,7 +220,7 @@ export function IdleScreen(): React.JSX.Element {
               type="text"
               value={url}
               onChange={(event) => setUrl(event.target.value)}
-              placeholder="https://"
+              placeholder="https://… or magnet:?xt=urn:btih:…"
               style={{
                 flex: 1,
                 minWidth: 0,
@@ -226,7 +261,7 @@ export function IdleScreen(): React.JSX.Element {
               textAlign: 'center'
             }}
           >
-            {starting ? 'Starting…' : probe.status === 'probing' ? 'Checking…' : 'Start'}
+            {startButtonLabel}
           </button>
         </div>
 
@@ -242,6 +277,23 @@ export function IdleScreen(): React.JSX.Element {
           >
             <span style={{ flexShrink: 0 }}>⚠</span>
             {probe.message}
+          </div>
+        )}
+
+        {probe.status === 'probing' && isMagnetInput && (
+          <div style={{ font: `11.5px/1.4 ${FONT_UI}`, color: 'var(--text-tertiary)' }}>
+            Asking the swarm for this torrent&apos;s file list — a magnet link carries only an
+            infohash, so there is nothing to show until a peer answers.
+          </div>
+        )}
+
+        {torrent && (
+          <div style={{ font: `11.5px/1.4 ${FONT_UI}`, color: 'var(--text-tertiary)' }}>
+            Torrent · {torrent.pieceCount.toLocaleString()} pieces of{' '}
+            {formatBytes(torrent.pieceLengthBytes)} ·{' '}
+            {torrent.isSingleFile
+              ? '1 file'
+              : `${torrent.files.length.toLocaleString()} files in a folder`}
           </div>
         )}
 
@@ -347,16 +399,16 @@ export function IdleScreen(): React.JSX.Element {
           }}
         >
           <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
-            <div style={fieldLabelStyle}>PARALLEL STREAMS</div>
+            <div style={fieldLabelStyle}>{streamsLabel}</div>
             <div style={{ display: 'flex', gap: 4 }}>
-              {PRESET_STREAMS.map((preset) => {
-                const isSelected = chunksPerNetwork === preset
+              {presets.map((preset) => {
+                const isSelected = perNetwork === preset
                 return (
                   <button
                     key={preset}
                     type="button"
                     disabled={isSingleRangeServer}
-                    onClick={() => setChunksPerNetwork(preset)}
+                    onClick={() => setPerNetwork(preset)}
                     style={{
                       border: isSelected
                         ? '0.5px solid var(--color-accent)'
@@ -370,7 +422,7 @@ export function IdleScreen(): React.JSX.Element {
                       transition: 'all 0.15s ease'
                     }}
                   >
-                    {preset}×
+                    {isTorrent ? preset : `${preset}×`}
                   </button>
                 )
               })}
@@ -389,14 +441,14 @@ export function IdleScreen(): React.JSX.Element {
               '1 stream (server does not support ranges)'
             ) : selectedInterfaceIds.length > 0 ? (
               <>
-                <span style={{ color: 'var(--text)', fontWeight: 600 }}>{chunksPerNetwork}</span> /
+                <span style={{ color: 'var(--text)', fontWeight: 600 }}>{perNetwork}</span> /
                 network ·{' '}
-                <span style={{ color: 'var(--text)', fontWeight: 600 }}>{totalChunks}</span> total
-                parallel streams
+                <span style={{ color: 'var(--text)', fontWeight: 600 }}>{totalChunks}</span> total{' '}
+                {isTorrent ? 'peer connections' : 'parallel streams'}
               </>
             ) : (
               <>
-                <span style={{ color: 'var(--text)', fontWeight: 600 }}>{chunksPerNetwork}</span> /
+                <span style={{ color: 'var(--text)', fontWeight: 600 }}>{perNetwork}</span> /
                 network
               </>
             )}
@@ -474,9 +526,7 @@ export function IdleScreen(): React.JSX.Element {
         <div style={{ font: `11px/1.4 ${FONT_MONO}`, color: 'var(--text-tertiary)' }}>
           {selectedInterfaceIds.length} {selectedInterfaceIds.length === 1 ? 'network' : 'networks'}{' '}
           selected
-          {selectedInterfaceIds.length > 0
-            ? ` · ${totalChunks} ${totalChunks === 1 ? 'stream' : 'parallel streams'}`
-            : ''}
+          {selectedInterfaceIds.length > 0 ? ` · ${totalChunks} ${peerOrStreamLabel}` : ''}
           {probe.status === 'ready' && probe.result.totalBytes !== null
             ? ` · ${formatBytes(probe.result.totalBytes)}`
             : ''}
