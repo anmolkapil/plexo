@@ -302,15 +302,48 @@ export class TorrentSession {
     }
   }
 
-  /** Gives every idle slot a peer, as far as the queue allows. */
+  /**
+   * Gives idle slots peers, rotating between networks.
+   *
+   * Fairness here is the feature, not a nicety. A single pass over `slots` hands peers to
+   * whichever network's slots come first, and the peer queue is almost always shorter than
+   * the slot count — most of a tracker's list never answers, and a swarm rarely offers 50
+   * usable peers per network. So a greedy pass gives one network every peer and leaves the
+   * others with nothing to dial, which looks exactly like multi-network downloading not
+   * working. Rotating means each network gets a comparable share of whatever the swarm
+   * actually provided, however little that is.
+   */
   private fillSlots(): void {
     if (this.settled) return
 
+    const freeByInterface = new Map<string, TorrentSlot[]>()
     for (const slot of this.options.slots) {
       if (this.connections.has(slot.id)) continue
       // This slot's network has proved it has no route to the swarm; spending peers on it
       // only starves the slots that do.
       if (this.health.isRetired(slot.interfaceId)) continue
+
+      const free = freeByInterface.get(slot.interfaceId)
+      if (free) free.push(slot)
+      else freeByInterface.set(slot.interfaceId, [slot])
+    }
+
+    const perInterface = [...freeByInterface.values()]
+    if (perInterface.length === 0) return
+
+    let rotation = 0
+    while (this.peerQueue.length > 0) {
+      // Skip networks that have run out of free slots; stop once none are left.
+      let slot: TorrentSlot | undefined
+      for (let attempt = 0; attempt < perInterface.length; attempt += 1) {
+        const candidates = perInterface[(rotation + attempt) % perInterface.length]
+        if (candidates.length > 0) {
+          slot = candidates.pop()
+          rotation += attempt + 1
+          break
+        }
+      }
+      if (!slot) return
 
       const peer = this.peerQueue.shift()
       if (!peer) return

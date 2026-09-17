@@ -740,10 +740,22 @@ export class DownloadManager {
       }
     })
 
+    // The shared ceiling is divided between the networks up front rather than handed out
+    // first-come. Filling network by network would give the whole budget to whichever
+    // networks came first — with three networks at 50 each against a cap of 100, the third
+    // would get no slots at all and could never contribute a byte.
+    const slotsPerNetwork = Math.max(
+      1,
+      Math.min(peersPerNetwork, Math.floor(MAX_TORRENT_PEERS / interfaces.length))
+    )
+
     const chunks: ChunkState[] = []
     const activeInterfaces: NetworkInterfaceInfo[] = []
-    for (const iface of interfaces) {
-      for (let connection = 0; connection < peersPerNetwork; connection += 1) {
+    // Interleaved — one slot per network per pass, not all of one network then all of the
+    // next. `fillSlots` hands peers out in slot order, so this ordering is what makes the
+    // peer queue rotate between networks instead of being drained by the first one.
+    for (let connection = 0; connection < slotsPerNetwork; connection += 1) {
+      for (const iface of interfaces) {
         if (chunks.length >= MAX_TORRENT_PEERS) break
         activeInterfaces.push(iface)
         chunks.push({
