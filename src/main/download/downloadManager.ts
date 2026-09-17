@@ -24,8 +24,14 @@ import type {
   NetworkInterfaceInfo,
   StartDownloadRequest
 } from '../../shared/types'
+import { assembleTorrentFiles } from '../torrent/assemble'
+import { parseMagnetUri } from '../torrent/magnet'
+import { resolveTorrentMetadata } from '../torrent/metadata'
+import { recallMetadata, toTorrentMetadata } from '../torrent/metadataStore'
+import { parseInfoDict, pieceLengthAt, type TorrentInfo } from '../torrent/torrentInfo'
+import { TorrentSession, type TorrentSlot, type TorrentSlotState } from '../torrent/torrentSession'
 import { downloadChunk } from './chunkDownloader'
-import { reserveDestinationPath } from './paths'
+import { reserveDestinationDirectory, reserveDestinationPath } from './paths'
 import { isResourceUnchanged } from './probe'
 
 interface ChunkRuntime {
@@ -51,6 +57,12 @@ interface DownloadRuntime {
   persistenceTimer?: NodeJS.Timeout
   persistenceChain: Promise<void>
   removed: boolean
+  /** Torrent downloads only: the parsed metadata every piece offset derives from, loaded
+   * from the swarm at start and from disk on a resume. */
+  torrentInfo?: TorrentInfo
+  /** Torrent downloads only: aborts the swarm session on pause or cancel, the way the
+   * per-chunk controllers do for HTTP. */
+  torrentController?: AbortController
 }
 
 interface PersistedDownload {
@@ -85,6 +97,22 @@ function pushSpeedSample(samples: SpeedSample[], bytes: number, time: number): n
 // Defensive cap independent of whatever the renderer sends — chunks are
 // distributed round-robin across interfaces, not tied 1:1 to them anymore.
 const MAX_CHUNKS = 32
+
+/**
+ * Peer-slot ceiling for a torrent, far above MAX_CHUNKS because the two are not the same
+ * quantity.
+ *
+ * An HTTP connection gets the server's full attention, so a handful saturates a link and more
+ * would just be rude. A BitTorrent peer is the opposite: it serves only while it has chosen to
+ * unchoke you, most of a tracker's list is stale or unreachable, and any one peer is a trickle.
+ * Throughput comes from holding many connections at once — real clients sit in the tens to low
+ * hundreds. Capping a torrent at 32 was leaving the download running on one or two peers.
+ */
+const MAX_TORRENT_PEERS = 100
+
+/** Peer slots per network when the request doesn't say. Chosen to be useful rather than
+ * timid: at the HTTP default of 2, a 6 GB torrent ran at 16 KB/s. */
+const DEFAULT_TORRENT_PEERS_PER_NETWORK = 50
 
 const MAX_CHUNK_RETRIES = 5
 const RETRY_BASE_DELAY_MS = 1000
@@ -257,6 +285,8 @@ export class DownloadManager {
           const state = persisted.state
           const blocks = state.blocks
           if (!blocks) return
+          // Manifests written before torrent support carry no `kind`.
+          state.kind = state.kind ?? 'http'
           if (state.status === 'downloading') {
             state.status = 'paused'
             state.pausedAt = persisted.savedAt || Date.now()
@@ -274,6 +304,18 @@ export class DownloadManager {
           }
           for (const block of blocks) {
             if (block.status === 'downloading') block.status = 'pending'
+          }
+
+          if (state.kind === 'torrent') {
+            // A torrent piece stays buffered in memory until it passes its hash, so an
+            // unfinished one left nothing on disk to resume from. Its progress has to go
+            // back to zero rather than be shown as recoverable.
+            for (const block of blocks) {
+              if (block.status === 'completed') continue
+              block.bytesDownloaded = 0
+              block.bytesByInterface = {}
+            }
+            state.bytesDownloaded = blocks.reduce((sum, block) => sum + block.bytesDownloaded, 0)
           }
 
           const runtime: DownloadRuntime = {
@@ -314,6 +356,10 @@ export class DownloadManager {
 
     if (interfaces.length === 0) {
       throw new Error('Select at least one network interface')
+    }
+
+    if (requestPayload.kind === 'torrent') {
+      return this.startTorrent(requestPayload, interfaces)
     }
 
     await ensureDiskSpace(requestPayload.destinationDir, requestPayload.totalBytes)
@@ -424,6 +470,7 @@ export class DownloadManager {
 
     const state: DownloadState = {
       id,
+      kind: 'http',
       url: requestPayload.url,
       fileName: basename(destinationPath),
       destinationPath,
@@ -481,6 +528,7 @@ export class DownloadManager {
     for (const chunkRuntime of runtime.chunkRuntimes.values()) {
       chunkRuntime.controller.abort()
     }
+    runtime.torrentController?.abort()
     this.pushUpdate(runtime)
     await this.persistNow(runtime)
   }
@@ -498,19 +546,25 @@ export class DownloadManager {
   // together. Check first, and refuse to resume rather than corrupt the
   // output (the user can always start the download over from scratch).
   private async resumeAfterVerifying(runtime: DownloadRuntime): Promise<void> {
-    const { url, etag, lastModified } = runtime.requestPayload
-    const unchanged = await isResourceUnchanged(url, etag, lastModified)
+    // A torrent has nothing to check here. Every piece is verified against a SHA-1 published
+    // in metadata whose own hash is the magnet link, so content that moved on underneath us
+    // fails its piece hash and is discarded — it can never be stitched into the output the
+    // way changed HTTP bytes could.
+    if (runtime.state.kind === 'http') {
+      const { url, etag, lastModified } = runtime.requestPayload
+      const unchanged = await isResourceUnchanged(url, etag, lastModified)
 
-    if (runtime.state.status !== 'paused') return // cancelled while we were checking
+      if (runtime.state.status !== 'paused') return // cancelled while we were checking
 
-    if (!unchanged) {
-      runtime.state.status = 'error'
-      runtime.state.error =
-        'The remote file changed while this download was paused, so resuming would corrupt it. Start the download over instead.'
-      this.pushUpdate(runtime)
-      await this.cleanupTempDir(runtime)
-      await this.discardUnfinishedDestination(runtime)
-      return
+      if (!unchanged) {
+        runtime.state.status = 'error'
+        runtime.state.error =
+          'The remote file changed while this download was paused, so resuming would corrupt it. Start the download over instead.'
+        this.pushUpdate(runtime)
+        await this.cleanupTempDir(runtime)
+        await this.discardUnfinishedDestination(runtime)
+        return
+      }
     }
 
     let availableInterfaces: NetworkInterfaceInfo[]
@@ -553,6 +607,12 @@ export class DownloadManager {
       if (block.status !== 'completed') {
         block.status = 'pending'
       }
+      // An unfinished torrent piece was only ever buffered in memory — nothing of it
+      // survived the pause, so its progress starts over rather than resuming.
+      if (runtime.state.kind === 'torrent' && block.status !== 'completed') {
+        block.bytesDownloaded = 0
+        block.bytesByInterface = {}
+      }
     }
     for (const chunk of runtime.state.chunks) {
       if (chunk.status !== 'completed') {
@@ -561,7 +621,13 @@ export class DownloadManager {
       runtime.speedSamplesByChunk.delete(chunk.id)
       chunk.speedBytesPerSec = 0
     }
+    this.recomputeAggregates(runtime)
     this.pushUpdate(runtime)
+
+    if (runtime.state.kind === 'torrent') {
+      void this.runTorrentToCompletion(runtime)
+      return
+    }
 
     const pending = runtime.state.chunks.filter((chunk) => chunk.status !== 'completed')
     void this.runChunksToCompletion(runtime, pending.length > 0 ? pending : runtime.state.chunks)
@@ -581,6 +647,7 @@ export class DownloadManager {
     for (const chunkRuntime of runtime.chunkRuntimes.values()) {
       chunkRuntime.controller.abort()
     }
+    runtime.torrentController?.abort()
     this.pushUpdate(runtime, false)
     void this.cleanupTempDir(runtime)
     void this.discardUnfinishedDestination(runtime)
@@ -605,6 +672,327 @@ export class DownloadManager {
         else await this.persistNow(runtime)
       })
     )
+  }
+
+  private metadataPath(id: string): string {
+    return join(this.downloadDir(id), 'metadata.bin')
+  }
+
+  /**
+   * Starts a magnet-link download.
+   *
+   * Deliberately the same shape as `start`: a torrent piece becomes a block and a peer slot
+   * becomes a chunk, so persistence, the progress grid, per-network byte attribution and
+   * pause/resume all keep working without knowing a torrent is involved.
+   */
+  private async startTorrent(
+    requestPayload: StartDownloadRequest,
+    interfaces: NetworkInterfaceInfo[]
+  ): Promise<string> {
+    const magnet = parseMagnetUri(requestPayload.url)
+
+    // The probe behind this request already resolved the metadata; going back to the swarm
+    // is only the fallback for a request that outlived that cache.
+    const cached = recallMetadata(magnet.infoHashHex)
+    const resolved =
+      cached ??
+      (await resolveTorrentMetadata({
+        magnet,
+        interfaces,
+        signal: new AbortController().signal
+      }))
+    const info = resolved.info
+
+    await ensureDiskSpace(requestPayload.destinationDir, info.totalLength)
+
+    const id = randomUUID()
+    const tempDir = join(this.downloadDir(id), 'parts')
+    await mkdir(tempDir, { recursive: true })
+
+    // Stored next to the parts so a resume can rebuild the piece map without having to find
+    // a peer willing to serve metadata again. It is re-verified against the infohash when
+    // read back, so an edited file is rejected rather than trusted.
+    await writeFile(this.metadataPath(id), resolved.raw)
+
+    const destinationPath = info.isSingleFile
+      ? await reserveDestinationPath(requestPayload.destinationDir, info.name)
+      : await reserveDestinationDirectory(requestPayload.destinationDir, info.name)
+
+    const peersPerNetwork = Math.max(
+      1,
+      Math.min(
+        MAX_TORRENT_PEERS,
+        requestPayload.connectionsPerNetwork ?? DEFAULT_TORRENT_PEERS_PER_NETWORK
+      )
+    )
+
+    // One block per piece, on the torrent's own boundaries. Unlike the HTTP engine's block
+    // size this isn't ours to pick: pieces are the unit the swarm serves and verifies.
+    const blocks: BlockState[] = info.pieceHashes.map((_hash, index) => {
+      const rangeStart = index * info.pieceLength
+      return {
+        index,
+        rangeStart,
+        rangeEnd: rangeStart + pieceLengthAt(info, index) - 1,
+        status: 'pending',
+        bytesDownloaded: 0,
+        bytesByInterface: {}
+      }
+    })
+
+    // The shared ceiling is divided between the networks up front rather than handed out
+    // first-come. Filling network by network would give the whole budget to whichever
+    // networks came first — with three networks at 50 each against a cap of 100, the third
+    // would get no slots at all and could never contribute a byte.
+    const slotsPerNetwork = Math.max(
+      1,
+      Math.min(peersPerNetwork, Math.floor(MAX_TORRENT_PEERS / interfaces.length))
+    )
+
+    const chunks: ChunkState[] = []
+    const activeInterfaces: NetworkInterfaceInfo[] = []
+    // Interleaved — one slot per network per pass, not all of one network then all of the
+    // next. `fillSlots` hands peers out in slot order, so this ordering is what makes the
+    // peer queue rotate between networks instead of being drained by the first one.
+    for (let connection = 0; connection < slotsPerNetwork; connection += 1) {
+      for (const iface of interfaces) {
+        if (chunks.length >= MAX_TORRENT_PEERS) break
+        activeInterfaces.push(iface)
+        chunks.push({
+          id: chunks.length,
+          interfaceId: iface.id,
+          interfaceLabel: iface.displayName,
+          interfaceKind: iface.kind,
+          rangeStart: 0,
+          rangeEnd: null,
+          bytesDownloaded: 0,
+          speedBytesPerSec: 0,
+          status: 'pending',
+          retryCount: 0
+        })
+      }
+    }
+
+    const state: DownloadState = {
+      id,
+      kind: 'torrent',
+      url: magnet.uri,
+      fileName: basename(destinationPath),
+      destinationPath,
+      totalBytes: info.totalLength,
+      bytesDownloaded: 0,
+      speedBytesPerSec: 0,
+      status: 'downloading',
+      chunks,
+      blocks,
+      totalBlocks: blocks.length,
+      blockSizeBytes: info.pieceLength,
+      torrent: toTorrentMetadata(info, magnet.infoHashHex),
+      connectedPeers: 0,
+      startedAt: Date.now()
+    }
+
+    const runtime: DownloadRuntime = {
+      state,
+      requestPayload,
+      activeInterfaces,
+      chunkRuntimes: new Map(),
+      tempDir,
+      speedSamplesByChunk: new Map(),
+      pushScheduled: false,
+      blocks,
+      totalBlocks: blocks.length,
+      persistenceChain: Promise.resolve(),
+      removed: false,
+      torrentInfo: info
+    }
+    this.runtimes.set(id, runtime)
+    await this.persistNow(runtime)
+    this.pushUpdate(runtime)
+
+    void this.runTorrentToCompletion(runtime)
+
+    return id
+  }
+
+  /** The piece map for a torrent runtime, read back from disk after an app restart. */
+  private async ensureTorrentInfo(runtime: DownloadRuntime): Promise<TorrentInfo> {
+    if (runtime.torrentInfo) return runtime.torrentInfo
+
+    const magnet = parseMagnetUri(runtime.state.url)
+    const raw = await readFile(this.metadataPath(runtime.state.id))
+    // Re-derives the infohash from the file, so metadata changed between runs is rejected
+    // rather than quietly pointing the download at different content.
+    const info = parseInfoDict(raw, magnet.infoHash)
+    runtime.torrentInfo = info
+    return info
+  }
+
+  /** Runs a torrent's peer slots until every piece is verified, then writes out its files. */
+  private async runTorrentToCompletion(runtime: DownloadRuntime): Promise<void> {
+    let info: TorrentInfo
+    try {
+      info = await this.ensureTorrentInfo(runtime)
+    } catch (error) {
+      runtime.state.status = 'error'
+      runtime.state.error = `Could not read this torrent's metadata: ${
+        error instanceof Error ? error.message : String(error)
+      }`
+      this.pushUpdate(runtime)
+      await this.cleanupTempDir(runtime)
+      await this.discardUnfinishedDestination(runtime)
+      return
+    }
+
+    const controller = new AbortController()
+    runtime.torrentController = controller
+
+    try {
+      const slots: TorrentSlot[] = runtime.state.chunks.map((chunk, index) => {
+        const iface =
+          runtime.activeInterfaces.find((entry) => entry.id === chunk.interfaceId) ??
+          runtime.activeInterfaces[index % runtime.activeInterfaces.length]
+        return { id: chunk.id, interfaceId: iface.id, localAddress: iface.address }
+      })
+
+      const session = new TorrentSession({
+        magnet: parseMagnetUri(runtime.state.url),
+        info,
+        partsDir: runtime.tempDir,
+        slots,
+        completedPieces: runtime.blocks
+          .filter((block) => block.status === 'completed')
+          .map((block) => block.index),
+        signal: controller.signal,
+        onProgress: (slotId, pieceIndex, deltaBytes) => {
+          const chunk = runtime.state.chunks.find((entry) => entry.id === slotId)
+          if (!chunk) return
+          this.onWorkerProgress(runtime, slotId, pieceIndex, chunk.interfaceId, deltaBytes)
+        },
+        onPieceReset: (pieceIndex) => this.onTorrentPieceReset(runtime, pieceIndex),
+        onPieceComplete: (pieceIndex) => this.onTorrentPieceComplete(runtime, pieceIndex),
+        onSlotChanged: (slotId, slotState) => this.onTorrentSlotChanged(runtime, slotId, slotState)
+      })
+
+      await session.run()
+    } catch (error) {
+      const status = runtime.state.status as DownloadStatus
+
+      // Pause and cancel abort the session deliberately, so that rejection is the expected
+      // outcome rather than a failure worth reporting.
+      if (status !== 'downloading') {
+        for (const chunk of runtime.state.chunks) {
+          chunk.speedBytesPerSec = 0
+          chunk.peerAddress = undefined
+          if (chunk.status !== 'completed') {
+            chunk.status = status === 'paused' ? 'paused' : 'cancelled'
+          }
+        }
+        runtime.state.connectedPeers = 0
+        this.pushUpdate(runtime)
+        return
+      }
+
+      runtime.state.status = 'error'
+      runtime.state.error = error instanceof Error ? error.message : String(error)
+      runtime.state.speedBytesPerSec = 0
+      runtime.state.connectedPeers = 0
+      for (const chunk of runtime.state.chunks) {
+        chunk.speedBytesPerSec = 0
+        chunk.peerAddress = undefined
+        chunk.status = 'error'
+      }
+      this.pushUpdate(runtime)
+      await this.cleanupTempDir(runtime)
+      await this.discardUnfinishedDestination(runtime)
+      return
+    } finally {
+      runtime.torrentController = undefined
+    }
+
+    if (runtime.state.status !== 'downloading') return
+
+    try {
+      await assembleTorrentFiles({
+        info,
+        partsDir: runtime.tempDir,
+        destinationPath: runtime.state.destinationPath
+      })
+      runtime.state.status = 'completed'
+      runtime.state.completedAt = Date.now()
+      runtime.state.bytesDownloaded = runtime.state.totalBytes || runtime.state.bytesDownloaded
+    } catch (error) {
+      runtime.state.status = 'error'
+      runtime.state.error = error instanceof Error ? error.message : String(error)
+    }
+
+    const completed = runtime.state.status === 'completed'
+    runtime.state.speedBytesPerSec = 0
+    runtime.state.connectedPeers = 0
+    for (const chunk of runtime.state.chunks) {
+      chunk.speedBytesPerSec = 0
+      chunk.peerAddress = undefined
+      chunk.status = completed ? 'completed' : 'error'
+    }
+
+    this.pushUpdate(runtime)
+    await this.cleanupTempDir(runtime)
+    await this.discardUnfinishedDestination(runtime)
+  }
+
+  /** Gives back a piece's progress after its buffered bytes were discarded — a failed hash,
+   * or a part file that turned out not to be on disk. */
+  private onTorrentPieceReset(runtime: DownloadRuntime, pieceIndex: number): void {
+    const block = runtime.blocks[pieceIndex]
+    if (!block) return
+
+    block.status = 'pending'
+    block.bytesDownloaded = 0
+    block.bytesByInterface = {}
+    this.recomputeAggregates(runtime)
+    this.scheduleUpdate(runtime)
+  }
+
+  private onTorrentPieceComplete(runtime: DownloadRuntime, pieceIndex: number): void {
+    const block = runtime.blocks[pieceIndex]
+    if (!block) return
+
+    block.status = 'completed'
+    // Unlike an HTTP block there is no shortfall to square up: a piece is only complete once
+    // every one of its 16 KiB blocks has been counted exactly once.
+    this.recomputeAggregates(runtime)
+    this.scheduleUpdate(runtime)
+  }
+
+  private onTorrentSlotChanged(
+    runtime: DownloadRuntime,
+    slotId: number,
+    slotState: TorrentSlotState
+  ): void {
+    const chunk = runtime.state.chunks.find((entry) => entry.id === slotId)
+    if (!chunk) return
+
+    chunk.peerAddress = slotState.peer ?? undefined
+    chunk.currentBlockIndex = slotState.pieceIndex ?? undefined
+    if (!slotState.connected) chunk.speedBytesPerSec = 0
+    if (runtime.state.status === 'downloading') {
+      chunk.status = slotState.connected ? 'downloading' : 'pending'
+    }
+
+    // Same split as the HTTP engine: the block records who is working it now, while
+    // bytesByInterface records who actually delivered the bytes.
+    if (slotState.pieceIndex !== null) {
+      const block = runtime.blocks[slotState.pieceIndex]
+      if (block && block.status !== 'completed') {
+        block.status = 'downloading'
+        block.interfaceId = chunk.interfaceId
+      }
+    }
+
+    runtime.state.connectedPeers = runtime.state.chunks.filter(
+      (entry) => entry.peerAddress !== undefined
+    ).length
+    this.scheduleUpdate(runtime)
   }
 
   /** Runs (or resumes) fixed worker streams in parallel, leasing blocks until all are completed. */
@@ -837,13 +1225,27 @@ export class DownloadManager {
     runtime.state.speedBytesPerSec = sumChunkSpeeds(runtime)
   }
 
+  /**
+   * How often this download may push progress and rewrite its manifest.
+   *
+   * Both costs scale with the block count, because each one serializes the whole block array
+   * — once through IPC to the renderer, once to disk. The HTTP engine caps itself at 4096
+   * blocks by growing the block size, but a torrent's pieces are fixed by the torrent: a 6 GB
+   * Ubuntu ISO is 24,729 of them. At the base interval that is megabytes a second of copying
+   * to animate a grid the user cannot see individual cells in anyway, so large downloads
+   * trade a little progress latency for not spending the download's time on bookkeeping.
+   */
+  private throttleFor(runtime: DownloadRuntime): number {
+    return runtime.totalBlocks > 8192 ? PROGRESS_THROTTLE_MS * 5 : PROGRESS_THROTTLE_MS
+  }
+
   private scheduleUpdate(runtime: DownloadRuntime): void {
     if (runtime.pushScheduled) return
     runtime.pushScheduled = true
     setTimeout(() => {
       runtime.pushScheduled = false
       this.pushUpdate(runtime)
-    }, PROGRESS_THROTTLE_MS)
+    }, this.throttleFor(runtime))
   }
 
   private pushUpdate(runtime: DownloadRuntime, persist = true): void {
@@ -928,7 +1330,8 @@ export class DownloadManager {
   private async discardUnfinishedDestination(runtime: DownloadRuntime): Promise<void> {
     if (runtime.state.status === 'completed') return
     try {
-      await rm(runtime.state.destinationPath, { force: true })
+      // `recursive` for a multi-file torrent, whose reserved destination is a directory.
+      await rm(runtime.state.destinationPath, { force: true, recursive: true })
     } catch {
       // Best-effort — a stray empty file isn't worth failing the download over.
     }
@@ -947,7 +1350,7 @@ export class DownloadManager {
     runtime.persistenceTimer = setTimeout(() => {
       runtime.persistenceTimer = undefined
       void this.persistNow(runtime)
-    }, PROGRESS_THROTTLE_MS)
+    }, this.throttleFor(runtime))
   }
 
   private persistNow(runtime: DownloadRuntime): Promise<void> {

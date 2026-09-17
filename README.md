@@ -61,7 +61,38 @@ File ──→ Split ─────┼── Ethernet (IP: 10.0.0.12) ───
 - 📊 **Real-time telemetry** — live throughput graphs, rolling-window ETA calculation, and per-connection transfer stats.
 - 🗺️ **Interactive progress grid** — 1:1 visual map of individual 8 MB chunks, color-coded by the network interface that fetched each chunk with accurate per-network byte attribution.
 - 🎨 **Network customization** — rename and recolor physical network interfaces with persistent user preferences.
+- 🧲 **Torrent magnet links** — paste a `magnet:?xt=urn:btih:…` link and Plexo downloads it over BitTorrent, spreading its peer connections across the same physical networks it uses for HTTP. No external torrent library and no new runtime dependencies.
 - 🌙 **Dark mode**
+
+---
+
+# Torrent support
+
+Plexo accepts a magnet link anywhere it accepts a URL. The swarm is driven by Plexo's own BitTorrent implementation rather than an off-the-shelf client, for one reason: a library like WebTorrent gives no control over which network interface a peer socket leaves from, and that control is the entire point of this app. Implementing the wire protocol directly means every peer connection takes a `localAddress`, exactly like an HTTP chunk worker does.
+
+The two engines share one progress model, which is why the grid, the throughput chart and pause/resume all work unchanged:
+
+| HTTP download                               | Torrent download                   |
+| ------------------------------------------- | ---------------------------------- |
+| 8 MB block                                  | one torrent piece                  |
+| chunk worker bound to a network             | peer connection bound to a network |
+| `ETag` / `Last-Modified` re-check on resume | SHA-1 piece hash                   |
+
+**What it does**
+
+- Resolves a magnet link's metadata from the swarm (BEP 9/10) — the link alone carries only an infohash, so the file name, size and piece layout are fetched before the download can start. This is why a magnet takes a few seconds longer than an HTTP link to become startable.
+- Announces over both HTTP and UDP trackers (BEP 15). UDP matters: most trackers in a typical magnet link are `udp://`.
+- Picks pieces rarest-first, with endgame duplication so one slow peer can't hold up the last few percent.
+- Verifies every piece against its SHA-1 **before** it reaches the disk, then writes single-file and multi-file torrents to their real layout.
+- Resumes after a pause or a relaunch, re-verifying the stored metadata against the infohash rather than trusting it.
+
+**Limits, deliberately**
+
+- **Leech only.** Plexo never advertises a piece and never serves a request. There is no upload path in the code.
+- **No DHT or peer exchange yet.** Peers come from trackers, so a trackerless magnet falls back to a small list of open trackers.
+- **BitTorrent v1 only.** A v2 (`urn:btmh:`) link is rejected with a message saying so rather than failing obscurely.
+
+> Plexo is a download manager, not a content index. What you download with it is your responsibility.
 
 ---
 

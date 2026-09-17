@@ -133,6 +133,7 @@ export async function probeUrl(rawUrl: string): Promise<ProbeResult> {
   }
 
   return {
+    kind: 'http',
     requestedUrl: rawUrl,
     finalUrl: current.toString(),
     supportsRanges,
