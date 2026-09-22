@@ -77,6 +77,33 @@ const NO_PROGRESS_TIMEOUT_MS = 180_000
 
 const PROGRESS_WATCHDOG_INTERVAL_MS = 15_000
 
+/**
+ * How long a peer rests before it may be dialed again.
+ *
+ * A peer used to be dialed at most once per download: its address went into a set on dial and
+ * only ever came back out if the *network* had been at fault. Every other ending — refused,
+ * timed out, stalled, never unchoked, or simply a good peer that finished with us and closed
+ * — burned it permanently, and re-announces filter out everything already dialed. So the
+ * queue drained towards empty, freed slots stayed free, and the download decayed onto
+ * whichever network's peers happened to survive longest. That decay is most of what "not
+ * reliably using more than one network" looks like from the outside: it starts balanced and
+ * quietly stops being so.
+ *
+ * Resting a peer instead of banning it keeps the swarm's roster reusable, which is what lets
+ * an idle network refill. The three budgets differ because the endings mean different things:
+ * a peer that actually served us is the most valuable thing we have and has usually just
+ * rotated its upload slots; one that never answered is probably firewalled or gone; one that
+ * sent bytes failing a piece hash is actively costing us work.
+ */
+const PEER_RETRY_AFTER_SERVING_MS = 30_000
+const PEER_RETRY_BASE_MS = 60_000
+const PEER_RETRY_MAX_MS = 15 * 60_000
+const PEER_RETRY_CORRUPT_MS = 30 * 60_000
+
+/** Ceiling on the remembered roster. A swarm is a few hundred peers, so this is only a guard
+ * against a tracker rotating a long tail of dead addresses through a multi-hour download. */
+const MAX_KNOWN_PEERS = 2048
+
 interface PieceBuffer {
   data: Buffer
   receivedBlocks: boolean[]
@@ -115,7 +142,17 @@ export class TorrentSession {
 
   private readonly health: InterfaceHealth
   private peerQueue: PeerAddress[] = []
-  private dialedAddresses = new Set<string>()
+  /** Every peer any tracker has named, `host:port` -> address. The swarm's roster, which is
+   * what makes a peer re-dialable after its cooldown rather than gone for good. */
+  private readonly knownPeers = new Map<string, PeerAddress>()
+  /** Peers currently queued or held by a connection, so they aren't dialed twice at once. */
+  private readonly peersInHand = new Set<string>()
+  /** `host:port` -> the earliest time it may be dialed again. */
+  private readonly peerRetryAfter = new Map<string, number>()
+  /** Consecutive disappointments per peer, which its cooldown backs off against. */
+  private readonly peerFailures = new Map<string, number>()
+  /** Peers that contributed to a piece which then failed its hash, resolved on disconnect. */
+  private readonly poisonedPeers = new Set<string>()
   private remainingPieces: number
   private lastProgressAt = Date.now()
   private settled = false
@@ -167,6 +204,12 @@ export class TorrentSession {
 
       this.watchdogTimer = setInterval(() => {
         this.retireChokedPeers()
+        // Both recoveries in this engine are time-based — a peer coming off its cooldown, a
+        // network coming off probation — and nothing else would notice either. Refills
+        // otherwise only happen on a disconnect or an announce, so a network that lost all
+        // its peers at once would sit idle until the next announce even with peers waiting.
+        this.requeuePeers()
+        this.fillSlots()
         if (Date.now() - this.lastProgressAt < NO_PROGRESS_TIMEOUT_MS) return
         this.settle(
           new Error(
@@ -241,6 +284,12 @@ export class TorrentSession {
     }
     this.connections.clear()
     this.connectedAt.clear()
+    this.knownPeers.clear()
+    this.peersInHand.clear()
+    this.peerRetryAfter.clear()
+    this.peerFailures.clear()
+    this.poisonedPeers.clear()
+    this.peerQueue = []
     this.pieces.clear()
     this.assignments.clear()
     this.slotPiece.clear()
@@ -284,14 +333,14 @@ export class TorrentSession {
       )
       if (this.settled) return
 
+      // Re-announces return mostly the same peers, so this is a roster update rather than a
+      // list of new work: `requeuePeers` decides what is actually dialable right now.
       for (const peer of peers) {
-        const key = `${peer.host}:${peer.port}`
-        // Re-announces return mostly the same peers; only the ones we haven't tried are
-        // worth queueing, or the queue would grow without bound.
-        if (this.dialedAddresses.has(key)) continue
-        this.peerQueue.push(peer)
+        this.knownPeers.set(`${peer.host}:${peer.port}`, peer)
       }
+      this.forgetOldestPeers()
 
+      this.requeuePeers()
       this.fillSlots()
     } catch {
       // A failed re-announce is survivable: existing peers keep working and the next
@@ -299,6 +348,70 @@ export class TorrentSession {
       // watchdog or the initial announce.
     } finally {
       this.announceInFlight = false
+    }
+  }
+
+  /**
+   * Queues every known peer that is neither in hand nor still resting.
+   *
+   * This is the counterpart to resting peers rather than banning them, and it runs on the
+   * watchdog tick as well as after an announce — a network whose peers have all dropped
+   * should not have to wait out the announce interval to be given something to dial, and
+   * a network coming back off probation needs a queue to come back to.
+   */
+  private requeuePeers(): void {
+    if (this.settled) return
+    const now = Date.now()
+
+    for (const [key, peer] of this.knownPeers) {
+      if (this.peersInHand.has(key)) continue
+      if ((this.peerRetryAfter.get(key) ?? 0) > now) continue
+
+      this.peerRetryAfter.delete(key)
+      this.peersInHand.add(key)
+      this.peerQueue.push(peer)
+    }
+  }
+
+  /**
+   * Records how a peer's connection ended, so its next dial is timed to match.
+   *
+   * Nothing here is permanent. A peer is only ever put out of reach for a while, because the
+   * alternative — the ban list this replaced — ends with nothing left to dial.
+   */
+  private notePeerOutcome(key: string, servedBytes: boolean): void {
+    if (this.poisonedPeers.delete(key)) {
+      this.peerRetryAfter.set(key, Date.now() + PEER_RETRY_CORRUPT_MS)
+      return
+    }
+
+    if (servedBytes) {
+      // It worked once, so whatever ended it is more likely a rotation of its upload slots
+      // than a reason to write it off. A proven peer outranks any untried one.
+      this.peerFailures.delete(key)
+      this.peerRetryAfter.set(key, Date.now() + PEER_RETRY_AFTER_SERVING_MS)
+      return
+    }
+
+    const failures = (this.peerFailures.get(key) ?? 0) + 1
+    this.peerFailures.set(key, failures)
+    this.peerRetryAfter.set(
+      key,
+      Date.now() + Math.min(PEER_RETRY_BASE_MS * 2 ** (failures - 1), PEER_RETRY_MAX_MS)
+    )
+  }
+
+  /** Trims the roster's oldest entries. Insertion-ordered, so the front is the least recently
+   * learned — and a peer worth keeping is re-announced back in within the minute. */
+  private forgetOldestPeers(): void {
+    if (this.knownPeers.size <= MAX_KNOWN_PEERS) return
+
+    for (const key of this.knownPeers.keys()) {
+      if (this.knownPeers.size <= MAX_KNOWN_PEERS) break
+      if (this.peersInHand.has(key)) continue
+      this.knownPeers.delete(key)
+      this.peerRetryAfter.delete(key)
+      this.peerFailures.delete(key)
     }
   }
 
@@ -348,12 +461,17 @@ export class TorrentSession {
       const peer = this.peerQueue.shift()
       if (!peer) return
 
-      this.dialedAddresses.add(`${peer.host}:${peer.port}`)
+      // Already marked in-hand when it was queued, so no bookkeeping is needed here.
       this.openConnection(slot, peer)
     }
   }
 
   private openConnection(slot: TorrentSlot, peer: PeerAddress): void {
+    const peerKey = `${peer.host}:${peer.port}`
+    // Whether this peer gave us anything at all, which is what separates a peer worth coming
+    // back to soon from one that only ever held a slot open.
+    let servedBytes = false
+
     const connection = new PeerConnection({
       peer,
       localAddress: slot.localAddress,
@@ -375,6 +493,7 @@ export class TorrentSession {
     connection.onReady = () => this.driveSlot(slot.id)
 
     connection.onBytes = () => {
+      servedBytes = true
       this.lastProgressAt = Date.now()
     }
 
@@ -384,11 +503,17 @@ export class TorrentSession {
       this.connections.delete(slot.id)
       this.connectedAt.delete(slot.id)
 
-      // An unroutable network says nothing about the peer, so put it back rather than
-      // burning it — and let it be re-dialed, since it was never really tried.
+      this.peersInHand.delete(peerKey)
+
       if (this.health.noteFailure(slot.interfaceId, error)) {
+        // An unroutable network says nothing about the peer: it was never really tried, so
+        // it goes straight back to the front for a network that does have a route.
+        this.poisonedPeers.delete(peerKey)
+        this.peerRetryAfter.delete(peerKey)
+        this.peersInHand.add(peerKey)
         this.peerQueue.unshift(peer)
-        this.dialedAddresses.delete(`${peer.host}:${peer.port}`)
+      } else {
+        this.notePeerOutcome(peerKey, servedBytes)
       }
 
       for (const index of connection.availablePieces()) {
@@ -623,7 +748,14 @@ export class TorrentSession {
       // corrupting one costs this piece again on every retry.
       for (const slotId of piece.contributors) {
         this.releaseSlot(slotId)
-        this.connections.get(slotId)?.destroy(new Error('Peer sent data failing its piece hash'))
+        const connection = this.connections.get(slotId)
+        if (!connection) continue
+        // Marked before the destroy, because `destroy` calls back into `onClose` synchronously
+        // and that is where a peer's next dial gets scheduled. Without this the peer looks
+        // like one that served bytes — which it did — and would be back within 30 seconds to
+        // cost us the same piece again.
+        this.poisonedPeers.add(`${connection.peer.host}:${connection.peer.port}`)
+        connection.destroy(new Error('Peer sent data failing its piece hash'))
       }
       return
     }
