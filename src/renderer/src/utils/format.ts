@@ -4,8 +4,12 @@ const UNITS = ['B', 'KB', 'MB', 'GB', 'TB']
 
 export function formatBytes(bytes: number): string {
   if (!Number.isFinite(bytes) || bytes <= 0) return '0 B'
-  const exponent = Math.min(Math.floor(Math.log(bytes) / Math.log(1024)), UNITS.length - 1)
-  const value = bytes / 1024 ** exponent
+  let exponent = Math.min(Math.floor(Math.log(bytes) / Math.log(1024)), UNITS.length - 1)
+  let value = bytes / 1024 ** exponent
+  if (exponent < UNITS.length - 1 && Number(value.toFixed(exponent === 0 ? 0 : 1)) >= 1024) {
+    exponent += 1
+    value = bytes / 1024 ** exponent
+  }
   return `${value.toFixed(exponent === 0 ? 0 : 1)} ${UNITS[exponent]}`
 }
 
@@ -17,11 +21,14 @@ export function formatEta(remainingBytes: number, bytesPerSec: number): string {
   if (bytesPerSec <= 0 || remainingBytes <= 0) return '—'
   const seconds = remainingBytes / bytesPerSec
   if (!Number.isFinite(seconds)) return '—'
-  if (seconds < 60) return `${Math.ceil(seconds)}s`
-  const minutes = Math.floor(seconds / 60)
-  if (minutes < 60) return `${minutes}m ${Math.round(seconds % 60)}s`
-  const hours = Math.floor(minutes / 60)
-  return `${hours}h ${minutes % 60}m`
+  if (seconds < 60) return `${Math.max(1, Math.ceil(seconds))}s`
+  const totalSec = Math.round(seconds)
+  const mins = Math.floor(totalSec / 60)
+  const secs = totalSec % 60
+  if (mins < 60) return `${mins}m ${secs}s`
+  const hrs = Math.floor(mins / 60)
+  const remMins = mins % 60
+  return `${hrs}h ${remMins}m`
 }
 
 export function formatPercent(bytesDownloaded: number, totalBytes: number): number {
@@ -33,15 +40,16 @@ export function fileNameFromPath(path: string): string {
   return path.split(/[\\/]/).pop() ?? path
 }
 
-/** Short uppercase file-type badge from a name's extension, e.g. "Xcode_16.2.xip" -> "XIP". */
+/** Short uppercase file-type badge from a name's extension, e.g. "Xcode_16.2.xip" -> "XIP", "photo.jpeg" -> "JPEG". */
 export function fileExtensionBadge(fileName: string): string {
   const dotIndex = fileName.lastIndexOf('.')
   if (dotIndex <= 0 || dotIndex === fileName.length - 1) return 'FILE'
-  return fileName.slice(dotIndex + 1, dotIndex + 4).toUpperCase()
+  return fileName.slice(dotIndex + 1, dotIndex + 5).toUpperCase()
 }
 
 /** m:ss, or h:mm:ss past an hour. */
 export function formatDuration(seconds: number): string {
+  if (!Number.isFinite(seconds) || seconds <= 0) return '0:00'
   const total = Math.max(0, Math.round(seconds))
   const hrs = Math.floor(total / 3600)
   const mins = Math.floor((total % 3600) / 60)
@@ -121,7 +129,22 @@ export function toDisplayPath(path: string, homeDir: string): string {
 const IPC_INVOKE_PREFIX = /^Error invoking remote method '[^']*':\s*/
 const NESTED_ERROR_PREFIX = /^Error:\s*/
 
-const NETWORK_ERROR_HINTS: Array<{ pattern: RegExp; message: string }> = [
+const ERROR_HINTS: Array<{ pattern: RegExp; message: string }> = [
+  {
+    pattern: /parts never finished/,
+    message:
+      'The download never fully finished, so Plexo couldn’t assemble it. Try downloading again.'
+  },
+  {
+    pattern: /refusing to write a corrupt file/,
+    message:
+      'One of the downloaded pieces didn’t match its expected size, so Plexo stopped rather than save a corrupted file. Try downloading again.'
+  },
+  {
+    pattern: /refusing to keep a corrupt file/,
+    message:
+      'The assembled file didn’t match its expected size, so Plexo removed it rather than keep a corrupted file. Try downloading again.'
+  },
   {
     pattern: /ENOTFOUND|EAI_AGAIN/,
     message: 'Could not resolve that host — check the URL and your connection.'
@@ -169,12 +192,15 @@ const NETWORK_ERROR_HINTS: Array<{ pattern: RegExp; message: string }> = [
 ]
 
 /** Electron wraps a rejected IPC call as "Error invoking remote method 'x': Error: <message>" —
- * strip that framework noise and translate common network error codes into plain English. */
+ * strip that framework noise and translate common network errors and internal consistency-check
+ * failures into plain English. Used for both the pre-download probe and a download's own
+ * `error` field, so a failure partway through a transfer reads exactly as friendly as one caught
+ * before it started. */
 export function describeError(error: unknown): string {
   const raw = error instanceof Error ? error.message : String(error)
   const stripped = raw.replace(IPC_INVOKE_PREFIX, '').replace(NESTED_ERROR_PREFIX, '')
 
-  for (const { pattern, message } of NETWORK_ERROR_HINTS) {
+  for (const { pattern, message } of ERROR_HINTS) {
     if (pattern.test(stripped)) return message
   }
 

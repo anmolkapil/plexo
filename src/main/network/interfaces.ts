@@ -2,6 +2,7 @@ import { execFile } from 'node:child_process'
 import { networkInterfaces } from 'node:os'
 import { promisify } from 'node:util'
 import type { NetworkInterfaceInfo, NetworkInterfaceKind } from '../../shared/types'
+import { testInterfaces } from '../testKnobs'
 
 const execFileAsync = promisify(execFile)
 const DISCOVERY_TIMEOUT_MS = 5000
@@ -80,9 +81,12 @@ async function getWindowsAdapters(): Promise<Map<string, WindowsAdapter>> {
 /**
  * Active non-loopback IPv4 interfaces. Each one has its
  * own local IP, which is what lets us bind a download's outgoing connection
- * to a specific interface (see chunkDownloader's `localAddress` option).
+ * to a specific interface (see deviceBinding's `routeFrom`).
  */
 export async function listActiveInterfaces(): Promise<NetworkInterfaceInfo[]> {
+  const overridden = testInterfaces()
+  if (overridden) return overridden
+
   const hardwarePorts = await getMacHardwarePortNames()
   const windowsAdapters = await getWindowsAdapters()
   const all = networkInterfaces()
@@ -104,7 +108,7 @@ export async function listActiveInterfaces(): Promise<NetworkInterfaceInfo[]> {
     result.push({
       id: device,
       device,
-      displayName: hardwareName ?? device,
+      displayName: hardwareName ?? adapter?.InterfaceDescription ?? device,
       address: ipv4.address,
       kind,
       mac: ipv4.mac && ipv4.mac !== '00:00:00:00:00:00' ? ipv4.mac : undefined

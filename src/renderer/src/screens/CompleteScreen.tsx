@@ -1,21 +1,10 @@
-import { useState } from 'react'
 import type { DownloadState } from '@shared/types'
+import { HeroBand } from '../components/HeroBand'
+import { ScreenFooter } from '../components/ScreenFooter'
 import { ThroughputChart } from '../components/ThroughputChart'
+import { Button } from '../components/ui/button'
+import { useNetworkVisuals } from '../hooks/useNetworkVisuals'
 import { useAppStore } from '../store/useAppStore'
-import {
-  FONT_MONO,
-  FONT_UI,
-  accentChipStyle,
-  footerStyle,
-  footerTextStyle,
-  primaryButtonStyle,
-  resolveNetworkVisual,
-  secondaryButtonStyle,
-  sectionHeaderLabelStyle,
-  statGridStyle,
-  statLabelStyle,
-  statValueStyle
-} from '../theme'
 import {
   dirnameOf,
   formatBytes,
@@ -25,12 +14,8 @@ import {
   toDisplayPath
 } from '../utils/format'
 
-const heroScopeStyle: React.CSSProperties = {
-  padding: '18px 20px',
-  background: 'var(--hero-bg)',
-  borderBottom: '1px solid var(--hero-border)',
-  color: 'var(--text)'
-}
+const sectionHeaderClass =
+  'font-mono text-[10px] leading-none tracking-[0.16em] text-muted-foreground uppercase'
 
 export function CompleteScreen({
   download,
@@ -39,90 +24,44 @@ export function CompleteScreen({
   download: DownloadState
   onNewDownload: () => void
 }): React.JSX.Element {
-  const [chipModeIndex, setChipModeIndex] = useState(0)
   const homeDir = useAppStore((store) => store.homeDir)
   const peakSpeedBytesPerSec = useAppStore((store) => store.peakSpeedBytesPerSec)
   const speedHistoryByInterface = useAppStore((store) => store.speedHistoryByInterface)
-  const networkPreferences = useAppStore((store) => store.networkPreferences)
+  const networkVisual = useNetworkVisuals()
 
   const finalSize = download.totalBytes || download.bytesDownloaded
+  const totalPausedMs = download.totalPausedMs ?? 0
   // completedAt is always set by the time a download reaches 'completed' — the
   // fallback here is just to keep this pure (no Date.now() during render).
-  const elapsedSeconds = ((download.completedAt ?? download.startedAt) - download.startedAt) / 1000
+  const elapsedSeconds = Math.max(
+    0,
+    ((download.completedAt ?? download.startedAt) - download.startedAt - totalPausedMs) / 1000
+  )
   const avgSpeed = elapsedSeconds > 0 ? finalSize / elapsedSeconds : 0
+  const [avgSpeedValue, avgSpeedUnit] = formatSpeed(avgSpeed).split(' ')
 
   const groups = groupChunksByInterface(download.chunks)
   const visuals = groups.map((group) =>
-    resolveNetworkVisual(
-      group.interfaceKind,
-      group.interfaceLabel,
-      networkPreferences[group.interfaceId]
-    )
+    networkVisual(group.interfaceId, group.interfaceKind, group.interfaceLabel)
   )
   const totalWeight = groups.reduce((sum, group) => sum + group.bytesDownloaded, 0) || 1
   const totalRetries = download.chunks.reduce((sum, chunk) => sum + chunk.retryCount, 0)
-
-  // "Time saved" vs. what the download would have taken over its single best-performing
-  // network alone, using that network's own realized average rate as the baseline.
-  const fastestIndex = groups.reduce<number>(
-    (fastest, group, idx) =>
-      fastest === -1 || group.bytesDownloaded > groups[fastest].bytesDownloaded ? idx : fastest,
-    -1
-  )
-  const fastestGroup = fastestIndex === -1 ? null : groups[fastestIndex]
-  const fastestAvgSpeed =
-    fastestGroup && elapsedSeconds > 0 ? fastestGroup.bytesDownloaded / elapsedSeconds : 0
-  const soloBaselineSeconds = fastestAvgSpeed > 0 ? finalSize / fastestAvgSpeed : 0
-  const secondsSaved = soloBaselineSeconds - elapsedSeconds
-
-  const chipOptions: { label: string; tooltip: string }[] = []
-  if (groups.length > 1) {
-    if (secondsSaved > 1) {
-      chipOptions.push({
-        label: `SAVED ${formatDuration(secondsSaved)}`,
-        tooltip: `Saved ~${formatDuration(secondsSaved)} vs fastest network alone`
-      })
-    }
-    if (fastestIndex !== -1 && fastestAvgSpeed > 0 && avgSpeed > fastestAvgSpeed) {
-      const ratio = avgSpeed / fastestAvgSpeed
-      const name = visuals[fastestIndex].name.toUpperCase()
-      chipOptions.push({
-        label: `${ratio.toFixed(1)}× ${name} ALONE`,
-        tooltip: `${ratio.toFixed(1)}× faster than ${visuals[fastestIndex].name} alone`
-      })
-      const pct = Math.round(((avgSpeed - fastestAvgSpeed) / fastestAvgSpeed) * 100)
-      chipOptions.push({
-        label: `+${pct}% VS ${name}`,
-        tooltip: `+${pct}% throughput gain vs ${visuals[fastestIndex].name} alone`
-      })
-    }
-  }
-
-  const activeChipOption =
-    chipOptions.length > 0 ? chipOptions[chipModeIndex % chipOptions.length] : null
+  // What actually got stitched together at reassembly time is the block count, not the number of
+  // parallel connections — "chunks" in this app's own vocabulary (see BlockGrid) means the byte
+  // range unit, so this footer's number needs to match that, not `download.chunks.length`.
+  const totalChunkCount = download.totalBlocks ?? download.blocks?.length ?? 1
 
   const handleReveal = (): void => void window.plexo.revealInFolder(download.destinationPath)
 
   return (
-    <div
-      style={{ display: 'flex', flexDirection: 'column', height: '100%', background: 'var(--bg)' }}
-    >
-      <div style={heroScopeStyle}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 18 }}>
-          <div
-            style={{
-              width: 44,
-              height: 44,
-              borderRadius: '50%',
-              background: 'var(--color-wifi-bg)',
-              border: '1px solid var(--color-wifi-border)',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              flexShrink: 0
-            }}
-          >
-            <svg viewBox="0 0 24 24" style={{ width: 21, height: 21 }}>
+    <div className="flex h-full flex-col bg-background">
+      <div role="status" className="sr-only">
+        Download complete: {download.fileName}
+      </div>
+      <HeroBand>
+        <div className="flex items-center gap-[18px]">
+          <div className="flex size-11 shrink-0 items-center justify-center rounded-full border border-[var(--color-wifi-border)] bg-[var(--color-wifi-bg)]">
+            <svg viewBox="0 0 24 24" className="size-[21px]" aria-hidden="true">
               <path
                 d="M5,13 L10,18 L19,7"
                 fill="none"
@@ -133,133 +72,66 @@ export function CompleteScreen({
               />
             </svg>
           </div>
-          <div style={{ minWidth: 0, flex: 1 }}>
-            <div
-              style={{
-                font: `700 16px/1.2 ${FONT_UI}`,
-                whiteSpace: 'nowrap',
-                overflow: 'hidden',
-                textOverflow: 'ellipsis'
-              }}
-            >
+          <div className="min-w-0 flex-1">
+            <div className="truncate font-sans text-[16px] leading-[1.2] font-bold">
               {download.fileName}
             </div>
-            <div
-              style={{
-                marginTop: 5,
-                font: `11.5px/1.3 ${FONT_MONO}`,
-                color: 'var(--text-tertiary)',
-                whiteSpace: 'nowrap',
-                overflow: 'hidden',
-                textOverflow: 'ellipsis'
-              }}
-            >
+            <div className="mt-[5px] truncate font-mono text-[11.5px] leading-[1.3] text-muted-foreground">
               {formatBytes(finalSize)} ·{' '}
               {toDisplayPath(dirnameOf(download.destinationPath), homeDir)}
             </div>
           </div>
-          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 5 }}>
-            <div
-              style={{
-                font: `500 9px/1 ${FONT_MONO}`,
-                letterSpacing: '0.16em',
-                color: 'var(--text-tertiary)'
-              }}
-            >
+          <div className="flex flex-col items-end gap-[5px]">
+            <div className="font-mono text-[9px] leading-none font-medium tracking-[0.16em] text-muted-foreground">
               AVERAGE
             </div>
-            <div style={{ display: 'flex', alignItems: 'baseline', gap: 6 }}>
-              <div
-                style={{
-                  font: `600 26px/0.9 ${FONT_MONO}`,
-                  letterSpacing: '-0.02em',
-                  color: 'var(--text)',
-                  fontVariantNumeric: 'tabular-nums'
-                }}
-              >
-                {formatSpeed(avgSpeed).split(' ')[0]}
+            <div className="flex items-baseline gap-1.5">
+              <div className="font-mono text-[26px] leading-[0.9] font-semibold tracking-[-0.02em] tabular-nums text-foreground">
+                {avgSpeedValue}
               </div>
-              <div style={{ font: `500 11px/1 ${FONT_MONO}`, color: 'var(--text-tertiary)' }}>
-                MB/s
+              <div className="font-mono text-[11px] leading-none font-medium text-muted-foreground">
+                {avgSpeedUnit}
               </div>
             </div>
-            {activeChipOption && (
-              <button
-                type="button"
-                onClick={() => setChipModeIndex((i) => (i + 1) % chipOptions.length)}
-                title={`${activeChipOption.tooltip} (click to toggle)`}
-                style={{
-                  ...accentChipStyle,
-                  display: 'inline-flex',
-                  alignItems: 'center',
-                  gap: 5,
-                  cursor: 'pointer',
-                  userSelect: 'none',
-                  border: '0.5px solid var(--color-usb-border)',
-                  background: 'var(--color-usb-bg)',
-                  color: 'var(--color-usb-text)'
-                }}
-              >
-                <span>{activeChipOption.label}</span>
-                <span style={{ opacity: 0.55, fontSize: 8.5 }}>⇄</span>
-              </button>
-            )}
           </div>
         </div>
-      </div>
+      </HeroBand>
 
-      <div
-        style={{
-          margin: '18px 20px',
-          ...statGridStyle,
-          gridTemplateColumns: 'repeat(5, minmax(0, 1fr))'
-        }}
-      >
+      <div className="mx-5 my-[18px] grid grid-cols-5 overflow-hidden rounded-[10px] border-[0.5px] border-border bg-card">
         {[
           { label: 'Size', value: formatBytes(finalSize) },
           { label: 'Time', value: formatDuration(elapsedSeconds) },
           { label: 'Peak', value: formatSpeed(peakSpeedBytesPerSec) },
           { label: 'Networks', value: String(groups.length) },
-          { label: 'Chunks', value: String(download.chunks.length) }
+          { label: 'Streams', value: String(download.chunks.length) }
         ].map((stat, index) => (
           <div
             key={stat.label}
-            style={{
-              padding: '11px 14px',
-              display: 'flex',
-              flexDirection: 'column',
-              gap: 5,
-              borderLeft: index > 0 ? '0.5px solid var(--border)' : undefined
-            }}
+            className={`flex flex-col gap-[5px] p-[11px_14px] ${
+              index > 0 ? 'border-l-[0.5px] border-border' : ''
+            }`}
           >
-            <div style={statLabelStyle}>{stat.label}</div>
-            <div style={statValueStyle}>{stat.value}</div>
+            <div className="font-mono text-[9px] leading-none font-medium tracking-[0.14em] text-muted-foreground uppercase">
+              {stat.label}
+            </div>
+            <div className="font-mono text-[14px] leading-none font-medium tabular-nums">
+              {stat.value}
+            </div>
           </div>
         ))}
       </div>
 
-      <div style={{ margin: '0 20px 16px', display: 'flex', flexDirection: 'column', gap: 8 }}>
-        <div style={sectionHeaderLabelStyle}>Speed over the download</div>
+      <div className="mx-5 mb-4 flex flex-col gap-2">
+        <h2 className={sectionHeaderClass}>Speed over the download</h2>
         <ThroughputChart
           order={groups.map((g, i) => ({ interfaceId: g.interfaceId, solid: visuals[i].solid }))}
           historyByInterface={speedHistoryByInterface}
         />
       </div>
 
-      <div
-        style={{ margin: '0 20px 20px', display: 'flex', flexDirection: 'column', gap: 9, flex: 1 }}
-      >
-        <div style={sectionHeaderLabelStyle}>Contribution by network</div>
-        <div
-          style={{
-            display: 'flex',
-            height: 10,
-            borderRadius: 999,
-            overflow: 'hidden',
-            background: 'var(--track-bg)',
-            gap: 2
-          }}
-        >
+      <div className="mx-5 mb-5 flex flex-1 flex-col gap-[9px]">
+        <h2 className={sectionHeaderClass}>Contribution by network</h2>
+        <div className="flex h-2.5 gap-0.5 overflow-hidden rounded-full bg-muted">
           {groups.map((group, index) => (
             <div
               key={group.interfaceId}
@@ -267,20 +139,18 @@ export function CompleteScreen({
             />
           ))}
         </div>
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 9 }}>
+        <div className="flex flex-col gap-[9px]">
           {groups.map((group, index) => (
-            <div key={group.interfaceId} style={{ display: 'flex', alignItems: 'center', gap: 9 }}>
+            <div key={group.interfaceId} className="flex items-center gap-[9px]">
               <div
-                style={{
-                  width: 7,
-                  height: 7,
-                  borderRadius: '50%',
-                  background: visuals[index].solid
-                }}
+                className="size-[7px] shrink-0 rounded-full"
+                style={{ background: visuals[index].solid }}
               />
-              <div style={{ font: `500 12px/1 ${FONT_UI}` }}>{visuals[index].name}</div>
-              <div style={{ flex: 1 }} />
-              <div style={{ font: `11.5px/1 ${FONT_MONO}`, color: 'var(--text-secondary)' }}>
+              <div className="font-sans text-[12px] leading-none font-medium">
+                {visuals[index].name}
+              </div>
+              <div className="flex-1" />
+              <div className="font-mono text-[11.5px] leading-none text-[var(--text-secondary)]">
                 {formatBytes(group.bytesDownloaded)} ·{' '}
                 {Math.round((group.bytesDownloaded / totalWeight) * 100)}%
               </div>
@@ -289,21 +159,20 @@ export function CompleteScreen({
         </div>
       </div>
 
-      <div style={footerStyle}>
-        <div style={footerTextStyle}>
-          reassembled from {download.chunks.length} chunks
-          {totalRetries > 0
-            ? ` · ${totalRetries} ${totalRetries === 1 ? 'retry' : 'retries'}`
-            : ' · 0 retries'}
+      <ScreenFooter>
+        <div className="shrink-0 font-mono text-[11px] leading-[1.4] whitespace-nowrap text-muted-foreground">
+          {`reassembled from ${totalChunkCount} chunks · ${totalRetries} ${
+            totalRetries === 1 ? 'retry' : 'retries'
+          }`}
         </div>
-        <div style={{ flex: 1 }} />
-        <button type="button" onClick={onNewDownload} style={secondaryButtonStyle}>
+        <div className="flex-1" />
+        <Button type="button" variant="secondary" onClick={onNewDownload}>
           New Download
-        </button>
-        <button type="button" onClick={handleReveal} style={primaryButtonStyle}>
+        </Button>
+        <Button type="button" onClick={handleReveal}>
           {window.plexo.platform === 'darwin' ? 'Reveal in Finder' : 'Show in folder'}
-        </button>
-      </div>
+        </Button>
+      </ScreenFooter>
     </div>
   )
 }

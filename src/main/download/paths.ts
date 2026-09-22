@@ -39,6 +39,7 @@ function sanitizeFileName(fileName: string): string {
  * download doesn't end up producing a file.
  */
 export async function reserveDestinationPath(directory: string, fileName: string): Promise<string> {
+  await mkdir(directory, { recursive: true })
   fileName = sanitizeFileName(fileName)
   const ext = extname(fileName)
   const base = basename(fileName, ext)

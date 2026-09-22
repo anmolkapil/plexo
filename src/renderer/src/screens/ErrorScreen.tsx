@@ -1,15 +1,9 @@
 import type { DownloadState } from '@shared/types'
 import { useState } from 'react'
-import {
-  DANGER,
-  FONT_MONO,
-  FONT_UI,
-  footerStyle,
-  footerTextStyle,
-  primaryButtonStyle,
-  secondaryButtonStyle
-} from '../theme'
-import { fileExtensionBadge, formatBytes } from '../utils/format'
+import { ScreenFooter } from '../components/ScreenFooter'
+import { TruncatedText } from '../components/TruncatedText'
+import { Button } from '../components/ui/button'
+import { describeError, fileExtensionBadge, formatBytes } from '../utils/format'
 
 export function ErrorScreen({
   download,
@@ -26,6 +20,12 @@ export function ErrorScreen({
   const percent = knownSize
     ? Math.min(100, Math.round((download.bytesDownloaded / download.totalBytes) * 100))
     : 0
+  const heading = cancelled ? 'Download Cancelled' : 'Download Failed'
+  const description = cancelled
+    ? 'The download was stopped before finishing.'
+    : download.error
+      ? describeError(download.error)
+      : 'An error occurred during transfer.'
 
   const handleCopyUrl = async (): Promise<void> => {
     try {
@@ -38,51 +38,19 @@ export function ErrorScreen({
   }
 
   return (
-    <div
-      style={{ display: 'flex', flexDirection: 'column', height: '100%', background: 'var(--bg)' }}
-    >
-      <div
-        style={{
-          flex: 1,
-          display: 'flex',
-          flexDirection: 'column',
-          alignItems: 'center',
-          justifyContent: 'center',
-          padding: '24px 20px'
-        }}
-      >
-        <div
-          style={{
-            maxWidth: 440,
-            width: '100%',
-            borderRadius: 14,
-            padding: '28px 24px',
-            background: 'var(--bg-secondary)',
-            border: '0.5px solid var(--border-strong)',
-            boxShadow: '0 16px 40px rgba(0, 0, 0, 0.45), 0 2px 8px rgba(0, 0, 0, 0.2)',
-            display: 'flex',
-            flexDirection: 'column',
-            alignItems: 'center',
-            gap: 18,
-            textAlign: 'center'
-          }}
-        >
+    <div className="flex h-full flex-col bg-background">
+      <div className="flex flex-1 flex-col items-center justify-center px-5 py-6">
+        <div className="flex w-full max-w-[440px] flex-col items-center gap-[18px] rounded-[14px] border-[0.5px] border-[var(--border-strong)] bg-card p-[28px_24px] text-center shadow-[0_16px_40px_rgba(0,0,0,0.45),0_2px_8px_rgba(0,0,0,0.2)]">
           {/* Status Icon */}
           <div
-            style={{
-              width: 48,
-              height: 48,
-              borderRadius: '50%',
-              background: cancelled ? 'var(--color-usb-bg)' : 'var(--color-danger-bg)',
-              border: `1px solid ${cancelled ? 'var(--color-usb-border)' : 'var(--color-danger-border)'}`,
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              flexShrink: 0
-            }}
+            className={`flex size-12 shrink-0 items-center justify-center rounded-full border ${
+              cancelled
+                ? 'border-[var(--color-usb-border)] bg-[var(--color-usb-bg)]'
+                : 'border-[var(--color-danger-border)] bg-[var(--color-danger-bg)]'
+            }`}
           >
             {cancelled ? (
-              <svg viewBox="0 0 24 24" style={{ width: 22, height: 22 }}>
+              <svg viewBox="0 0 24 24" className="size-[22px]" aria-hidden="true">
                 <circle
                   cx="12"
                   cy="12"
@@ -102,86 +70,50 @@ export function ErrorScreen({
                 />
               </svg>
             ) : (
-              <svg viewBox="0 0 24 24" style={{ width: 22, height: 22 }}>
-                <circle cx="12" cy="12" r="9" fill="none" stroke={DANGER} strokeWidth="2" />
+              <svg viewBox="0 0 24 24" className="size-[22px]" aria-hidden="true">
+                <circle
+                  cx="12"
+                  cy="12"
+                  r="9"
+                  fill="none"
+                  className="stroke-destructive"
+                  strokeWidth="2"
+                />
                 <line
                   x1="12"
                   y1="8"
                   x2="12"
                   y2="12.5"
-                  stroke={DANGER}
+                  className="stroke-destructive"
                   strokeWidth="2.4"
                   strokeLinecap="round"
                 />
-                <circle cx="12" cy="15.5" r="1.2" fill={DANGER} />
+                <circle cx="12" cy="15.5" r="1.2" className="fill-destructive" />
               </svg>
             )}
           </div>
 
           {/* Heading */}
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
-            <div style={{ font: `700 17px/1.2 ${FONT_UI}`, color: 'var(--text)' }}>
-              {cancelled ? 'Download Cancelled' : 'Download Failed'}
+          <div role="alert" className="flex flex-col gap-[5px]">
+            <div className="font-sans text-[17px] leading-[1.2] font-bold text-foreground">
+              {heading}
             </div>
-            <div style={{ font: `12px/1.4 ${FONT_UI}`, color: 'var(--text-secondary)' }}>
-              {cancelled
-                ? 'The download was stopped before finishing.'
-                : download.error || 'An error occurred during transfer.'}
+            <div className="font-sans text-[12px] leading-[1.4] text-[var(--text-secondary)]">
+              {description}
             </div>
           </div>
 
           {/* File capsule */}
-          <div
-            style={{
-              width: '100%',
-              borderRadius: 9,
-              padding: '10px 12px',
-              background: 'var(--bg)',
-              border: '0.5px solid var(--border)',
-              display: 'flex',
-              alignItems: 'center',
-              gap: 11,
-              textAlign: 'left'
-            }}
-          >
-            <div
-              style={{
-                width: 34,
-                height: 34,
-                borderRadius: 7,
-                background: 'var(--bg-secondary)',
-                border: '0.5px solid var(--border-strong)',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                font: `600 8.5px/1 ${FONT_MONO}`,
-                color: 'var(--text-secondary)',
-                flexShrink: 0
-              }}
-            >
+          <div className="flex w-full items-center gap-[11px] rounded-[9px] border-[0.5px] border-border bg-background p-[10px_12px] text-left">
+            <div className="flex size-[34px] shrink-0 items-center justify-center rounded-[7px] border-[0.5px] border-[var(--border-strong)] bg-card font-mono text-[8.5px] leading-none font-semibold text-[var(--text-secondary)]">
               {fileExtensionBadge(download.fileName)}
             </div>
-            <div style={{ flex: 1, minWidth: 0 }}>
-              <div
-                style={{
-                  font: `600 12.5px/1.3 ${FONT_UI}`,
-                  color: 'var(--text)',
-                  whiteSpace: 'nowrap',
-                  overflow: 'hidden',
-                  textOverflow: 'ellipsis'
-                }}
-                title={download.fileName}
-              >
-                {download.fileName}
-              </div>
-              <div
-                style={{
-                  marginTop: 2,
-                  font: `11px/1 ${FONT_MONO}`,
-                  color: 'var(--text-tertiary)',
-                  fontVariantNumeric: 'tabular-nums'
-                }}
-              >
+            <div className="min-w-0 flex-1">
+              <TruncatedText
+                text={download.fileName}
+                className="font-sans text-[12.5px] leading-[1.3] font-semibold text-foreground"
+              />
+              <div className="mt-0.5 font-mono text-[11px] leading-none tabular-nums text-muted-foreground">
                 {download.bytesDownloaded > 0 ? (
                   <>
                     {formatBytes(download.bytesDownloaded)}
@@ -197,73 +129,32 @@ export function ErrorScreen({
           </div>
 
           {/* Action Buttons in Center */}
-          <div
-            style={{
-              display: 'flex',
-              gap: 10,
-              width: '100%',
-              justifyContent: 'center',
-              marginTop: 4
-            }}
-          >
-            <button
-              type="button"
-              onClick={onDownloadAgain}
-              style={{
-                ...primaryButtonStyle,
-                padding: '9px 22px',
-                display: 'inline-flex',
-                alignItems: 'center',
-                gap: 6
-              }}
-            >
-              <span>Download Again</span>
-            </button>
-            <button
-              type="button"
-              onClick={onNewDownload}
-              style={{
-                ...secondaryButtonStyle,
-                padding: '9px 18px'
-              }}
-            >
+          <div className="mt-1 flex w-full justify-center gap-2.5">
+            <Button type="button" onClick={onDownloadAgain}>
+              Download Again
+            </Button>
+            <Button type="button" variant="secondary" onClick={onNewDownload}>
               New Download
-            </button>
+            </Button>
           </div>
         </div>
       </div>
 
       {/* Footer with properly constrained, non-overflowing URL */}
-      <div style={{ ...footerStyle, minWidth: 0 }}>
-        <div
-          style={{
-            ...footerTextStyle,
-            flex: 1,
-            minWidth: 0,
-            overflow: 'hidden',
-            textOverflow: 'ellipsis',
-            whiteSpace: 'nowrap'
-          }}
-          title={download.url}
-        >
-          {download.url}
+      <ScreenFooter className="min-w-0">
+        <div className="min-w-0 flex-1 font-mono text-[11px] leading-none text-muted-foreground">
+          <TruncatedText text={download.url} />
         </div>
         <button
           type="button"
           onClick={handleCopyUrl}
-          style={{
-            border: 'none',
-            background: 'none',
-            font: `500 11px/1 ${FONT_MONO}`,
-            color: copied ? 'var(--color-success)' : 'var(--color-accent)',
-            cursor: 'pointer',
-            padding: '2px 4px',
-            flexShrink: 0
-          }}
+          className={`min-h-6 shrink-0 border-none bg-transparent px-1 py-0.5 font-mono text-[11px] leading-none ${
+            copied ? 'text-[var(--color-success)]' : 'text-primary'
+          }`}
         >
           {copied ? 'Copied' : 'Copy URL'}
         </button>
-      </div>
+      </ScreenFooter>
     </div>
   )
 }

@@ -1,429 +1,285 @@
-import { useRef, useState } from 'react'
-import { useAppStore } from '../store/useAppStore'
-import type { BlockState } from '@shared/types'
-import {
-  DANGER,
-  FONT_MONO,
-  FONT_UI,
-  NETWORK_ROW_GRID_COLUMNS,
-  resolveNetworkVisual,
-  type NetworkColorId
-} from '../theme'
+import type { BlockState, ChunkState } from '@shared/types'
+import { useState } from 'react'
+import { DANGER, type NetworkVisual } from '../theme'
 import type { NetworkGroup } from '../utils/format'
 import { formatBytes, formatSpeed } from '../utils/format'
-import { NetworkEditorFields } from './NetworkEditorFields'
+import { ColorBadge } from './ColorBadge'
+import { NetworkEditPopover } from './NetworkEditPopover'
+import { TruncatedText } from './TruncatedText'
+import { Button } from './ui/button'
 
 interface NetworkRowProps {
   group: NetworkGroup
+  visual: NetworkVisual
   sharePercent: number
   totalBytes?: number | null
-  totalDownloaded?: number
   blocks?: BlockState[]
+}
+
+// Every row — this one and each expanded stream row — is a direct col-span-full subgrid child of
+// DownloadingScreen's networks grid, so all rows share one set of column tracks instead of each
+// re-deriving its own and hoping they line up. The grid's side gutters live *inside* its first and
+// last tracks (see NETWORK_ROW_GRID_COLUMNS), which is what lets a row's divider and fill be a
+// plain border/background on the row itself: its box already reaches both window edges.
+const rowClass = 'col-span-full grid grid-cols-subgrid items-center gap-3'
+
+function ProgressBar({
+  percent,
+  color,
+  label,
+  className
+}: {
+  percent: number
+  color: string
+  label: string
+  className: string
+}): React.JSX.Element {
+  return (
+    <div
+      role="cell"
+      className={`w-full overflow-hidden rounded-full border-[0.5px] border-[var(--border-strong)] bg-[var(--track-bg)] ${className}`}
+    >
+      <div
+        role="progressbar"
+        aria-label={label}
+        aria-valuenow={Math.round(percent)}
+        className="h-full rounded-full transition-[width] duration-200 ease-out"
+        style={{ width: `${percent}%`, background: color }}
+      />
+    </div>
+  )
+}
+
+/** What an expanded stream row shows: the block that stream is working on right now and how far
+ * along it is. A stream holding no block (idle, or finished) has nothing of its own to measure,
+ * so it shows only what it has delivered in total. */
+function describeStream(
+  chunk: ChunkState,
+  blocks: BlockState[] | undefined
+): {
+  block: BlockState | undefined
+  size: number
+  downloaded: number
+  percent: number
+  done: boolean
+} {
+  const block = chunk.currentBlockIndex != null ? blocks?.[chunk.currentBlockIndex] : undefined
+  const done = chunk.status === 'completed' || block?.status === 'completed'
+  if (!block) {
+    return { block, size: 0, downloaded: chunk.bytesDownloaded, percent: done ? 100 : 0, done }
+  }
+
+  const size = block.rangeEnd !== null ? block.rangeEnd - block.rangeStart + 1 : 0
+  const percent = done ? 100 : size > 0 ? Math.min(100, (block.bytesDownloaded / size) * 100) : 0
+  return { block, size, downloaded: block.bytesDownloaded, percent, done }
 }
 
 export function NetworkRow({
   group,
+  visual,
   sharePercent,
   totalBytes,
   blocks
 }: NetworkRowProps): React.JSX.Element {
-  const [editing, setEditing] = useState(false)
   const [expanded, setExpanded] = useState(false)
-  const buttonRef = useRef<HTMLButtonElement>(null)
-  const preference = useAppStore((store) => store.networkPreferences[group.interfaceId])
-  const setNetworkPreference = useAppStore((store) => store.setNetworkPreference)
-  const visual = resolveNetworkVisual(group.interfaceKind, group.interfaceLabel, preference)
   const hasError = group.chunks.some((chunk) => chunk.status === 'error')
   const isActive = group.chunks.some((chunk) => chunk.status === 'downloading')
 
-  const groupShareDisplay =
-    group.bytesDownloaded === 0
-      ? '0%'
-      : Math.round(sharePercent) === 0 && sharePercent > 0
-        ? '<1%'
-        : `${Math.round(sharePercent)}%`
+  const rounded = Math.round(sharePercent)
+  const shareLabel = group.bytesDownloaded === 0 ? '0%' : rounded === 0 ? '<1%' : `${rounded}%`
 
   return (
-    <div>
+    <>
       <div
-        style={{
-          display: 'grid',
-          gridTemplateColumns: NETWORK_ROW_GRID_COLUMNS,
-          gap: 12,
-          alignItems: 'center',
-          padding: '11px 20px',
-          borderTop: '0.5px solid var(--border-subtle)'
-        }}
+        role="row"
+        className={`${rowClass} border-t-[0.5px] border-[var(--border-subtle)] py-[11px]`}
       >
         <div
+          role="cell"
+          aria-label={hasError ? 'Error' : isActive ? 'Active' : 'Idle'}
+          className="ml-5 size-2 rounded-full"
           style={{
-            width: 8,
-            height: 8,
-            borderRadius: '50%',
             background: hasError ? DANGER : visual.solid,
             animation: isActive ? 'plexo-glow 1.8s infinite' : undefined,
             opacity: isActive || hasError ? 1 : 0.65
           }}
         />
-        <div style={{ minWidth: 0, display: 'flex', alignItems: 'center', gap: 6 }}>
-          <span
-            style={{
-              font: `600 12.5px/1.2 ${FONT_UI}`,
-              whiteSpace: 'nowrap',
-              overflow: 'hidden',
-              textOverflow: 'ellipsis',
-              color: 'var(--text)'
-            }}
-            title={visual.name}
-          >
-            {visual.name}
-          </span>
-          <button
+        <div role="cell" className="flex min-w-0 items-center gap-[6px]">
+          <TruncatedText
+            text={visual.name}
+            className="font-sans text-[12.5px] leading-[1.2] font-semibold text-foreground"
+          />
+          <NetworkEditPopover
+            interfaceId={group.interfaceId}
+            interfaceKind={group.interfaceKind}
+            osName={group.interfaceLabel}
+          />
+          <Button
             type="button"
+            variant="outline"
+            size="xs"
             onClick={() => setExpanded((v) => !v)}
-            title={expanded ? 'Collapse streams' : 'Expand streams'}
-            style={{
-              display: 'inline-flex',
-              alignItems: 'center',
-              gap: 3,
-              padding: '2px 6px',
-              borderRadius: 4,
-              background: expanded ? 'var(--bg-tertiary)' : 'var(--bg-secondary)',
-              border: '0.5px solid var(--border)',
-              font: `500 10px/1 ${FONT_MONO}`,
-              color: expanded ? 'var(--text)' : 'var(--text-secondary)',
-              cursor: 'pointer',
-              flexShrink: 0,
-              userSelect: 'none',
-              lineHeight: 1
-            }}
+            aria-expanded={expanded}
+            className="h-auto cursor-pointer rounded-[4px] border-[0.5px] bg-card px-[7px] py-[3px] font-mono text-[10.5px] leading-none font-medium text-[var(--text-secondary)] aria-expanded:bg-secondary dark:bg-card"
           >
-            <span>{group.chunks.length} streams</span>
-            <span style={{ fontSize: 7.5, opacity: 0.75 }}>{expanded ? '▲' : '▼'}</span>
-          </button>
-          <button
-            ref={buttonRef}
-            type="button"
-            onClick={() => setEditing((value) => !value)}
-            title="Rename or recolor this network"
-            style={{
-              border: 'none',
-              background: 'none',
-              color: 'var(--text-tertiary)',
-              font: `700 12px/1 ${FONT_UI}`,
-              cursor: 'pointer',
-              padding: '2px 4px',
-              flexShrink: 0
-            }}
-          >
-            ⋯
-          </button>
+            {group.chunks.length} {group.chunks.length === 1 ? 'stream' : 'streams'}
+            <span aria-hidden className="text-[7.5px] opacity-75">
+              {expanded ? '▲' : '▼'}
+            </span>
+          </Button>
         </div>
-        <div style={{ display: 'flex', alignItems: 'center', minWidth: 0 }}>
-          <div
-            style={{
-              flex: 1,
-              height: 6,
-              borderRadius: 999,
-              background: 'var(--track-bg)',
-              border: '0.5px solid var(--border-strong)',
-              overflow: 'hidden'
-            }}
-          >
-            <div
-              style={{
-                height: '100%',
-                width:
-                  totalBytes && totalBytes > 0
-                    ? `${Math.min(100, Math.max(0, (group.bytesDownloaded / totalBytes) * 100))}%`
-                    : '0%',
-                background: visual.solid,
-                borderRadius: 999,
-                transition: 'width 0.25s ease-out'
-              }}
-            />
-          </div>
-        </div>
+        <ProgressBar
+          className="h-1.5"
+          label={`${visual.name} progress`}
+          percent={
+            totalBytes && totalBytes > 0
+              ? Math.min(100, (group.bytesDownloaded / totalBytes) * 100)
+              : 0
+          }
+          color={visual.solid}
+        />
         <div
-          style={{
-            textAlign: 'right',
-            font: `500 11.5px/1 ${FONT_MONO}`,
-            color: sharePercent > 0 ? 'var(--text)' : 'var(--text-tertiary)',
-            fontVariantNumeric: 'tabular-nums'
-          }}
+          role="cell"
+          className="text-right font-mono text-[11.5px] leading-none font-medium tabular-nums"
+          style={{ color: sharePercent > 0 ? 'var(--text)' : 'var(--text-tertiary)' }}
         >
-          {groupShareDisplay}
+          {shareLabel}
         </div>
         <div
-          style={{
-            textAlign: 'right',
-            font: `600 12.5px/1 ${FONT_MONO}`,
-            color: isActive ? visual.text : 'var(--text-tertiary)',
-            fontVariantNumeric: 'tabular-nums'
-          }}
+          role="cell"
+          className="text-right font-mono text-[12.5px] leading-none font-semibold tabular-nums"
+          style={{ color: isActive ? visual.text : 'var(--text-tertiary)' }}
         >
           {isActive ? formatSpeed(group.speedBytesPerSec) : '—'}
         </div>
         <div
-          style={{
-            textAlign: 'right',
-            font: `11.5px/1 ${FONT_MONO}`,
-            color: 'var(--text-secondary)',
-            fontVariantNumeric: 'tabular-nums'
-          }}
+          role="cell"
+          className="pr-5 text-right font-mono text-[11.5px] leading-none text-[var(--text-secondary)] tabular-nums"
         >
           {formatBytes(group.bytesDownloaded)}
         </div>
       </div>
-      {expanded && group.chunks.length > 0 && (
-        <div
-          style={{
-            padding: '6px 20px 10px',
-            display: 'flex',
-            flexDirection: 'column',
-            gap: 6,
-            background: 'var(--bg-secondary)',
-            borderTop: '0.5px solid var(--border-subtle)',
-            borderBottom: '0.5px solid var(--border-subtle)'
-          }}
-        >
-          {group.chunks.map((chunk, index) => {
-            const isChunkActive = chunk.status === 'downloading'
-            const isChunkDone = chunk.status === 'completed'
-            const isChunkError = chunk.status === 'error'
 
-            const currentBlock =
-              blocks && blocks.length > 0
-                ? ((chunk.currentBlockIndex != null
-                    ? blocks[chunk.currentBlockIndex]
-                    : undefined) ?? blocks.find((b) => b.rangeStart === chunk.rangeStart))
-                : undefined
+      {expanded &&
+        group.chunks.map((chunk, index) => {
+          const isFirst = index === 0
+          const isLast = index === group.chunks.length - 1
+          const isChunkActive = chunk.status === 'downloading'
+          const isChunkError = chunk.status === 'error'
+          const stream = describeStream(chunk, blocks)
+          const statusText = stream.done
+            ? 'Done'
+            : chunk.status === 'paused'
+              ? 'Paused'
+              : chunk.status === 'retrying'
+                ? 'Retrying…'
+                : chunk.status === 'error'
+                  ? 'Failed'
+                  : 'Idle'
 
-            const chunkSize = currentBlock
-              ? currentBlock.rangeEnd !== null
-                ? currentBlock.rangeEnd - currentBlock.rangeStart + 1
-                : 0
-              : chunk.rangeEnd !== null
-                ? chunk.rangeEnd - chunk.rangeStart + 1
-                : totalBytes
-                  ? totalBytes - chunk.rangeStart
-                  : 0
+          return (
+            <div
+              role="row"
+              key={chunk.id}
+              className={`${rowClass} border-[var(--border-subtle)] bg-card py-[6px] font-mono text-[11px] leading-[1.2] ${
+                isFirst ? 'border-t-[0.5px] pt-[9px]' : ''
+              } ${isLast ? 'border-b-[0.5px] pb-[11px]' : ''}`}
+            >
+              <div role="cell" className="flex justify-center pl-5">
+                <div
+                  className="size-[5px] rounded-full"
+                  style={{
+                    background: isChunkError
+                      ? DANGER
+                      : isChunkActive || stream.done
+                        ? visual.solid
+                        : 'var(--icon-muted)',
+                    opacity: isChunkActive || stream.done ? 1 : 0.4
+                  }}
+                />
+              </div>
 
-            const chunkBytesDownloaded = currentBlock
-              ? currentBlock.bytesDownloaded
-              : isChunkDone && chunkSize > 0
-                ? chunkSize
-                : chunk.bytesDownloaded
+              <div role="cell" className="flex min-w-0 items-center gap-[6px]">
+                <span className="font-medium whitespace-nowrap text-foreground">
+                  Stream #{index + 1}
+                </span>
+                {stream.block && (
+                  <span className="rounded-[3px] border-[0.5px] border-border bg-secondary px-[4.5px] py-[1.5px] font-mono text-[9px] leading-none whitespace-nowrap text-muted-foreground">
+                    Chunk #{stream.block.index + 1}
+                  </span>
+                )}
+                {chunk.hedge && (
+                  <span
+                    title="Racing another stream for this chunk, which was running slowly"
+                    className="rounded-[3px] border-[0.5px] border-border px-[4.5px] py-[1.5px] font-mono text-[9px] leading-none whitespace-nowrap text-muted-foreground"
+                  >
+                    BACKUP
+                  </span>
+                )}
+                {isChunkActive ? (
+                  <ColorBadge
+                    bg={visual.bg}
+                    border={visual.border}
+                    text={visual.text}
+                    // Height is pinned, not `h-auto`: this badge swaps in and out as a stream
+                    // goes active, and the cell is only as tall as "Stream #N" (13.2px). Left to
+                    // size itself the badge came out taller than that and grew the row on every
+                    // swap. 13px keeps it under, whatever line-height it ends up inheriting.
+                    className="h-[13px] rounded-[3px] px-[5px] py-px text-[9px] font-semibold tracking-[0.04em]"
+                  >
+                    ACTIVE
+                  </ColorBadge>
+                ) : (
+                  <span
+                    className={`text-[9.5px] ${
+                      chunk.status === 'retrying' ? 'text-destructive' : 'text-muted-foreground'
+                    }`}
+                  >
+                    {statusText}
+                  </span>
+                )}
+              </div>
 
-            const chunkPercent =
-              chunkSize > 0
-                ? Math.min(100, Math.max(0, (chunkBytesDownloaded / chunkSize) * 100))
-                : 0
+              <ProgressBar
+                className="h-[5px]"
+                label={`Stream #${index + 1} progress`}
+                percent={stream.percent}
+                color={isChunkError ? DANGER : visual.solid}
+              />
 
-            const isCurrentBlockDone =
-              currentBlock?.status === 'completed' ||
-              isChunkDone ||
-              (chunkSize > 0 && chunkPercent >= 100)
-
-            return (
               <div
-                key={chunk.id}
+                role="cell"
+                className="text-right font-mono text-[11px] leading-none font-medium tabular-nums"
                 style={{
-                  display: 'grid',
-                  gridTemplateColumns: NETWORK_ROW_GRID_COLUMNS,
-                  gap: 12,
-                  alignItems: 'center',
-                  padding: '3px 0',
-                  font: `11px/1.2 ${FONT_MONO}`
+                  color: stream.done
+                    ? visual.text
+                    : isChunkActive
+                      ? 'var(--text)'
+                      : 'var(--text-tertiary)'
                 }}
               >
-                <div style={{ display: 'flex', justifyContent: 'center' }}>
-                  <div
-                    style={{
-                      width: 5,
-                      height: 5,
-                      borderRadius: '50%',
-                      background: isChunkError
-                        ? DANGER
-                        : isCurrentBlockDone
-                          ? visual.solid
-                          : isChunkActive
-                            ? visual.solid
-                            : 'var(--icon-muted)',
-                      opacity: isChunkActive || isCurrentBlockDone ? 1 : 0.4
-                    }}
-                  />
-                </div>
-
-                <div style={{ display: 'flex', alignItems: 'center', gap: 6, minWidth: 0 }}>
-                  <span
-                    style={{
-                      color: 'var(--text)',
-                      fontWeight: 500,
-                      whiteSpace: 'nowrap'
-                    }}
-                  >
-                    Stream #{index + 1}
-                  </span>
-                  {currentBlock && (
-                    <span
-                      style={{
-                        font: `500 9px/1 ${FONT_MONO}`,
-                        color: 'var(--text-tertiary)',
-                        background: 'var(--bg-tertiary)',
-                        padding: '1.5px 4.5px',
-                        borderRadius: 3,
-                        border: '0.5px solid var(--border)',
-                        whiteSpace: 'nowrap'
-                      }}
-                      title={`Range: ${currentBlock.rangeStart} – ${currentBlock.rangeEnd ?? 'end'}`}
-                    >
-                      Chunk #{currentBlock.index + 1}
-                    </span>
-                  )}
-                  {isChunkActive ? (
-                    <span
-                      style={{
-                        padding: '1px 5px',
-                        borderRadius: 3,
-                        background: visual.bg,
-                        border: `0.5px solid ${visual.border}`,
-                        color: visual.text,
-                        fontSize: '9px',
-                        fontWeight: 600,
-                        letterSpacing: '0.04em'
-                      }}
-                    >
-                      ACTIVE
-                    </span>
-                  ) : isCurrentBlockDone ? (
-                    <span
-                      style={{
-                        color: 'var(--text-tertiary)',
-                        fontSize: '9.5px'
-                      }}
-                    >
-                      Done
-                    </span>
-                  ) : chunk.status === 'paused' ? (
-                    <span
-                      style={{
-                        color: 'var(--text-tertiary)',
-                        fontSize: '9.5px'
-                      }}
-                    >
-                      Paused
-                    </span>
-                  ) : chunk.status === 'retrying' ? (
-                    <span
-                      style={{
-                        color: DANGER,
-                        fontSize: '9.5px'
-                      }}
-                    >
-                      Retrying…
-                    </span>
-                  ) : (
-                    <span
-                      style={{
-                        color: 'var(--text-tertiary)',
-                        fontSize: '9.5px'
-                      }}
-                    >
-                      Waiting
-                    </span>
-                  )}
-                </div>
-
-                <div style={{ display: 'flex', alignItems: 'center', minWidth: 0 }}>
-                  <div
-                    style={{
-                      flex: 1,
-                      height: 5,
-                      borderRadius: 999,
-                      background: 'var(--track-bg)',
-                      border: '0.5px solid var(--border-strong)',
-                      overflow: 'hidden'
-                    }}
-                    title={
-                      chunkSize > 0
-                        ? `Chunk progress: ${formatBytes(chunkBytesDownloaded)} of ${formatBytes(chunkSize)} (${Math.round(chunkPercent)}%)`
-                        : undefined
-                    }
-                  >
-                    <div
-                      style={{
-                        height: '100%',
-                        width: isCurrentBlockDone ? '100%' : `${chunkPercent}%`,
-                        background: isChunkError ? DANGER : visual.solid,
-                        borderRadius: 999,
-                        transition: 'width 0.2s ease-out'
-                      }}
-                    />
-                  </div>
-                </div>
-
-                <div
-                  style={{
-                    textAlign: 'right',
-                    font: `500 11px/1 ${FONT_MONO}`,
-                    color: isCurrentBlockDone
-                      ? visual.text
-                      : isChunkActive
-                        ? 'var(--text)'
-                        : 'var(--text-tertiary)',
-                    fontVariantNumeric: 'tabular-nums'
-                  }}
-                >
-                  {Math.round(chunkPercent)}%
-                </div>
-
-                <div
-                  style={{
-                    textAlign: 'right',
-                    font: `500 11px/1 ${FONT_MONO}`,
-                    color: isChunkActive ? visual.text : 'var(--text-tertiary)',
-                    fontVariantNumeric: 'tabular-nums'
-                  }}
-                >
-                  {isChunkActive ? formatSpeed(chunk.speedBytesPerSec) : '—'}
-                </div>
-
-                <div
-                  style={{
-                    textAlign: 'right',
-                    font: `11px/1 ${FONT_MONO}`,
-                    color: 'var(--text-secondary)',
-                    fontVariantNumeric: 'tabular-nums',
-                    whiteSpace: 'nowrap'
-                  }}
-                  title={
-                    chunkSize > 0
-                      ? `${formatBytes(chunkBytesDownloaded)} of ${formatBytes(chunkSize)}`
-                      : formatBytes(chunkBytesDownloaded)
-                  }
-                >
-                  {chunkSize > 0
-                    ? `${formatBytes(chunkBytesDownloaded)} / ${formatBytes(chunkSize)}`
-                    : formatBytes(chunkBytesDownloaded)}
-                </div>
+                {stream.block || stream.done ? `${Math.round(stream.percent)}%` : '—'}
               </div>
-            )
-          })}
-        </div>
-      )}
-      {editing && (
-        <NetworkEditorFields
-          anchorRef={buttonRef}
-          name={preference?.customName ?? ''}
-          onNameChange={(customName) => setNetworkPreference(group.interfaceId, { customName })}
-          namePlaceholder={group.interfaceLabel}
-          colorId={preference?.colorId as NetworkColorId | undefined}
-          onColorSelect={(colorId) => setNetworkPreference(group.interfaceId, { colorId })}
-          interfaceKind={group.interfaceKind}
-          onDone={() => setEditing(false)}
-        />
-      )}
-    </div>
+
+              <div
+                role="cell"
+                className="text-right font-mono text-[11px] leading-none font-medium tabular-nums"
+                style={{ color: isChunkActive ? visual.text : 'var(--text-tertiary)' }}
+              >
+                {isChunkActive ? formatSpeed(chunk.speedBytesPerSec) : '—'}
+              </div>
+
+              <div
+                role="cell"
+                className="pr-5 text-right font-mono text-[11px] leading-none whitespace-nowrap text-[var(--text-secondary)] tabular-nums"
+              >
+                {stream.size > 0
+                  ? `${formatBytes(stream.downloaded)} / ${formatBytes(stream.size)}`
+                  : formatBytes(stream.downloaded)}
+              </div>
+            </div>
+          )
+        })}
+    </>
   )
 }

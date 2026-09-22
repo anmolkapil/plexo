@@ -1,10 +1,11 @@
 import { electronApp, is, optimizer } from '@electron-toolkit/utils'
-import { app, BrowserWindow, nativeImage, nativeTheme, shell } from 'electron'
+import { app, BrowserWindow, Menu, nativeTheme, shell } from 'electron'
 import { join } from 'path'
-import iconDark from '../../resources/icon-dark.png?asset'
-import iconLight from '../../resources/icon-light.png?asset'
+import icon from '../../resources/icon-dark.png?asset'
 import { registerIpcHandlers } from './ipc/handlers'
 import { loadThemeSource } from './settings'
+import { testKnobs } from './testKnobs'
+import { IpcChannels } from '../shared/ipc-channels'
 import type { DownloadManager } from './download/downloadManager'
 
 // In dev mode the app runs as the raw `electron` binary, which otherwise shows "Electron" in
@@ -12,23 +13,34 @@ import type { DownloadManager } from './download/downloadManager'
 // this from electron-builder's productName, but setting it here keeps dev and packaged in sync.
 app.setName('Plexo')
 
+// Each e2e test runs against its own throwaway userData folder (downloads, manifests, settings).
+if (testKnobs.userDataDir) app.setPath('userData', testKnobs.userDataDir)
+
 let mainWindow: BrowserWindow | null = null
 let downloadManager: DownloadManager | null = null
 let quitAfterSuspending = false
 
-// The bundled app icon (build/icon.*) is fixed at build time, but the dock/taskbar icon
-// can still be swapped at runtime so it matches the OS's light/dark appearance live.
-function currentIconPath(): string {
-  return nativeTheme.shouldUseDarkColors ? iconDark : iconLight
-}
-
-function applyThemedIcon(): void {
-  const image = nativeImage.createFromPath(currentIconPath())
-  if (process.platform === 'darwin') {
-    app.dock?.setIcon(image)
-  } else {
-    mainWindow?.setIcon(image)
-  }
+// Only wired in dev — mirrors the default Electron menu (app/edit/view/window) plus one item to
+// toggle the renderer's floating simulate-download panel, which itself only renders in dev.
+function installDevMenu(): void {
+  Menu.setApplicationMenu(
+    Menu.buildFromTemplate([
+      ...(process.platform === 'darwin' ? [{ role: 'appMenu' as const }] : []),
+      { role: 'editMenu' },
+      { role: 'viewMenu' },
+      { role: 'windowMenu' },
+      {
+        label: 'Developer',
+        submenu: [
+          {
+            label: 'Toggle Dev Tools Panel',
+            accelerator: 'CmdOrCtrl+Shift+D',
+            click: () => mainWindow?.webContents.send(IpcChannels.toggleDevToolsPanel)
+          }
+        ]
+      }
+    ])
+  )
 }
 
 function createWindow(): void {
@@ -43,7 +55,7 @@ function createWindow(): void {
     // Matches the renderer's dark-mode background so a live window resize
     // (which briefly exposes the raw window background) doesn't flash white.
     backgroundColor: nativeTheme.shouldUseDarkColors ? '#1c1c1e' : '#ffffff',
-    ...(process.platform !== 'darwin' ? { icon: currentIconPath() } : {}),
+    ...(process.platform !== 'darwin' ? { icon } : {}),
     // Design v2 draws its own logo + status readout where the title normally sits — on macOS,
     // keep the real traffic lights (still native, still draggable) but let the renderer's own
     // title bar occupy the rest of the strip instead of an OS-drawn title.
@@ -52,12 +64,13 @@ function createWindow(): void {
       : {}),
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
-      sandbox: false
+      // A hidden e2e window would otherwise have its timers throttled.
+      backgroundThrottling: !testKnobs.hideWindow
     }
   })
 
   mainWindow.on('ready-to-show', () => {
-    mainWindow?.show()
+    if (!testKnobs.hideWindow) mainWindow?.show()
   })
 
   mainWindow.on('closed', () => {
@@ -65,7 +78,10 @@ function createWindow(): void {
   })
 
   mainWindow.webContents.setWindowOpenHandler((details) => {
-    shell.openExternal(details.url)
+    // Only hand http(s) links to the OS shell — an arbitrary scheme (e.g. a custom protocol
+    // handler) reaching shell.openExternal is a known Electron risk if this ever fires with
+    // attacker- or server-influenced data.
+    if (/^https?:/i.test(details.url)) void shell.openExternal(details.url)
     return { action: 'deny' }
   })
 
@@ -91,11 +107,12 @@ app.whenReady().then(async () => {
 
   nativeTheme.on('updated', () => {
     mainWindow?.setBackgroundColor(nativeTheme.shouldUseDarkColors ? '#1c1c1e' : '#ffffff')
-    applyThemedIcon()
   })
 
+  if (is.dev) installDevMenu()
+
   createWindow()
-  applyThemedIcon()
+  if (testKnobs.hideWindow) app.dock?.hide()
 
   app.on('activate', function () {
     if (BrowserWindow.getAllWindows().length === 0) createWindow()

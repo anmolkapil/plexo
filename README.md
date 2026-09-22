@@ -1,6 +1,6 @@
 # Plexo
 
-A fast download manager for Windows and macOS that speeds up downloads by pulling chunks in parallel across **multiple network connections at the same time**.
+A fast download manager for Windows, macOS, and Linux that speeds up downloads by pulling chunks in parallel across **multiple network connections at the same time**.
 
 For example, if your computer has:
 
@@ -48,21 +48,22 @@ File ──→ Split ─────┼── Ethernet (IP: 10.0.0.12) ───
 
 ## Features
 
-- 🚀 **Multi-interface, multi-connection downloads** — splits files into fixed 8 MB chunks and fans them out across worker connections bound to specific network interfaces (up to 8 parallel connections per interface, 32 total).
+- 🚀 **Multi-interface, multi-connection downloads** — splits files into chunks of up to 8 MB and fans them out across worker connections bound to specific network interfaces (up to 8 parallel connections per interface, 32 total).
 - 🔌 **Hardware interface detection** — queries Windows adapters via PowerShell `Get-NetAdapter` and macOS hardware ports via `networksetup` so Wi-Fi, Ethernet, tethered iPhones, and Thunderbolt bridges are labeled by real device names instead of bare BSD names (`en0`, `en6`).
 - ⚖️ **Dynamic work-stealing queue** — chunks are leased from a shared pending queue; faster networks pull more chunks instead of waiting for slower connections to finish.
-- ⏸️ **Resumable downloads** — pausing cleanly aborts in-flight socket connections while preserving downloaded `part-N` chunk files on disk.
+- ⏸️ **Resumable downloads** — cleanly pause or retry failed downloads without losing progress, preserving completed `part-N` chunk files on disk.
 - 💾 **Relaunch recovery** — interrupted downloads are restored as paused after Plexo restarts, with progress and part files preserved in application data.
 - 🛡️ **Safe, integrity-checked resume** — re-verifies remote `ETag` and `Last-Modified` validators before resuming, refusing to resume (rather than corrupting the file) if the server-side file has changed.
 - 🔁 **Automatic retry with backoff** — failed chunks are automatically returned to the queue and retried with exponential backoff (up to 5 retries, 1s–15s backoff).
-- 💤 **Stall detection** — automatically drops and re-queues connections that remain open but silent (>20s without incoming data).
+- 💤 **Stall detection & watchdog** — automatically drops and re-queues connections that remain open but silent (>20s without incoming data).
+- 🔔 **Desktop notifications** — native desktop alerts when downloads complete or encounter errors.
 - 💾 **Upfront disk-space verification** — verifies free disk space before writing any temporary part files.
 - 🔀 **Mid-download redirect handling** — transparently follows 3xx HTTP redirects (up to 5 hops) during probing and individual chunk downloads.
 - 📊 **Real-time telemetry** — live throughput graphs, rolling-window ETA calculation, and per-connection transfer stats.
-- 🗺️ **Interactive progress grid** — 1:1 visual map of individual 8 MB chunks, color-coded by the network interface that fetched each chunk with accurate per-network byte attribution.
+- 🗺️ **Interactive progress grid** — 1:1 visual map of individual chunks, color-coded by the network interface that fetched each chunk with accurate per-network byte attribution.
 - 🎨 **Network customization** — rename and recolor physical network interfaces with persistent user preferences.
 - 🧲 **Torrent magnet links** — paste a `magnet:?xt=urn:btih:…` link and Plexo downloads it over BitTorrent, spreading its peer connections across the same physical networks it uses for HTTP. No external torrent library and no new runtime dependencies.
-- 🌙 **Dark mode**
+- 🌓 **Light & Dark modes** — full theme support with an instant toggle between light and dark modes.
 
 ---
 
@@ -150,10 +151,11 @@ If you statically divide a 6 GB file into equal shares (e.g. 3 GB on Wi-Fi and 3
 
 Instead, Plexo uses a **dynamic work-stealing queue**:
 
-1. The file is split into fixed **8 MB chunks**.
+1. The file is split into **chunks of up to 8 MB** (smaller for small files, so every network gets a share).
 2. All chunks enter a centralized pending queue.
-3. A pool of worker connections (up to 8 per interface, 32 total) continuously lease the next chunk from the queue as soon as they become free.
+3. A pool of worker connections (up to 8 per interface, 32 total, never more than there are chunks to work on) continuously lease the next chunk from the queue as soon as they become free. Connections start interleaved across networks, so each network is served before any is served twice.
 4. Faster interfaces finish chunks quicker and immediately pick up new ones; slower interfaces pull fewer chunks.
+5. **Racing the tail.** Once no chunk is left waiting, a free connection can start a second attempt at a chunk another connection is fetching too slowly (one that still needs as long again as it has already taken, at least 5 seconds), picking up from where the first had got to. Whichever finishes first wins and the other is dropped. It costs a few bytes fetched twice at the very end, and it means one slow connection — or one slow network — can no longer hold the whole download back. A stream doing this is marked **BACKUP** in the streams table.
 
 ```text
 Shared Pending Queue: [Chunk #4] [Chunk #5] [Chunk #6] [Chunk #7] [Chunk #8] ...
@@ -199,7 +201,7 @@ cancelling or removing a download still deletes its partial data.
 
 A **chunk** is the atomic unit of work in Plexo:
 
-- **Size**: Exactly 8 MB (with the final chunk sized to the remaining bytes).
+- **Size**: Up to 8 MB, with the final chunk sized to the remaining bytes. A file that is small next to its connection count gets smaller chunks (never under 1 MB) — at least two per connection — so a fast network can out-pull a slow one instead of being stuck behind it.
 - **Transport**: One independent HTTP range request (`Range: bytes=START-END`).
 - **Storage**: Written directly to an isolated `part-N` file in the download's temp directory.
 - **Assignment**: Leased to an individual worker socket bound to a specific network interface.
@@ -210,9 +212,9 @@ Chunk #1 → Range: bytes=8388608-16777215  → part-1 (Ethernet)
 Chunk #2 → Range: bytes=16777216-25165823 → part-2 (USB Tether)
 ```
 
-### Why 8 MB?
+### Why up to 8 MB?
 
-8 MB provides the optimal balance: large enough to minimize HTTP connection overhead and TLS handshakes, yet small enough to keep the work-stealing queue fluid, ensure fine-grained load balancing across mismatched connections, and keep retries cheap (a failed or stalled connection only discards at most 8 MB).
+8 MB provides the optimal balance: large enough to minimize HTTP connection overhead and TLS handshakes, yet small enough to keep the work-stealing queue fluid, ensure fine-grained load balancing across mismatched connections, and keep retries cheap (a failed or stalled connection only discards at most 8 MB). Below about 1 MB a request costs more in round trips than splitting saves, so that is the floor; a file that small is one chunk.
 
 ---
 
@@ -220,7 +222,7 @@ Chunk #2 → Range: bytes=16777216-25165823 → part-2 (USB Tether)
 
 The progress grid provides a real-time visual map of the entire download.
 
-Every 8 MB chunk maps **1:1 to its own square** in the grid. Square #N directly corresponds to the **Chunk #N** badge shown in the active streams table, allowing you to cross-reference active connections with their location in the file.
+Every chunk maps **1:1 to its own square** in the grid. Square #N directly corresponds to the **Chunk #N** badge shown in the active streams table, allowing you to cross-reference active connections with their location in the file.
 
 ```text
 Active Streams:
@@ -232,11 +234,6 @@ Progress Grid:
 [#1][#2][#3][#4][#5][#6][#7][#8]...
 ```
 
-- **1:1 chunk mapping**: Every square represents an atomic 8 MB chunk of the file.
-- **Accurate per-network attribution**: Each square is colored by the network interface that delivered the dominant share of its bytes. If a chunk changes hands mid-flight (due to a dropped connection, retry, or pause/resume), Plexo tracks per-network byte tallies so each interface's contribution is accurately credited.
-- **Joint contributor breakdown**: Hovering over any square displays the chunk index, bytes downloaded, and an exact breakdown of contributing networks (e.g., `Wi-Fi 70% · Ethernet 30%`).
-- **Responsive & scrollable**: Squares maintain a fixed, readable size across all downloads. The grid wraps to fit the window width and smoothly scrolls past 6 rows on large files.
-
 ---
 
 # Getting started
@@ -245,7 +242,7 @@ Plexo currently doesn't have pre-built releases, so you'll need to run it from s
 
 ## Requirements
 
-- **Windows 10/11 or macOS**: Windows uses its built-in Windows PowerShell for adapter metadata; macOS uses `networksetup`. If metadata is unavailable, Plexo falls back to interface names.
+- **Windows 10/11, macOS, or Linux**: Windows uses its built-in Windows PowerShell for adapter metadata; macOS uses `networksetup`; Linux provides fallback interface detection and desktop network settings integration.
 - **Node.js**: 22.12+ (Node 22 LTS recommended).
 - **npm**: v9+ recommended.
 
@@ -271,6 +268,19 @@ Start the application in development mode:
 ```bash
 npm run dev
 ```
+
+---
+
+## Running tests
+
+Plexo includes an automated end-to-end test suite driven by Playwright:
+
+```bash
+npm run test:e2e:smoke          # quick smoke tests
+npm run test:e2e                # full E2E test suite (including integrity and chaos tests)
+```
+
+See [CONTRIBUTING.md](CONTRIBUTING.md#end-to-end-tests) for testing options and debugging flags.
 
 ---
 
@@ -317,7 +327,19 @@ Adapter detection does not guarantee Internet access: VPN, virtual, and isolated
 also appear. Check per-network latency and transfer stats. Combined throughput depends on the
 networks, Windows routing, and the server; it needs testing with your particular connections.
 
-Linux packaging remains available but has not been validated.
+Linux packaging remains available via `npm run build:linux` (see [Build the Linux app](#build-the-linux-app)).
+
+---
+
+## Build the Linux app
+
+To package Plexo for Linux:
+
+```bash
+npm run build:linux
+```
+
+The package will be generated in `dist/`.
 
 ---
 
@@ -369,10 +391,13 @@ Plexo is built with:
 
 - **Electron** — desktop runtime
 - **React 19** — declarative UI
+- **Tailwind CSS v4** & **Base UI** — modern styling and accessible component primitives
 - **TypeScript** — end-to-end type safety
 - **Zustand** — lightweight client state management
+- **Lucide React** — icons
+- **Playwright** — end-to-end testing suite
 - **electron-vite** — fast HMR and build tooling
-- **electron-builder** — macOS packaging
+- **electron-builder** — multi-platform packaging (macOS, Windows, Linux)
 
 ---
 

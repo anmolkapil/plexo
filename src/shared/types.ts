@@ -1,7 +1,6 @@
 export type NetworkInterfaceKind = 'wifi' | 'usb' | 'ethernet' | 'bridge' | 'other'
 
-/** 'system' follows the OS appearance; 'light'/'dark' pin it regardless of the OS setting. */
-export type ThemeSource = 'system' | 'light' | 'dark'
+export type ThemeSource = 'light' | 'dark'
 
 /** Where a download's bytes come from: an HTTP(S) URL, or a BitTorrent swarm named by a
  * magnet link. The two share this whole progress model — a torrent piece stands in for a
@@ -54,8 +53,12 @@ export interface ProbeResult {
   torrent?: TorrentMetadata
 }
 
-export type DownloadStatus = 'downloading' | 'paused' | 'completed' | 'error' | 'cancelled'
+export type DownloadStatus =
+  'downloading' | 'assembling' | 'paused' | 'completed' | 'error' | 'cancelled'
 
+/** A stream's state. `pending` means it is waiting for work: it holds no block, either because
+ * none is free for it right now or because it hasn't started. `downloading` always means it is
+ * fetching one (`currentBlockIndex` says which). */
 export type ChunkStatus =
   'pending' | 'downloading' | 'retrying' | 'paused' | 'completed' | 'error' | 'cancelled'
 
@@ -73,11 +76,14 @@ export interface ChunkState {
   error?: string
   /** Number of times this chunk's connection has been retried after a dropped/failed attempt. */
   retryCount: number
-  /** Index of the block currently being downloaded by this worker chunk. */
+  /** The block this stream is fetching. Unset whenever it holds none (idle, retrying, paused, done). */
   currentBlockIndex?: number
   /** For a torrent, the `host:port` of the peer this slot currently holds. HTTP chunks talk
    * to one origin the download already names, so they leave it unset. */
   peerAddress?: string
+  /** True while this stream is racing another stream for `currentBlockIndex`, because that one
+   * was too slow — see main/download/scheduler.ts. Whichever finishes first wins. */
+  hedge?: boolean
 }
 
 export type BlockStatus = 'pending' | 'downloading' | 'completed' | 'error'
@@ -125,6 +131,10 @@ export interface DownloadState {
   /** Peers currently connected, for a torrent. Peer count moves independently of the slot
    * count, since a slot sits empty whenever its peer drops and no replacement is queued. */
   connectedPeers?: number
+  /** Bytes written to the destination file so far while `status` is 'assembling' — the part
+   * files are already all complete at that point, so this tracks the sequential reassembly step
+   * rather than the network transfer. */
+  assembledBytes?: number
 }
 
 /** User customization for one physical network, keyed by NetworkInterfaceInfo.id — lets a
@@ -138,6 +148,50 @@ export interface NetworkPreference {
 }
 
 export type NetworkPreferences = Record<string, NetworkPreference>
+
+/** One fake network in a dev-tool "virtual download" — see SimulatedNetworkConfig callers in
+ * main/download/simDownload.ts. Lets a developer exercise the multi-network UI (the block grid,
+ * per-network speed/throughput, retries, errors, assembling) against a file already on disk,
+ * without needing a real flaky connection or a slow remote server to test against. */
+export interface SimulatedNetworkConfig {
+  kind: NetworkInterfaceKind
+  label: string
+  /** Target sustained throughput for this simulated network, in bytes/sec. */
+  speedBytesPerSec: number
+  /** 0-100 chance a chunk attempt on this network fails outright, simulating a dropped
+   * connection — set above 0 to exercise the retry/error UI on demand. */
+  faultRatePercent: number
+}
+
+export interface StartSimulatedDownloadRequest {
+  /** Absolute path to a file already on disk — this is what gets "downloaded". */
+  sourceFilePath: string
+  destinationDir: string
+  networks: SimulatedNetworkConfig[]
+  chunkCount: number
+  connectionsPerNetwork?: number
+  /** Throttles the reassembly step to this many bytes/sec, so the 'assembling' phase's UI (the
+   * block grid sweep, the combine diagram) stays visible long enough to watch even on a small
+   * file that would otherwise reassemble in a single tick. Omitted or 0 assembles at full disk
+   * speed, same as a real download. */
+  assembleSpeedBytesPerSec?: number
+}
+
+export interface UpdateInfo {
+  version: string
+  /** Where clicking the notification should take the user — the landing page's downloads. */
+  url: string
+  /** True once the user has dismissed the banner for this exact version (persisted, so it stays
+   * dismissed across relaunches) — the app then falls back to a quiet titlebar icon instead. */
+  dismissed: boolean
+}
+
+export interface InitialPaths {
+  homeDir: string
+  downloadsDir: string
+  /** True in electron-vite's dev server, false in a packaged build — gates the dev tools panel. */
+  isDev: boolean
+}
 
 export interface StartDownloadRequest {
   kind: DownloadKind

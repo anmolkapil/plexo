@@ -1,8 +1,7 @@
 import type { NetworkInterfaceInfo } from '@shared/types'
-import { useRef, useState } from 'react'
-import { useAppStore } from '../store/useAppStore'
-import { FONT_MONO, FONT_UI, resolveNetworkVisual, type NetworkColorId } from '../theme'
-import { NetworkEditorFields } from './NetworkEditorFields'
+import { useNetworkVisuals } from '../hooks/useNetworkVisuals'
+import { ColorBadge } from './ColorBadge'
+import { NetworkEditPopover } from './NetworkEditPopover'
 
 interface NetworkCardProps {
   iface: NetworkInterfaceInfo
@@ -23,36 +22,15 @@ function Checkbox({
   if (checked) {
     return (
       <div
-        style={{
-          width: 15,
-          height: 15,
-          borderRadius: 4,
-          background: color,
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          color: onColor,
-          font: `700 9px/1 ${FONT_UI}`,
-          boxShadow: 'inset 0 0 0 0.5px var(--checkbox-shadow)',
-          flexShrink: 0
-        }}
+        className="flex size-[15px] shrink-0 items-center justify-center rounded-[4px] font-sans text-[9px] leading-none font-bold shadow-[inset_0_0_0_0.5px_var(--checkbox-shadow)]"
+        style={{ background: color, color: onColor }}
       >
         ✓
       </div>
     )
   }
   return (
-    <div
-      style={{
-        width: 15,
-        height: 15,
-        borderRadius: 4,
-        background: 'var(--input-bg)',
-        border: '0.5px solid var(--icon-muted-strong)',
-        boxShadow: 'inset 0 1px 1px var(--checkbox-inset-shadow)',
-        flexShrink: 0
-      }}
-    />
+    <div className="size-[15px] shrink-0 rounded-[4px] border-[0.5px] border-[var(--icon-muted-strong)] bg-[var(--input-bg)] shadow-[inset_0_1px_1px_var(--checkbox-inset-shadow)]" />
   )
 }
 
@@ -62,137 +40,71 @@ export function NetworkCard({
   latencyMs,
   onToggle
 }: NetworkCardProps): React.JSX.Element {
-  const [editing, setEditing] = useState(false)
-  const buttonRef = useRef<HTMLButtonElement>(null)
-  const preference = useAppStore((store) => store.networkPreferences[iface.id])
-  const setNetworkPreference = useAppStore((store) => store.setNetworkPreference)
-  const visual = resolveNetworkVisual(iface.kind, iface.displayName, preference)
+  const visual = useNetworkVisuals()(iface.id, iface.kind, iface.displayName)
   const online = latencyMs != null
 
   return (
     <div
+      className="flex flex-col gap-[11px] rounded-[11px] border-[0.5px] p-[15px]"
       style={{
-        borderRadius: 11,
-        padding: 15,
         background: selected ? visual.bg : 'var(--bg-secondary)',
-        border: `0.5px solid ${selected ? visual.border : 'var(--border)'}`,
-        display: 'flex',
-        flexDirection: 'column',
-        gap: 11
+        borderColor: selected ? visual.border : 'var(--border)'
       }}
     >
-      <div style={{ display: 'flex', alignItems: 'center', gap: 9 }}>
-        <button
-          type="button"
-          onClick={onToggle}
-          style={{
-            display: 'flex',
-            alignItems: 'center',
-            gap: 9,
-            flex: 1,
-            minWidth: 0,
-            border: 'none',
-            background: 'none',
-            padding: 0,
-            textAlign: 'left',
-            cursor: 'pointer',
-            font: 'inherit',
-            color: 'inherit'
-          }}
-        >
-          <Checkbox checked={selected} color={visual.solid} onColor={visual.onSolid} />
-          <div
-            style={{
-              font: `600 13px/1 ${FONT_UI}`,
-              color: selected ? 'var(--text)' : 'var(--text-secondary)',
-              whiteSpace: 'nowrap',
-              overflow: 'hidden',
-              textOverflow: 'ellipsis',
-              minWidth: 0
-            }}
+      <div className="flex items-center gap-[9px]">
+        <div className="flex min-w-0 flex-1 items-center gap-[9px]">
+          <button
+            type="button"
+            role="checkbox"
+            aria-checked={selected}
+            onClick={onToggle}
+            // min-h-6: WCAG 2.5.8's 24px floor — this is the primary "select this network" control
+            // and previously sized to its ~15px content (the checkbox glyph + name text).
+            className="flex min-h-6 min-w-0 shrink items-center gap-[9px] border-none bg-transparent p-0 text-left [font:inherit] text-inherit"
           >
-            {visual.name}
-          </div>
-        </button>
-        <button
-          ref={buttonRef}
-          type="button"
-          onClick={() => setEditing(true)}
-          title="Rename or recolor this network"
-          style={{
-            border: 'none',
-            background: 'none',
-            color: 'var(--text-tertiary)',
-            font: `700 12px/1 ${FONT_UI}`,
-            cursor: 'pointer',
-            padding: '2px 4px',
-            flexShrink: 0
-          }}
-        >
-          ⋯
-        </button>
-        {editing && (
-          <NetworkEditorFields
-            anchorRef={buttonRef}
-            name={preference?.customName ?? ''}
-            onNameChange={(customName) => setNetworkPreference(iface.id, { customName })}
-            namePlaceholder={iface.displayName}
-            colorId={preference?.colorId as NetworkColorId | undefined}
-            onColorSelect={(colorId) => setNetworkPreference(iface.id, { colorId })}
+            <Checkbox checked={selected} color={visual.solid} onColor={visual.onSolid} />
+            <div
+              className={`min-w-0 truncate font-sans text-[13px] leading-normal font-semibold ${
+                selected ? 'text-foreground' : 'text-[var(--text-secondary)]'
+              }`}
+            >
+              {visual.name}
+            </div>
+          </button>
+          <NetworkEditPopover
+            interfaceId={iface.id}
             interfaceKind={iface.kind}
-            onDone={() => setEditing(false)}
+            osName={iface.displayName}
           />
-        )}
-        <div
-          style={{
-            font: `500 10px/1 ${FONT_MONO}`,
-            letterSpacing: '0.1em',
-            color: selected ? visual.text : 'var(--text-tertiary)',
-            flexShrink: 0
-          }}
+        </div>
+        <ColorBadge
+          bg={selected ? visual.bg : 'transparent'}
+          border={selected ? visual.border : 'var(--border)'}
+          text={selected ? visual.text : 'var(--text-tertiary)'}
+          className="font-mono text-[10px] tracking-[0.1em]"
         >
           {visual.label}
-        </div>
+        </ColorBadge>
       </div>
-      <div
-        style={{
-          font: `10.5px/1 ${FONT_MONO}`,
-          color: 'var(--text-tertiary)',
-          whiteSpace: 'nowrap',
-          overflow: 'hidden',
-          textOverflow: 'ellipsis'
-        }}
-      >
+      <div className="truncate font-mono text-[10.5px] leading-normal text-muted-foreground">
         {iface.device} · {iface.address}
       </div>
-      <div style={{ display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between' }}>
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
-          <div
-            style={{
-              font: `500 9px/1 ${FONT_MONO}`,
-              letterSpacing: '0.12em',
-              color: 'var(--text-tertiary)'
-            }}
-          >
+      <div className="flex items-end justify-between">
+        <div className="flex flex-col gap-[5px]">
+          <div className="font-mono text-[9px] leading-none font-medium tracking-[0.12em] text-muted-foreground">
             PING
           </div>
           <div
-            style={{
-              font: `500 13px/1 ${FONT_MONO}`,
-              color: online && selected ? visual.text : 'var(--text-secondary)'
-            }}
+            className="font-mono text-[13px] leading-none font-medium"
+            style={{ color: online && selected ? visual.text : 'var(--text-secondary)' }}
           >
             {online ? `${latencyMs} ms` : '—'}
           </div>
         </div>
         <div
-          style={{
-            width: 7,
-            height: 7,
-            borderRadius: '50%',
-            background: online ? 'var(--color-success)' : 'var(--icon-muted)',
-            flexShrink: 0
-          }}
+          className={`size-[7px] shrink-0 rounded-full ${
+            online ? 'bg-[var(--color-success)]' : 'bg-[var(--icon-muted)]'
+          }`}
         />
       </div>
     </div>

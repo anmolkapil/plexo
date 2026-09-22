@@ -1,3 +1,5 @@
+@import 'tailwindcss';
+
 @font-face {
   font-family: 'Manrope';
   font-style: normal;
@@ -25,19 +27,15 @@
 
   --text: #1d1d1f;
   --text-secondary: #6e6e73;
-  --text-tertiary: #8a8a8e;
+  /* #8a8a8e (the original design value) is only 3.45:1 against this screen's white/near-white
+     backgrounds — fails WCAG AA (4.5:1) for the 9-13px text this token is used at throughout.
+     Darkened to the lightest gray that still clears 4.5:1. */
+  --text-tertiary: #737377;
 
   --border: #e0e0e2;
   --border-subtle: #ececee;
   --border-strong: #b9b9bb;
   --footer-border: #d8d8da;
-
-  --button-secondary-bg: linear-gradient(#fefefe, #f3f3f3);
-  --button-secondary-border: var(--border-strong);
-  --button-shadow: 0 1px 1px rgba(0, 0, 0, 0.05);
-  --button-disabled-bg: #f4f4f5;
-  --button-disabled-border: #d2d2d4;
-  --button-disabled-text: #a8a8ac;
 
   --icon-muted: #c2c2c6;
   --icon-muted-strong: #b0b0b2;
@@ -76,7 +74,6 @@
 
   --color-accent: #d97706;
   --color-accent-onsolid: #ffffff;
-  --color-accent-shadow: rgba(217, 119, 6, 0.25);
   --color-success: #1f8a70;
 
   --color-danger: #dc2626;
@@ -86,6 +83,44 @@
   /* Throughput chart's total-line color — the merge node's tone from the app icon, not raw
      text-black, so the outline reads as part of the brand instead of a harsh axis line. */
   --node-accent: #5f6e78;
+
+  /* Shared corner radius for shadcn/Base UI components — matches the 8px most hand-styled
+     buttons/cards already use (see theme.ts), so new and existing components read as one system. */
+  --radius: 8px;
+}
+
+/* Maps shadcn/Base UI's expected semantic tokens onto Plexo's existing palette above, instead of
+   introducing a second, parallel color system. Tailwind only generates `bg-primary`-style
+   utilities for names declared here, in `@theme` — so this can freely reuse Plexo's own custom
+   property *values* (e.g. --color-accent) without colliding with their names, since only the
+   left-hand names below become Tailwind tokens. */
+@theme inline {
+  --font-sans: 'Manrope', -apple-system, 'SF Pro Text', 'Helvetica Neue', Helvetica, sans-serif;
+  --font-mono: 'Roboto Mono', 'SF Mono', ui-monospace, Menlo, monospace;
+
+  --color-background: var(--bg);
+  --color-foreground: var(--text);
+  --color-card: var(--bg-secondary);
+  --color-card-foreground: var(--text);
+  --color-popover: var(--bg-secondary);
+  --color-popover-foreground: var(--text);
+  --color-primary: var(--color-accent);
+  --color-primary-foreground: var(--color-accent-onsolid);
+  --color-secondary: var(--bg-tertiary);
+  --color-secondary-foreground: var(--text);
+  --color-muted: var(--track-bg);
+  --color-muted-foreground: var(--text-tertiary);
+  --color-destructive: var(--color-danger);
+  --color-border: var(--border);
+  /* Not --input-bg: that's a fill color (white in light mode), invisible as a stroke.
+     border-input needs an actual visible border tone. */
+  --color-input: var(--border-strong);
+  --color-ring: var(--color-accent);
+
+  --radius-sm: calc(var(--radius) * 0.6);
+  --radius-md: calc(var(--radius) * 0.8);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) * 1.4);
 }
 
 @media (prefers-color-scheme: dark) {
@@ -107,13 +142,6 @@
     --border-subtle: #23262a;
     --border-strong: #33383c;
     --footer-border: #2b2f33;
-
-    --button-secondary-bg: #262a2d;
-    --button-secondary-border: var(--border-strong);
-    --button-shadow: none;
-    --button-disabled-bg: #232628;
-    --button-disabled-border: #2b2f33;
-    --button-disabled-text: #5d6268;
 
     --icon-muted: #33383c;
     --icon-muted-strong: #3a3f44;
@@ -148,7 +176,6 @@
 
     --color-accent: #d8a44c;
     --color-accent-onsolid: #1b1408;
-    --color-accent-shadow: rgba(216, 164, 76, 0.22);
     --color-success: #4ea89a;
 
     --color-danger: #eda3a3;
@@ -159,52 +186,36 @@
   }
 }
 
-* {
-  box-sizing: border-box;
-}
+/* Layered, not plain global CSS, so Tailwind utility classes still win over these resets.
+   Tailwind puts its own utilities in a later layer than base styles, and unlayered CSS beats
+   every layer regardless of specificity, so an unlayered button font reset here previously
+   overrode every text and font utility on every button in the app. box-sizing, margin and
+   padding resets, and the default font family, are already handled by Tailwind Preflight, so
+   they are not repeated here. Body, html and root element sizing now live as utility classes
+   in index.html instead. */
+@layer base {
+  input,
+  [contenteditable] {
+    user-select: text;
+  }
 
-html,
-body,
-#root {
-  height: 100%;
-  margin: 0;
-}
+  button {
+    font: inherit;
+  }
 
-body {
-  overflow: hidden;
-  font-family:
-    'Manrope',
-    -apple-system,
-    'SF Pro Text',
-    'Helvetica Neue',
-    Helvetica,
-    sans-serif;
-  -webkit-font-smoothing: antialiased;
-  background: var(--bg);
-  color: var(--text);
-  user-select: none;
-}
+  /* No core Tailwind utility for scrollbar pseudo-elements. */
+  ::-webkit-scrollbar {
+    width: 10px;
+  }
 
-input,
-[contenteditable] {
-  user-select: text;
-}
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
 
-button {
-  font: inherit;
-}
-
-::-webkit-scrollbar {
-  width: 10px;
-}
-
-::-webkit-scrollbar-track {
-  background: transparent;
-}
-
-::-webkit-scrollbar-thumb {
-  background-color: var(--scrollbar-thumb);
-  border-radius: 9999px;
+  ::-webkit-scrollbar-thumb {
+    background-color: var(--scrollbar-thumb);
+    border-radius: 9999px;
+  }
 }
 
 @keyframes plexo-dash {
@@ -231,5 +242,15 @@ button {
   to {
     opacity: 1;
     transform: translateY(0) scale(1);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
   }
 }

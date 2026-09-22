@@ -1,6 +1,6 @@
 import type { BlockState, BlockStatus } from '@shared/types'
 import { useCallback, useRef, useState } from 'react'
-import { FONT_MONO, type NetworkVisual } from '../theme'
+import type { NetworkVisual } from '../theme'
 import { formatBytes, type NetworkGroup } from '../utils/format'
 
 // The grid is a byte-space map of the file: one square per chunk, running left-to-right,
@@ -44,6 +44,12 @@ const GRID_INSET_PX = 3
 // Unknown provenance reads as neutral gray instead, which is honest and impossible to misread.
 const UNATTRIBUTED_SOLID = 'var(--text-tertiary)'
 const UNATTRIBUTED_BG = 'var(--track-bg)'
+
+// Assembled bytes are deliberately not painted in any network's color: once a chunk is stitched
+// onto disk it isn't "that network's work" anymore so much as "already part of the file", and a
+// dedicated neutral tone is what makes the sweep across the grid read as progress rather than as
+// chunks quietly losing their color for no reason.
+const ASSEMBLED_SOLID = 'var(--text)'
 
 /** One network's share of a cell's downloaded bytes. */
 interface CellSegment {
@@ -196,6 +202,14 @@ interface BlockGridProps {
    * choosing; a torrent fetches pieces, whose size and count the torrent itself fixes. Calling
    * a piece a chunk would misname the one thing the grid is a map of. */
   unit?: 'chunk' | 'piece'
+  /** All blocks are 'completed' by the time this is true — the grid switches from showing which
+   * network fetched each chunk to showing reassembly progress instead: a wipe, in the same
+   * part-file order `reassemble()` actually writes in, that fades a square once its bytes are
+   * safely on disk and pulses whichever one is being appended right now. Without this the grid
+   * would freeze solid the moment the last byte downloads, and assembling a large file can take
+   * long enough that a frozen grid reads as hung rather than finishing up. */
+  assembling?: boolean
+  assembledBytes?: number
 }
 
 export function BlockGrid({
@@ -205,7 +219,9 @@ export function BlockGrid({
   knownSize,
   remainingBytes,
   isPaused = false,
-  unit = 'chunk'
+  unit = 'chunk',
+  assembling = false,
+  assembledBytes = 0
 }: BlockGridProps): React.JSX.Element {
   const [gridWidth, setGridWidth] = useState(0)
   const [hoveredIndex, setHoveredIndex] = useState<number | null>(null)
@@ -254,7 +270,10 @@ export function BlockGrid({
     // appears on an active block — and a tooltip advertises nothing to hover in the first place.
     const hoveredCell = hoveredIndex !== null ? cells[hoveredIndex] : undefined
     let readout: string
-    if (hoveredCell) {
+    if (assembling) {
+      const totalBytes = cells.reduce((sum, cell) => sum + cell.totalBytes, 0)
+      readout = `Assembling into file · ${formatBytes(assembledBytes)} / ${formatBytes(totalBytes)}`
+    } else if (hoveredCell) {
       const where =
         describeContributors(hoveredCell, visualByInterfaceId) ??
         (hoveredCell.status === 'pending' ? 'queued' : '—')
@@ -270,64 +289,44 @@ export function BlockGrid({
       readout = `${blocks.length.toLocaleString()} ${unitPlural} · ${formatBytes(chunkBytes)} each${density}${scrollHint}`
     }
 
+    // Cumulative byte offset per cell, in the exact order reassemble() appends part files —
+    // computed once here rather than per-cell so each square's assembly state is a simple
+    // range comparison against `assembledBytes` below.
+    const assembleOffsets = cells.reduce<{ offsets: number[]; total: number }>(
+      (acc, cell) => {
+        acc.offsets.push(acc.total)
+        acc.total += cell.totalBytes
+        return acc
+      },
+      { offsets: [], total: 0 }
+    ).offsets
+
     return (
-      <div
-        style={{
-          background: 'var(--bg-secondary)',
-          border: '0.5px solid var(--border)',
-          borderRadius: 9,
-          padding: '10px 14px 11px',
-          display: 'flex',
-          flexDirection: 'column',
-          gap: 9
-        }}
-      >
-        <div
-          style={{
-            display: 'flex',
-            alignItems: 'center',
-            gap: 14,
-            flexWrap: 'wrap'
-          }}
-        >
+      <div className="flex flex-col gap-[9px] rounded-[9px] border-[0.5px] border-border bg-card px-[14px] pt-[10px] pb-[11px]">
+        <div className="flex flex-wrap items-center gap-[14px]">
           {groups.map((group, idx) => {
             const visual = visuals[idx]
             return (
               <div
                 key={group.interfaceId}
-                style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: 5.5,
-                  font: `500 10.5px/1 ${FONT_MONO}`,
-                  color: 'var(--text-secondary)'
-                }}
+                className="flex items-center gap-[5.5px] font-mono text-[10.5px] leading-none font-medium text-[var(--text-secondary)]"
               >
                 <span
-                  style={{
-                    width: 7,
-                    height: 7,
-                    borderRadius: '50%',
-                    background: visual.solid,
-                    flexShrink: 0
-                  }}
+                  className="size-[7px] shrink-0 rounded-full"
+                  style={{ background: visual.solid }}
                 />
-                <span style={{ color: 'var(--text)', fontWeight: 600 }}>{visual.name}</span>
+                <span className="font-semibold text-foreground">{visual.name}</span>
               </div>
             )
           })}
+          {assembling && (
+            <div className="flex items-center gap-[5.5px] font-mono text-[10.5px] leading-none font-medium text-[var(--text-secondary)]">
+              <span className="size-[7px] shrink-0 rounded-full bg-[var(--text)]" />
+              <span className="font-semibold text-foreground">Assembled</span>
+            </div>
+          )}
           {cells.length > 0 && chunkBytes > 0 && (
-            <div
-              style={{
-                marginLeft: 'auto',
-                font: `500 10px/1 ${FONT_MONO}`,
-                color: 'var(--text-tertiary)',
-                fontVariantNumeric: 'tabular-nums'
-              }}
-              title={`This file downloads as ${blocks.length.toLocaleString()} ${unitPlural} of ${formatBytes(chunkBytes)}, ${
-                blocksPerCell > 1 ? `${blocksPerCell} per square` : 'one per square'
-              }.${rows > MAX_VISIBLE_ROWS ? ' Scroll the grid to see the rest.' : ''}`}
-            >
+            <div className="ml-auto font-mono text-[10px] leading-none font-medium tabular-nums text-muted-foreground">
               {readout}
             </div>
           )}
@@ -383,16 +382,35 @@ export function BlockGrid({
                 opacity = 0.92
               }
 
-              const networkName =
-                describeContributors(cell, visualByInterfaceId) ||
-                (cell.interfaceId ? 'Assigned' : 'Pending')
-              // Numbered to match the badges the streams table shows for each active connection,
-              // so a hovered square maps onto a specific stream's work.
-              const cellLabel =
-                cell.cellSpan > 1
-                  ? `${unitPlural} #${cell.chunkNumber}–${cell.chunkNumber + cell.cellSpan - 1}`
-                  : `${unit} #${cell.chunkNumber}`
-              const title = `${cellLabel} · ${formatBytes(cell.bytesDownloaded)} / ${formatBytes(cell.totalBytes)} · ${networkName} · ${cell.status}`
+              let animation: string | undefined
+              if (assembling) {
+                const start = assembleOffsets[index]
+                const end = start + cell.totalBytes
+                if (end <= assembledBytes) {
+                  // Already appended to the destination file — turns neutral rather than just
+                  // fading, so "assembled" is a distinct state you can read at a glance, not a
+                  // guess at how dim is dim enough.
+                  fillColor = ASSEMBLED_SOLID
+                  border = 'none'
+                  boxShadow = 'none'
+                  opacity = 0.85
+                } else if (start < assembledBytes) {
+                  // The one part file being streamed onto disk right now — turning neutral too,
+                  // with a pulse so the "write head" position is obvious.
+                  fillColor = ASSEMBLED_SOLID
+                  border = `1px solid ${ASSEMBLED_SOLID}`
+                  boxShadow = `0 0 7px ${ASSEMBLED_SOLID}`
+                  opacity = 1
+                  animation = 'plexo-glow 0.9s ease-in-out infinite'
+                } else {
+                  // Completed but not yet its turn to be appended — stays in its network's color
+                  // a little dimmed, to signal "waiting its turn" rather than "already assembled".
+                  border = 'none'
+                  boxShadow = 'none'
+                  opacity = 0.75
+                }
+              }
+
               const rawFillPercent = Math.min(1, Math.max(0, cell.fillRatio)) * 100
               // A square is only ~12px wide, so the first bytes of a chunk round to nothing —
               // floor a started chunk to a visible sliver rather than 0 width.
@@ -401,7 +419,6 @@ export function BlockGrid({
               return (
                 <div
                   key={index}
-                  title={title}
                   onMouseEnter={() => setHoveredIndex(index)}
                   style={{
                     position: 'relative',
@@ -411,10 +428,16 @@ export function BlockGrid({
                     border,
                     boxShadow,
                     opacity,
+                    animation,
                     outline: hoveredIndex === index ? '1.5px solid var(--text-secondary)' : 'none',
                     outlineOffset: 1,
                     overflow: 'hidden',
-                    transition: 'opacity 0.15s, box-shadow 0.15s'
+                    transition: 'opacity 0.3s, box-shadow 0.15s',
+                    // A multi-GB file can mean thousands of cells; skip layout/paint work for the
+                    // ones scrolled out of view (MAX_VISIBLE_ROWS caps what's visible, not what's
+                    // rendered) rather than hand-rolling a virtualized list for a fixed-size grid.
+                    contentVisibility: 'auto',
+                    containIntrinsicSize: `${TARGET_CELL_PX}px ${CELL_HEIGHT_PX}px`
                   }}
                 >
                   {/* One square, one color: the network that actually delivered most of this
@@ -443,17 +466,7 @@ export function BlockGrid({
 
   // Fallback for single stream / non-splittable download: clean horizontal bar
   return (
-    <div
-      style={{
-        height: 10,
-        borderRadius: 5,
-        background: 'var(--track-bg)',
-        overflow: 'hidden',
-        display: 'flex',
-        gap: 2,
-        border: '0.5px solid var(--border-strong)'
-      }}
-    >
+    <div className="flex h-2.5 gap-0.5 overflow-hidden rounded-[5px] border-[0.5px] border-[var(--border-strong)] bg-[var(--track-bg)]">
       {knownSize ? (
         <>
           {groups.map((group, index) => (
@@ -468,7 +481,7 @@ export function BlockGrid({
           <div style={{ flex: remainingBytes || 0.0001 }} />
         </>
       ) : (
-        <div style={{ width: '100%', background: 'var(--color-accent)' }} />
+        <div className="w-full bg-primary" />
       )}
     </div>
   )

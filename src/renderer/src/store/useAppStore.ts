@@ -3,7 +3,8 @@ import type {
   NetworkInterfaceInfo,
   NetworkPreference,
   NetworkPreferences,
-  ThemeSource
+  ThemeSource,
+  UpdateInfo
 } from '@shared/types'
 import { create } from 'zustand'
 import { groupChunksByInterface } from '../utils/format'
@@ -25,12 +26,18 @@ interface AppStore {
   /** User customizations (name/color) per network interface id — persisted in the main process. */
   networkPreferences: NetworkPreferences
 
-  /** 'system' by default — persisted in the main process alongside nativeTheme.themeSource. */
+  /** Persisted in the main process alongside nativeTheme.themeSource. */
   themeSource: ThemeSource
+
+  /** Null until the one-time startup check resolves, or if it found nothing worth showing
+   * (already up to date, already dismissed, or the check failed). */
+  availableUpdate: UpdateInfo | null
 
   homeDir: string
   downloadsDir: string
   pathsStatus: LoadStatus
+  /** True in electron-vite's dev server, false in a packaged build — gates the dev tools panel. */
+  isDev: boolean
 
   /** Plexo focuses on one download at a time — this is it. */
   currentDownload: DownloadState | null
@@ -53,6 +60,8 @@ interface AppStore {
   setNetworkPreference: (id: string, patch: NetworkPreference) => Promise<void>
   loadThemeSource: () => Promise<void>
   setThemeSource: (source: ThemeSource) => Promise<void>
+  checkForUpdate: () => Promise<void>
+  dismissUpdate: () => void
   setCurrentDownload: (state: DownloadState) => void
   clearCurrentDownload: () => void
   setDraftUrl: (url: string) => void
@@ -65,11 +74,13 @@ export const useAppStore = create<AppStore>((set, get) => ({
   interfacesError: null,
   latencies: {},
   networkPreferences: {},
-  themeSource: 'system',
+  themeSource: 'light',
+  availableUpdate: null,
 
   homeDir: '',
   downloadsDir: '',
   pathsStatus: 'idle',
+  isDev: false,
 
   currentDownload: null,
   speedHistory: [],
@@ -80,7 +91,11 @@ export const useAppStore = create<AppStore>((set, get) => ({
   draftDestinationDir: '',
 
   loadInterfaces: async () => {
-    set({ interfacesStatus: 'loading', interfacesError: null })
+    // A re-scan keeps showing the last result. Dropping back to 'loading' would swap App off the
+    // no-connections screen, and every screen re-scans on mount — so with zero networks the
+    // two screens would remount each other in an endless loop.
+    if (get().interfacesStatus !== 'ready') set({ interfacesStatus: 'loading' })
+    set({ interfacesError: null })
     try {
       const interfaces = await window.plexo.listInterfaces()
       set({ interfaces, interfacesStatus: 'ready' })
@@ -104,8 +119,8 @@ export const useAppStore = create<AppStore>((set, get) => ({
   loadInitialPaths: async () => {
     set({ pathsStatus: 'loading' })
     try {
-      const { homeDir, downloadsDir } = await window.plexo.getInitialPaths()
-      set({ homeDir, downloadsDir, pathsStatus: 'ready' })
+      const { homeDir, downloadsDir, isDev } = await window.plexo.getInitialPaths()
+      set({ homeDir, downloadsDir, isDev, pathsStatus: 'ready' })
     } catch {
       set({ pathsStatus: 'error' })
     }
@@ -142,7 +157,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
       const themeSource = await window.plexo.getThemeSource()
       set({ themeSource })
     } catch {
-      // Best-effort — a failed read just leaves the toggle showing the 'system' default.
+      // Best-effort — a failed read just leaves the toggle showing the 'light' default.
     }
   },
 
@@ -154,6 +169,23 @@ export const useAppStore = create<AppStore>((set, get) => ({
     } catch {
       // Leave the optimistic value in place — not persisted to disk, but still usable this session.
     }
+  },
+
+  checkForUpdate: async () => {
+    try {
+      const availableUpdate = await window.plexo.checkForUpdate()
+      set({ availableUpdate })
+    } catch {
+      // Best-effort — a failed check just leaves the banner hidden.
+    }
+  },
+
+  dismissUpdate: () => {
+    const update = get().availableUpdate
+    if (!update) return
+    // Keeps the update visible as a quiet titlebar icon rather than clearing it outright.
+    set({ availableUpdate: { ...update, dismissed: true } })
+    void window.plexo.dismissUpdate(update.version)
   },
 
   setCurrentDownload: (download) => {

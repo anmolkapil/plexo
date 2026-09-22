@@ -1,23 +1,21 @@
+import { planDownload } from '@shared/plan'
 import type { ProbeResult } from '@shared/types'
+import { cn } from 'cn'
+import { AlertTriangle, ClipboardPaste } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 import { NetworkCard } from '../components/NetworkCard'
+import { ScreenFooter } from '../components/ScreenFooter'
+import { Alert, AlertDescription } from '../components/ui/alert'
+import { Button } from '../components/ui/button'
+import { ToggleGroup, ToggleGroupItem } from '../components/ui/toggle-group'
 import { useNetworkPolling } from '../hooks/useNetworkPolling'
 import { useAppStore } from '../store/useAppStore'
-import {
-  DANGER,
-  FONT_MONO,
-  FONT_UI,
-  disabledPrimaryButtonStyle,
-  primaryButtonStyle,
-  sectionHeaderLabelStyle,
-  sectionHeaderMetaStyle
-} from '../theme'
 import { describeError, formatBytes, toDisplayPath } from '../utils/format'
 
 type ProbeState =
   | { status: 'idle' }
   | { status: 'probing' }
-  | { status: 'ready'; result: ProbeResult; multiChunkAllowed: boolean }
+  | { status: 'ready'; result: ProbeResult }
   | { status: 'error'; message: string }
 
 const PROBE_DEBOUNCE_MS = 600
@@ -28,17 +26,23 @@ const PRESET_STREAMS = [1, 2, 4, 8] as const
  * comes from holding many connections — a handful leaves a torrent crawling. */
 const PRESET_PEERS = [10, 25, 50, 100] as const
 
+const PASTE_SHORTCUT = window.plexo.platform === 'darwin' ? '⌘V' : 'Ctrl+V'
+
 /** Matched in the renderer purely to word the UI — the main process does its own parsing and
  * is the one that decides what a link actually is. */
 function looksLikeMagnet(value: string): boolean {
   return value.trim().toLowerCase().startsWith('magnet:')
 }
 
-const fieldLabelStyle: React.CSSProperties = {
-  font: `500 10px/1 ${FONT_MONO}`,
-  letterSpacing: '0.14em',
-  color: 'var(--text-tertiary)',
-  flexShrink: 0
+const fieldLabelClass = 'shrink-0 font-mono text-[10px] tracking-[0.14em] text-muted-foreground'
+
+function ErrorAlert({ message }: { message: string }): React.JSX.Element {
+  return (
+    <Alert variant="destructive" className="py-1.5">
+      <AlertTriangle />
+      <AlertDescription>{message}</AlertDescription>
+    </Alert>
+  )
 }
 
 export function IdleScreen(): React.JSX.Element {
@@ -48,27 +52,24 @@ export function IdleScreen(): React.JSX.Element {
   const homeDir = useAppStore((store) => store.homeDir)
   const downloadsDir = useAppStore((store) => store.downloadsDir)
   const latencies = useAppStore((store) => store.latencies)
-  const loadInitialPaths = useAppStore((store) => store.loadInitialPaths)
   const url = useAppStore((store) => store.draftUrl)
   const setUrl = useAppStore((store) => store.setDraftUrl)
   const destinationDir = useAppStore((store) => store.draftDestinationDir)
   const setDestinationDir = useAppStore((store) => store.setDraftDestinationDir)
 
   const [probe, setProbe] = useState<ProbeState>({ status: 'idle' })
+  // Tracks deselections rather than selections, so a newly-detected interface starts selected.
   const [deselectedInterfaceIds, setDeselectedInterfaceIds] = useState<string[]>([])
   const [chunksPerNetwork, setChunksPerNetwork] = useState(2)
-  // Tracked separately from the HTTP stream count so switching between a URL and a magnet
-  // can't carry an HTTP-sized figure (2) onto a torrent, where it means two peers.
+  // Kept separate from the stream count rather than shared: the two are different quantities in
+  // different units, so a user who picked 8 streams for an HTTP file can't carry that figure
+  // onto a torrent, where it would mean eight peers.
   const [peersPerNetwork, setPeersPerNetwork] = useState(50)
   const [starting, setStarting] = useState(false)
   const [startError, setStartError] = useState<string | null>(null)
   const [fileNameOverride, setFileNameOverride] = useState<string | null>(null)
 
   const probeRequestId = useRef(0)
-
-  useEffect(() => {
-    loadInitialPaths()
-  }, [loadInitialPaths])
 
   useEffect(() => {
     if (!destinationDir && downloadsDir) setDestinationDir(downloadsDir)
@@ -91,8 +92,7 @@ export function IdleScreen(): React.JSX.Element {
       try {
         const result = await window.plexo.probeUrl(trimmed)
         if (probeRequestId.current !== requestId) return
-        const multiChunkAllowed = result.supportsRanges && result.totalBytes !== null
-        setProbe({ status: 'ready', result, multiChunkAllowed })
+        setProbe({ status: 'ready', result })
       } catch (error) {
         if (probeRequestId.current !== requestId) return
         setProbe({ status: 'error', message: describeError(error) })
@@ -102,16 +102,73 @@ export function IdleScreen(): React.JSX.Element {
     return () => clearTimeout(timer)
   }, [url])
 
-  const isSingleRangeServer = probe.status === 'ready' && !probe.multiChunkAllowed
+  const ready = probe.status === 'ready' ? probe.result : null
+  const multiChunkAllowed = ready !== null && ready.supportsRanges && ready.totalBytes !== null
+  const isSingleStreamOnly = ready !== null && !multiChunkAllowed
 
-  const activeDetectedIds = interfaces.map((iface) => iface.id)
-  const rawSelectedIds = activeDetectedIds.filter((id) => !deselectedInterfaceIds.includes(id))
-  const selectedInterfaceIds = isSingleRangeServer ? rawSelectedIds.slice(0, 1) : rawSelectedIds
+  const detectedIds = interfaces.map((iface) => iface.id)
+  const enabledIds = detectedIds.filter((id) => !deselectedInterfaceIds.includes(id))
+  const selectedInterfaceIds = isSingleStreamOnly ? enabledIds.slice(0, 1) : enabledIds
+
+  // While probing there is no result to read a kind off yet, so the wording leans on the text
+  // in the box; once resolved, the main process's answer takes over.
+  const isMagnetInput = looksLikeMagnet(url)
+  const torrent = ready?.torrent
+  const isTorrent = isMagnetInput || Boolean(torrent)
+  const streamsLabel = isTorrent ? 'PEERS / NETWORK' : 'PARALLEL STREAMS'
+  const presets: readonly number[] = isTorrent ? PRESET_PEERS : PRESET_STREAMS
+  const perNetwork = isTorrent ? peersPerNetwork : chunksPerNetwork
+  const setPerNetwork = isTorrent ? setPeersPerNetwork : setChunksPerNetwork
+
+  const connectionsPerNetwork = isSingleStreamOnly ? 1 : perNetwork
+  // A small file gets fewer streams than asked for — one with no block to claim would only
+  // idle — so once the file's size is known the count comes from the same plan the download
+  // will use. A torrent's units are its pieces, which the HTTP planner knows nothing about, so
+  // its slot count is simply what was asked for on each network.
+  let totalChunks: number
+  if (isTorrent) {
+    totalChunks = selectedInterfaceIds.length * perNetwork
+  } else if (ready) {
+    totalChunks = planDownload({
+      totalBytes: ready.totalBytes ?? 0,
+      splittable: multiChunkAllowed,
+      networkCount: selectedInterfaceIds.length,
+      streamsPerNetwork: chunksPerNetwork
+    }).streamNetworks.length
+  } else {
+    totalChunks = selectedInterfaceIds.length * chunksPerNetwork
+  }
+
+  let startLabel = 'Start'
+  if (starting) startLabel = 'Starting…'
+  // Resolving a magnet means asking the swarm for its metadata, which takes noticeably longer
+  // than an HTTP probe — worth naming so the wait doesn't look like a hang.
+  else if (probe.status === 'probing') startLabel = isMagnetInput ? 'Finding…' : 'Checking…'
+  const canStart =
+    probe.status === 'ready' &&
+    selectedInterfaceIds.length > 0 &&
+    Boolean(destinationDir) &&
+    !starting
+  const effectiveDestinationDir = destinationDir || downloadsDir
+  const footerParts = [
+    `${selectedInterfaceIds.length} ${selectedInterfaceIds.length === 1 ? 'network' : 'networks'} selected`
+  ]
+  if (selectedInterfaceIds.length > 0) {
+    const unitWord = isTorrent
+      ? totalChunks === 1
+        ? 'peer connection'
+        : 'peer connections'
+      : totalChunks === 1
+        ? 'stream'
+        : 'parallel streams'
+    footerParts.push(`${totalChunks} ${unitWord}`)
+  }
+  if (ready && ready.totalBytes !== null) footerParts.push(formatBytes(ready.totalBytes))
 
   const handleToggleInterface = (id: string): void => {
-    if (isSingleRangeServer) {
-      // Single-range servers can only download through 1 interface at a time
-      setDeselectedInterfaceIds(activeDetectedIds.filter((otherId) => otherId !== id))
+    if (isSingleStreamOnly) {
+      // Single-stream mode can only download through 1 interface at a time
+      setDeselectedInterfaceIds(detectedIds.filter((otherId) => otherId !== id))
       return
     }
 
@@ -119,7 +176,7 @@ export function IdleScreen(): React.JSX.Element {
       const isCurrentlySelected = !prev.includes(id)
       if (isCurrentlySelected) {
         // Deselecting: keep at least 1 interface selected
-        const remainingCount = activeDetectedIds.filter(
+        const remainingCount = detectedIds.filter(
           (otherId) => !prev.includes(otherId) && otherId !== id
         ).length
         if (remainingCount === 0) return prev
@@ -131,7 +188,7 @@ export function IdleScreen(): React.JSX.Element {
   }
 
   const handleBrowse = async (): Promise<void> => {
-    const chosen = await window.plexo.chooseDestinationFolder(destinationDir || downloadsDir)
+    const chosen = await window.plexo.chooseDestinationFolder(effectiveDestinationDir)
     if (chosen) setDestinationDir(chosen)
   }
 
@@ -141,7 +198,7 @@ export function IdleScreen(): React.JSX.Element {
   }
 
   const handleStart = async (): Promise<void> => {
-    if (probe.status !== 'ready' || selectedInterfaceIds.length === 0 || !destinationDir) return
+    if (probe.status !== 'ready' || !canStart) return
     setStarting(true)
     setStartError(null)
     try {
@@ -151,10 +208,10 @@ export function IdleScreen(): React.JSX.Element {
         destinationDir,
         suggestedFileName: fileNameOverride?.trim() || probe.result.suggestedFileName,
         totalBytes: probe.result.totalBytes ?? 0,
-        supportsRanges: probe.multiChunkAllowed,
+        supportsRanges: multiChunkAllowed,
         interfaceIds: selectedInterfaceIds,
-        chunkCount: probe.multiChunkAllowed ? selectedInterfaceIds.length * perNetwork : 1,
-        connectionsPerNetwork: probe.multiChunkAllowed ? perNetwork : 1,
+        chunkCount: totalChunks,
+        connectionsPerNetwork,
         etag: probe.result.etag,
         lastModified: probe.result.lastModified
       })
@@ -165,342 +222,186 @@ export function IdleScreen(): React.JSX.Element {
     }
   }
 
-  const canStart =
-    probe.status === 'ready' &&
-    selectedInterfaceIds.length > 0 &&
-    Boolean(destinationDir) &&
-    !starting
-  // While probing there is no result to read a kind off yet, so the wording leans on the
-  // text in the box; once resolved, the main process's answer takes over.
-  const isMagnetInput = looksLikeMagnet(url)
-  const torrent = probe.status === 'ready' ? probe.result.torrent : undefined
-  const isTorrent = isMagnetInput || Boolean(torrent)
-  const streamsLabel = isTorrent ? 'PEERS / NETWORK' : 'PARALLEL STREAMS'
-  const presets: readonly number[] = isTorrent ? PRESET_PEERS : PRESET_STREAMS
-  const perNetwork = isTorrent ? peersPerNetwork : chunksPerNetwork
-  const setPerNetwork = isTorrent ? setPeersPerNetwork : setChunksPerNetwork
-
-  const effectiveNetworkCount = Math.max(1, selectedInterfaceIds.length)
-  const totalChunks = isSingleRangeServer ? 1 : effectiveNetworkCount * perNetwork
-
-  let peerOrStreamLabel: string
-  if (isTorrent) peerOrStreamLabel = totalChunks === 1 ? 'peer connection' : 'peer connections'
-  else peerOrStreamLabel = totalChunks === 1 ? 'stream' : 'parallel streams'
-
-  let startButtonLabel = 'Start'
-  if (starting) startButtonLabel = 'Starting…'
-  // Resolving a magnet means asking the swarm for its metadata, which takes noticeably
-  // longer than an HTTP probe — worth naming so the wait doesn't look like a hang.
-  else if (probe.status === 'probing') startButtonLabel = isMagnetInput ? 'Finding…' : 'Checking…'
-
   return (
-    <div
-      style={{ display: 'flex', flexDirection: 'column', height: '100%', background: 'var(--bg)' }}
-    >
-      <div style={{ padding: '16px 20px 14px', display: 'flex', flexDirection: 'column', gap: 9 }}>
-        <div style={{ display: 'flex', gap: 9, alignItems: 'center' }}>
+    <div className="flex h-full flex-col bg-background">
+      <div className="flex flex-col gap-[9px] px-5 pt-4 pb-3.5">
+        <div className="flex items-center gap-[9px]">
           <div
-            style={{
-              flex: 1,
-              minWidth: 0,
-              display: 'flex',
-              alignItems: 'center',
-              gap: 9,
-              padding: '9px 12px',
-              borderRadius: 9,
-              background: 'var(--input-bg)',
-              border:
-                probe.status === 'error'
-                  ? `0.5px solid ${DANGER}`
-                  : '0.5px solid var(--border-strong)'
-            }}
+            className={cn(
+              'flex h-9 min-w-0 flex-1 items-center gap-[9px] rounded-[9px] border bg-[var(--input-bg)] px-3',
+              probe.status === 'error' ? 'border-destructive' : 'border-input'
+            )}
           >
-            <div style={fieldLabelStyle}>LINK</div>
+            <div id="idle-link-label" className={fieldLabelClass}>
+              LINK
+            </div>
             <input
-              type="text"
+              type="url"
               value={url}
               onChange={(event) => setUrl(event.target.value)}
               placeholder="https://… or magnet:?xt=urn:btih:…"
-              style={{
-                flex: 1,
-                minWidth: 0,
-                border: 'none',
-                outline: 'none',
-                background: 'transparent',
-                font: `13px/1.3 ${FONT_MONO}`,
-                color: 'var(--text)'
-              }}
+              spellCheck={false}
+              aria-labelledby="idle-link-label"
+              className="min-w-0 flex-1 rounded-[3px] border-none bg-transparent font-mono text-[13px] text-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
             />
-            <button
+            <Button
               type="button"
+              variant="secondary"
+              size="xs"
               onClick={handlePaste}
-              style={{
-                border: 'none',
-                borderRadius: 5,
-                background: 'var(--track-bg)',
-                padding: '3px 8px',
-                font: `500 9.5px/1 ${FONT_MONO}`,
-                color: 'var(--text-secondary)',
-                whiteSpace: 'nowrap',
-                cursor: 'pointer',
-                flexShrink: 0
-              }}
+              className="shrink-0 font-mono text-[9.5px] uppercase tracking-wide"
             >
-              PASTE {window.plexo.platform === 'darwin' ? '⌘V' : 'Ctrl+V'}
-            </button>
+              <ClipboardPaste data-icon="inline-start" />
+              Paste {PASTE_SHORTCUT}
+            </Button>
           </div>
-          <button
+          <Button
             type="button"
             onClick={handleStart}
             disabled={!canStart}
-            style={{
-              ...(canStart ? primaryButtonStyle : disabledPrimaryButtonStyle),
-              boxSizing: 'border-box',
-              width: 112,
-              padding: '8px 14px',
-              textAlign: 'center'
-            }}
+            className="h-9 w-28 shrink-0"
           >
-            {startButtonLabel}
-          </button>
+            {startLabel}
+          </Button>
         </div>
 
-        {probe.status === 'error' && (
-          <div
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              gap: 7,
-              font: `12px/1.4 ${FONT_UI}`,
-              color: DANGER
-            }}
-          >
-            <span style={{ flexShrink: 0 }}>⚠</span>
-            {probe.message}
-          </div>
-        )}
+        {probe.status === 'error' && <ErrorAlert message={probe.message} />}
 
         {probe.status === 'probing' && isMagnetInput && (
-          <div style={{ font: `11.5px/1.4 ${FONT_UI}`, color: 'var(--text-tertiary)' }}>
+          <p className="text-[11.5px] leading-[1.4] text-muted-foreground">
             Asking the swarm for this torrent&apos;s file list — a magnet link carries only an
             infohash, so there is nothing to show until a peer answers.
-          </div>
+          </p>
         )}
 
         {torrent && (
-          <div style={{ font: `11.5px/1.4 ${FONT_UI}`, color: 'var(--text-tertiary)' }}>
+          <p className="text-[11.5px] leading-[1.4] text-muted-foreground">
             Torrent · {torrent.pieceCount.toLocaleString()} pieces of{' '}
             {formatBytes(torrent.pieceLengthBytes)} ·{' '}
             {torrent.isSingleFile
               ? '1 file'
               : `${torrent.files.length.toLocaleString()} files in a folder`}
-          </div>
+          </p>
         )}
 
         <div
-          style={{
-            display: 'flex',
-            alignItems: 'center',
-            gap: 9,
-            padding: '7px 12px',
-            borderRadius: 9,
-            background: 'var(--bg-secondary)',
-            border:
-              probe.status === 'ready' ? '0.5px solid var(--border)' : '0.5px dashed var(--border)',
-            opacity: probe.status === 'ready' ? 1 : 0.5
-          }}
+          className={cn(
+            'flex h-9 items-center gap-[9px] rounded-[9px] border px-3',
+            ready ? 'border-border opacity-100' : 'border-dashed border-border opacity-50'
+          )}
         >
-          <div style={fieldLabelStyle}>SAVE AS</div>
+          <div id="idle-saveas-label" className={fieldLabelClass}>
+            SAVE AS
+          </div>
           <input
             type="text"
-            value={
-              probe.status === 'ready' ? (fileNameOverride ?? probe.result.suggestedFileName) : ''
-            }
+            value={ready ? (fileNameOverride ?? ready.suggestedFileName) : ''}
             onChange={(event) => setFileNameOverride(event.target.value)}
-            disabled={probe.status !== 'ready'}
+            disabled={!ready}
             placeholder="—"
-            style={{
-              flex: 1,
-              minWidth: 0,
-              border: 'none',
-              outline: 'none',
-              background: 'transparent',
-              font: `12.5px/1.3 ${FONT_MONO}`,
-              color: 'var(--text)'
-            }}
+            aria-labelledby="idle-saveas-label"
+            className="min-w-0 flex-1 rounded-[3px] border-none bg-transparent font-mono text-[12.5px] text-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
           />
-          {probe.status === 'ready' && probe.result.totalBytes !== null && (
-            <div
-              style={{
-                font: `500 11px/1 ${FONT_MONO}`,
-                color: 'var(--text-tertiary)',
-                whiteSpace: 'nowrap',
-                flexShrink: 0
-              }}
-            >
-              {formatBytes(probe.result.totalBytes)} (est.)
+          {ready && ready.totalBytes !== null && (
+            <div className="shrink-0 whitespace-nowrap font-mono text-[11px] font-medium text-muted-foreground">
+              {formatBytes(ready.totalBytes)} (est.)
             </div>
           )}
         </div>
 
-        <div
-          style={{
-            display: 'flex',
-            alignItems: 'center',
-            gap: 9,
-            padding: '7px 12px',
-            borderRadius: 9,
-            background: 'var(--bg-secondary)',
-            border: '0.5px solid var(--border)'
-          }}
-        >
-          <div style={fieldLabelStyle}>TO</div>
-          <div
-            style={{
-              flex: 1,
-              minWidth: 0,
-              font: `12.5px/1.3 ${FONT_MONO}`,
-              color: 'var(--text-secondary)',
-              whiteSpace: 'nowrap',
-              overflow: 'hidden',
-              textOverflow: 'ellipsis'
-            }}
-          >
-            {toDisplayPath(destinationDir || downloadsDir, homeDir)}
+        <div className="flex h-9 items-center gap-[9px] rounded-[9px] border border-border px-3">
+          <div className={fieldLabelClass}>TO</div>
+          <div className="min-w-0 flex-1 truncate font-mono text-[12.5px] text-[var(--text-secondary)]">
+            {toDisplayPath(effectiveDestinationDir, homeDir)}
           </div>
-          <button
+          <Button
             type="button"
+            variant="link"
+            size="xs"
             onClick={handleBrowse}
-            style={{
-              border: 'none',
-              background: 'none',
-              font: `500 11px/1 ${FONT_MONO}`,
-              color: 'var(--color-accent)',
-              whiteSpace: 'nowrap',
-              cursor: 'pointer',
-              flexShrink: 0
-            }}
+            className="h-auto shrink-0 px-0 font-mono text-[11px]"
           >
             Browse…
-          </button>
+          </Button>
         </div>
 
         <div
-          style={{
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'space-between',
-            gap: 12,
-            padding: '8px 12px',
-            borderRadius: 9,
-            background: 'var(--bg-secondary)',
-            border: '0.5px solid var(--border)',
-            opacity: isSingleRangeServer ? 0.6 : 1
-          }}
+          className={cn(
+            'flex min-h-9 items-center justify-between gap-3 rounded-[9px] border border-border px-3 py-1.5',
+            isSingleStreamOnly && 'opacity-60'
+          )}
         >
-          <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
-            <div style={fieldLabelStyle}>{streamsLabel}</div>
-            <div style={{ display: 'flex', gap: 4 }}>
-              {presets.map((preset) => {
-                const isSelected = perNetwork === preset
-                return (
-                  <button
-                    key={preset}
-                    type="button"
-                    disabled={isSingleRangeServer}
-                    onClick={() => setPerNetwork(preset)}
-                    style={{
-                      border: isSelected
-                        ? '0.5px solid var(--color-accent)'
-                        : '0.5px solid var(--border)',
-                      borderRadius: 5,
-                      background: isSelected ? 'var(--color-usb-bg)' : 'var(--track-bg)',
-                      color: isSelected ? 'var(--color-usb-text)' : 'var(--text-secondary)',
-                      font: `600 10.5px/1 ${FONT_MONO}`,
-                      padding: '4px 8px',
-                      cursor: isSingleRangeServer ? 'not-allowed' : 'pointer',
-                      transition: 'all 0.15s ease'
-                    }}
-                  >
-                    {isTorrent ? preset : `${preset}×`}
-                  </button>
-                )
-              })}
+          <div className="flex flex-wrap items-center gap-2">
+            <div id="idle-streams-label" className={fieldLabelClass}>
+              {streamsLabel}
             </div>
+            <ToggleGroup
+              value={[String(perNetwork)]}
+              onValueChange={(values) => {
+                if (values.length === 0) return
+                setPerNetwork(Number(values[0]))
+              }}
+              disabled={isSingleStreamOnly}
+              aria-labelledby="idle-streams-label"
+              variant="pill"
+              size="xs"
+              spacing={1}
+            >
+              {presets.map((preset) => (
+                // h-6/min-w-6: WCAG 2.5.8's 24px floor — the xs toggle size is 20px, and this is
+                // the primary "how many parallel connections" control.
+                <ToggleGroupItem key={preset} value={String(preset)} className="h-6 min-w-6">
+                  {isTorrent ? preset : `${preset}×`}
+                </ToggleGroupItem>
+              ))}
+            </ToggleGroup>
           </div>
 
           <div
-            style={{
-              font: `500 11px/1 ${FONT_MONO}`,
-              color: isSingleRangeServer ? 'var(--text-tertiary)' : 'var(--text-secondary)',
-              textAlign: 'right',
-              whiteSpace: 'nowrap'
-            }}
+            className={cn(
+              'text-right font-mono text-[11px] whitespace-nowrap',
+              isSingleStreamOnly ? 'text-muted-foreground' : 'text-[var(--text-secondary)]'
+            )}
           >
-            {isSingleRangeServer ? (
+            {isSingleStreamOnly ? (
               '1 stream (server does not support ranges)'
-            ) : selectedInterfaceIds.length > 0 ? (
-              <>
-                <span style={{ color: 'var(--text)', fontWeight: 600 }}>{perNetwork}</span> /
-                network ·{' '}
-                <span style={{ color: 'var(--text)', fontWeight: 600 }}>{totalChunks}</span> total{' '}
-                {isTorrent ? 'peer connections' : 'parallel streams'}
-              </>
             ) : (
               <>
-                <span style={{ color: 'var(--text)', fontWeight: 600 }}>{perNetwork}</span> /
-                network
+                <span className="font-semibold text-foreground">{perNetwork}</span> / network
+                {selectedInterfaceIds.length > 0 && (
+                  <>
+                    {' · '}
+                    <span className="font-semibold text-foreground">{totalChunks}</span>{' '}
+                    {isTorrent
+                      ? `total peer ${totalChunks === 1 ? 'connection' : 'connections'}`
+                      : `total parallel ${totalChunks === 1 ? 'stream' : 'streams'}`}
+                  </>
+                )}
               </>
             )}
           </div>
         </div>
 
-        {isSingleRangeServer && (
-          <div style={{ font: `11.5px/1.4 ${FONT_UI}`, color: 'var(--text-tertiary)' }}>
-            This server doesn&apos;t support multi-chunk downloads for this file — using a single
+        {isSingleStreamOnly && (
+          <div className="text-[11.5px] text-muted-foreground">
+            This server doesn’t support multi-chunk downloads for this file — using a single
             network.
           </div>
         )}
-        {startError && (
-          <div
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              gap: 7,
-              font: `11.5px/1.4 ${FONT_UI}`,
-              color: DANGER
-            }}
-          >
-            <span style={{ flexShrink: 0 }}>⚠</span>
-            {startError}
-          </div>
-        )}
+        {startError && <ErrorAlert message={startError} />}
       </div>
 
-      <div style={{ flex: 1, overflowY: 'auto', padding: '0 20px 14px' }}>
-        <div
-          style={{
-            display: 'flex',
-            alignItems: 'baseline',
-            justifyContent: 'space-between',
-            paddingBottom: 8,
-            borderBottom: '0.5px solid var(--border)'
-          }}
-        >
-          <div style={sectionHeaderLabelStyle}>Connected Networks</div>
-          <div style={sectionHeaderMetaStyle}>
+      <div className="flex-1 overflow-y-auto px-5 pb-3.5">
+        <div className="flex items-baseline justify-between border-b border-border pb-2">
+          <h2 className="font-mono text-[10px] tracking-[0.16em] text-muted-foreground uppercase">
+            Connected Networks
+          </h2>
+          <div className="shrink-0 font-mono text-[10.5px] text-muted-foreground">
             {interfaces.length} detected · {selectedInterfaceIds.length} selected
           </div>
         </div>
 
-        <div
-          style={{
-            display: 'grid',
-            gridTemplateColumns: 'repeat(auto-fit, minmax(190px, 1fr))',
-            gap: 10,
-            paddingTop: 12
-          }}
-        >
+        <div className="grid grid-cols-[repeat(auto-fit,minmax(190px,1fr))] gap-2.5 pt-3">
           {interfaces.map((iface) => (
             <NetworkCard
               key={iface.id}
@@ -513,25 +414,9 @@ export function IdleScreen(): React.JSX.Element {
         </div>
       </div>
 
-      <div
-        style={{
-          display: 'flex',
-          alignItems: 'center',
-          gap: 10,
-          padding: '11px 20px',
-          background: 'var(--bg-tertiary)',
-          borderTop: '0.5px solid var(--footer-border)'
-        }}
-      >
-        <div style={{ font: `11px/1.4 ${FONT_MONO}`, color: 'var(--text-tertiary)' }}>
-          {selectedInterfaceIds.length} {selectedInterfaceIds.length === 1 ? 'network' : 'networks'}{' '}
-          selected
-          {selectedInterfaceIds.length > 0 ? ` · ${totalChunks} ${peerOrStreamLabel}` : ''}
-          {probe.status === 'ready' && probe.result.totalBytes !== null
-            ? ` · ${formatBytes(probe.result.totalBytes)}`
-            : ''}
-        </div>
-      </div>
+      <ScreenFooter className="gap-2.5">
+        <div className="font-mono text-[11px] text-muted-foreground">{footerParts.join(' · ')}</div>
+      </ScreenFooter>
     </div>
   )
 }

@@ -1,0 +1,65 @@
+name: E2E nightly
+
+# The whole e2e suite — including the @disk and @chaos tiers the PR job skips — on both
+# platforms, with the race-prone tests repeated so an intermittent failure shows up here
+# rather than in someone's download.
+on:
+  schedule:
+    - cron: '0 3 * * *'
+  workflow_dispatch:
+    inputs:
+      chaos_runs:
+        description: Random chaos sequences to try
+        default: '50'
+
+jobs:
+  e2e:
+    name: E2E (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    env:
+      PLEXO_CHAOS_RUNS: ${{ github.event.inputs.chaos_runs || '50' }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build
+        run: npx electron-vite build
+
+      # The @disk tests mount small tmpfs volumes, which needs passwordless sudo (GitHub's
+      # Linux runners have it); elsewhere they skip themselves.
+      - name: Full suite (Linux)
+        if: runner.os == 'Linux'
+        run: xvfb-run --auto-servernum npx playwright test
+        env:
+          PLEXO_E2E_SKIP_BUILD: '1'
+
+      - name: Full suite (Windows)
+        if: runner.os == 'Windows'
+        run: npx playwright test
+        env:
+          PLEXO_E2E_SKIP_BUILD: '1'
+
+      - name: Race-prone tests, repeated
+        run: ${{ runner.os == 'Linux' && 'xvfb-run --auto-servernum ' || '' }}npx playwright test e2e/lifecycle.spec.ts e2e/recovery.spec.ts --repeat-each=10
+        env:
+          PLEXO_E2E_SKIP_BUILD: '1'
+
+      - name: Upload report
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report-${{ matrix.os }}
+          path: playwright-report
+          retention-days: 14

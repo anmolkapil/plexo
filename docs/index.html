@@ -1,0 +1,878 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Plexo — one download, every connection you own</title>
+    <meta
+      name="description"
+      content="Plexo splits a single download across every network you have — Wi-Fi, Ethernet, tethered phone — and merges it back into one verified file."
+    />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&family=Roboto+Mono:wght@400;500;600&display=swap"
+      rel="stylesheet"
+    />
+    <style>
+      :root {
+        color-scheme: dark;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        background: #16181a;
+        font-family:
+          Manrope,
+          -apple-system,
+          sans-serif;
+        -webkit-font-smoothing: antialiased;
+        color: #eae7e2;
+      }
+      a {
+        color: #d8a44c;
+        text-decoration: none;
+      }
+      a:hover {
+        color: #e8bb6d;
+      }
+      .wrap {
+        max-width: 1120px;
+        margin: 0 auto;
+        padding: 22px 26px 80px;
+        display: flex;
+        flex-direction: column;
+        gap: 72px;
+      }
+      header {
+        display: flex;
+        align-items: center;
+        gap: 14px;
+        flex-wrap: wrap;
+      }
+      header .spacer {
+        flex: 1;
+      }
+      header a {
+        font:
+          500 13px/1 Manrope,
+          sans-serif;
+        color: #a9adb2;
+      }
+      header a:hover {
+        color: #eae7e2;
+      }
+      .logo {
+        width: 32px;
+        height: 32px;
+        display: block;
+        flex-shrink: 0;
+      }
+      .wordmark {
+        font:
+          800 17px/1 Manrope,
+          sans-serif;
+        letter-spacing: -0.01em;
+      }
+      .badge {
+        padding: 5px 10px;
+        border-radius: 999px;
+        background: #33291a;
+        border: 1px solid #4a3a22;
+        font:
+          600 10px/1 'Roboto Mono',
+          monospace;
+        letter-spacing: 0.14em;
+        color: #e8bb6d;
+        white-space: nowrap;
+      }
+      .hero {
+        display: flex;
+        flex-direction: column;
+        gap: 26px;
+        max-width: 760px;
+      }
+      .eyebrow {
+        font:
+          500 11px/1 'Roboto Mono',
+          monospace;
+        letter-spacing: 0.2em;
+        color: #8d9196;
+        white-space: nowrap;
+      }
+      h1 {
+        margin: 0;
+        font:
+          800 clamp(40px, 6.4vw, 68px)/1.02 Manrope,
+          sans-serif;
+        letter-spacing: -0.035em;
+        color: #f5f2ed;
+        text-wrap: balance;
+      }
+      .hero p {
+        margin: 0;
+        font:
+          400 17px/1.6 Manrope,
+          sans-serif;
+        color: #a9adb2;
+        max-width: 600px;
+        text-wrap: pretty;
+      }
+      .use-cases {
+        margin: 0;
+        padding: 0;
+        list-style: none;
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+      }
+      .use-cases li {
+        font:
+          400 15px/1.6 Manrope,
+          sans-serif;
+        color: #c7cace;
+      }
+      .cta-row {
+        display: flex;
+        align-items: center;
+        gap: 16px;
+        flex-wrap: wrap;
+        margin-top: 4px;
+      }
+      .primary-btn {
+        display: flex;
+        align-items: center;
+        gap: 13px;
+        padding: 16px 24px;
+        border-radius: 11px;
+        background: #d8a44c;
+        color: #1b1405;
+        box-shadow: 0 16px 38px rgba(216, 164, 76, 0.22);
+      }
+      .primary-btn:hover {
+        background: #e8bb6d;
+      }
+      .primary-btn .label {
+        display: flex;
+        flex-direction: column;
+        gap: 3px;
+      }
+      .primary-btn .title {
+        font:
+          700 15px/1.2 Manrope,
+          sans-serif;
+        color: #1b1405;
+      }
+      .primary-btn .meta {
+        font:
+          500 10.5px/1.3 'Roboto Mono',
+          monospace;
+        color: #5a4413;
+        overflow-wrap: anywhere;
+      }
+      .release-line {
+        font:
+          400 11.5px/1.6 'Roboto Mono',
+          monospace;
+        color: #6f7479;
+        text-wrap: pretty;
+      }
+      .carousel {
+        position: relative;
+      }
+      .carousel-track {
+        display: flex;
+        gap: 14px;
+        margin: 0;
+        padding: 0;
+        list-style: none;
+        overflow-x: auto;
+        scroll-snap-type: x mandatory;
+        scroll-behavior: smooth;
+        scrollbar-width: none;
+      }
+      .carousel-track::-webkit-scrollbar {
+        display: none;
+      }
+      .carousel-track li {
+        flex: 0 0 auto;
+        scroll-snap-align: center;
+        margin: 0;
+      }
+      .carousel-track img {
+        display: block;
+        height: clamp(200px, 42vw, 380px);
+        width: auto;
+        max-width: 88vw;
+      }
+      .carousel-btn {
+        position: absolute;
+        top: 50%;
+        translate: 0 -50%;
+        width: 38px;
+        height: 38px;
+        border-radius: 50%;
+        background: #1b1e20;
+        border: 1px solid #33383c;
+        color: #eae7e2;
+        font:
+          500 18px/1 Manrope,
+          sans-serif;
+        cursor: pointer;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+      }
+      .carousel-btn:hover {
+        background: #262a2d;
+      }
+      .carousel-btn.prev {
+        left: -8px;
+      }
+      .carousel-btn.next {
+        right: -8px;
+      }
+      .carousel-dots {
+        display: none;
+        justify-content: center;
+        gap: 8px;
+        margin-top: 12px;
+      }
+      .carousel-dots .dot {
+        width: 6px;
+        height: 6px;
+        border-radius: 50%;
+        background: #33383c;
+      }
+      .carousel-dots .dot.active {
+        background: #d8a44c;
+      }
+      @media (max-width: 700px) {
+        .carousel-btn {
+          display: none;
+        }
+        .carousel-track li {
+          flex: 0 0 100%;
+          width: 100%;
+          scroll-snap-align: start;
+          display: flex;
+          justify-content: center;
+        }
+        .carousel-track img {
+          width: 100%;
+          height: auto;
+          max-width: 100%;
+        }
+        .carousel-dots {
+          display: flex;
+        }
+      }
+      .downloads {
+        display: flex;
+        flex-direction: column;
+        gap: 16px;
+      }
+      .downloads-head {
+        display: flex;
+        align-items: baseline;
+        gap: 14px;
+        flex-wrap: wrap;
+      }
+      .downloads-head .title {
+        font:
+          700 21px/1.2 Manrope,
+          sans-serif;
+        letter-spacing: -0.015em;
+        color: #f5f2ed;
+        white-space: nowrap;
+      }
+      .downloads-head .source {
+        font:
+          400 11.5px/1.4 'Roboto Mono',
+          monospace;
+        color: #6f7479;
+        overflow-wrap: anywhere;
+      }
+      .asset-table {
+        border-radius: 13px;
+        overflow: hidden;
+        border: 1px solid #2b2f33;
+        background: #1b1e20;
+      }
+      .asset-row {
+        display: grid;
+        grid-template-columns: minmax(150px, 1fr) minmax(0, 2fr) 110px;
+        grid-template-areas: 'platform file dl';
+        gap: 16px;
+        align-items: center;
+        padding: 15px 18px;
+        border-bottom: 1px solid #23262a;
+      }
+      .asset-row .platform {
+        grid-area: platform;
+        font:
+          600 13.5px/1.35 Manrope,
+          sans-serif;
+        color: #eae7e2;
+      }
+      .asset-row .file {
+        grid-area: file;
+        font:
+          400 11.5px/1.4 'Roboto Mono',
+          monospace;
+        color: #8d9196;
+        overflow-wrap: anywhere;
+      }
+      .asset-row .file .size {
+        color: #5d6165;
+      }
+      .asset-row .dl {
+        grid-area: dl;
+        justify-self: end;
+        padding: 9px 15px;
+        border-radius: 8px;
+        background: #262a2d;
+        border: 1px solid #33383c;
+        font:
+          600 12px/1 Manrope,
+          sans-serif;
+        color: #eae7e2;
+        white-space: nowrap;
+      }
+      .asset-row .dl:hover {
+        background: #2f3437;
+        color: #f5f2ed;
+      }
+      .asset-note {
+        padding: 14px 20px;
+        font:
+          400 11.5px/1.6 'Roboto Mono',
+          monospace;
+        color: #6f7479;
+      }
+      .cta-alt {
+        display: flex;
+        flex-direction: column;
+        gap: 5px;
+        font:
+          500 12.5px/1.5 Manrope,
+          sans-serif;
+        color: #a9adb2;
+      }
+      .cta-alt a {
+        color: #d8a44c;
+        text-decoration: underline;
+        text-underline-offset: 3px;
+      }
+      .cta-alt a:hover {
+        color: #e8bb6d;
+      }
+      .cta-alt .hint {
+        font:
+          400 11.5px/1.5 'Roboto Mono',
+          monospace;
+        color: #6f7479;
+      }
+      .groups {
+        display: flex;
+        flex-direction: column;
+        gap: 30px;
+      }
+      .os-group {
+        display: flex;
+        flex-direction: column;
+        gap: 12px;
+      }
+      .os-group h3 {
+        margin: 0;
+        font:
+          700 15px/1.2 Manrope,
+          sans-serif;
+        letter-spacing: -0.01em;
+        color: #f5f2ed;
+      }
+      .asset-table .asset-row:last-child {
+        border-bottom: 0;
+      }
+      .asset-row.recommended {
+        background: #202428;
+      }
+      .asset-row .platform .detail {
+        display: block;
+        margin-top: 2px;
+        font:
+          400 11.5px/1.4 Manrope,
+          sans-serif;
+        color: #8d9196;
+      }
+      .asset-row .platform .rec {
+        display: inline-block;
+        margin-left: 8px;
+        padding: 2px 7px;
+        border-radius: 999px;
+        background: rgba(216, 164, 76, 0.14);
+        color: #d8a44c;
+        font:
+          600 10px/1.3 'Roboto Mono',
+          monospace;
+        letter-spacing: 0.02em;
+        vertical-align: 1px;
+      }
+      .os-notes {
+        margin: 0;
+        padding: 0 4px 0 18px;
+        font:
+          400 12.5px/1.6 Manrope,
+          sans-serif;
+        color: #8d9196;
+      }
+      .os-notes li {
+        margin: 5px 0;
+      }
+      .os-notes code {
+        padding: 1px 6px;
+        border-radius: 5px;
+        background: #23262a;
+        color: #c9ccd0;
+        font:
+          400 11.5px/1.5 'Roboto Mono',
+          monospace;
+        overflow-wrap: anywhere;
+      }
+      .guide {
+        display: flex;
+        flex-direction: column;
+        gap: 14px;
+        max-width: 720px;
+      }
+      .guide p {
+        margin: 0;
+        font:
+          400 14px/1.6 Manrope,
+          sans-serif;
+        color: #a9adb2;
+      }
+      footer {
+        display: flex;
+        align-items: center;
+        gap: 18px;
+        flex-wrap: wrap;
+        padding-top: 28px;
+        border-top: 1px solid #23262a;
+      }
+      footer .spacer {
+        flex: 1;
+      }
+      footer .ver {
+        font:
+          400 11.5px/1 'Roboto Mono',
+          monospace;
+        color: #6f7479;
+        white-space: nowrap;
+      }
+      footer a {
+        font:
+          500 12.5px/1 Manrope,
+          sans-serif;
+        color: #a9adb2;
+        white-space: nowrap;
+      }
+      footer a:hover {
+        color: #eae7e2;
+      }
+      @media (max-width: 700px) {
+        .asset-row {
+          grid-template-columns: 1fr auto;
+          grid-template-areas:
+            'platform dl'
+            'file file';
+          gap: 6px 14px;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="wrap">
+      <header>
+        <svg class="logo" viewBox="0 0 1024 1024">
+          <path
+            d="M512,26 C726,26 820,54 883,117 C946,180 998,298 998,512 C998,726 946,844 883,907 C820,970 726,998 512,998 C298,998 204,970 141,907 C78,844 26,726 26,512 C26,298 78,180 141,117 C204,54 298,26 512,26 Z"
+            fill="#23282b"
+          />
+          <g fill="none" stroke-width="54" stroke-linecap="round" stroke-dasharray="44 64">
+            <path d="M186,282 C400,282 470,512 640,512" stroke="#4ea89a" />
+            <path d="M186,512 L640,512" stroke="#d8a44c" />
+            <path d="M186,742 C400,742 470,512 640,512" stroke="#7e93bd" />
+          </g>
+          <path
+            d="M640,512 L846,512"
+            fill="none"
+            stroke="#f7f4ef"
+            stroke-width="112"
+            stroke-linecap="round"
+          />
+          <circle cx="640" cy="512" r="74" fill="#f7f4ef" />
+        </svg>
+        <div class="wordmark">Plexo</div>
+        <div class="badge">PRE-RELEASE</div>
+        <div class="spacer"></div>
+        <a href="https://github.com/anmolkapil/plexo">GitHub</a>
+      </header>
+
+      <section class="hero">
+        <div class="eyebrow">DOWNLOAD MANAGER · MULTI-LINK</div>
+        <h1>One download.<br />Every network.</h1>
+        <p>Plexo combines all your available internet connections to download files faster.</p>
+        <ul class="use-cases">
+          <li>Wi-Fi + Ethernet.</li>
+          <li>Two tethered phones.</li>
+          <li>Wi-Fi, Ethernet, and a tethered phone.</li>
+          <li>Whatever your computer can connect to.</li>
+        </ul>
+
+        <div class="cta-row">
+          <a
+            class="primary-btn"
+            id="primary-btn"
+            href="https://github.com/anmolkapil/plexo/releases/latest"
+          >
+            <svg
+              viewBox="0 0 24 24"
+              width="19"
+              height="19"
+              fill="none"
+              stroke="#1b1405"
+              stroke-width="2.2"
+              stroke-linecap="round"
+            >
+              <path d="M12 3v12" />
+              <path d="M6.5 11.5 12 17l5.5-5.5" />
+              <path d="M4 20h16" />
+            </svg>
+            <span class="label">
+              <span class="title" id="primary-title">Download for your OS</span>
+              <span class="meta" id="primary-meta">Loading latest release…</span>
+            </span>
+          </a>
+          <a href="#downloads">All downloads</a>
+        </div>
+        <div class="cta-alt" id="cta-alt"></div>
+        <div class="release-line" id="release-line">Checking GitHub for the latest release…</div>
+      </section>
+
+      <section class="carousel">
+        <ul class="carousel-track" id="shots-track">
+          <li>
+            <img
+              src="screenshots/links.png"
+              alt="Plexo's link picker showing Wi-Fi and USB Tethering selected, with ping and parallel stream controls."
+              loading="lazy"
+            />
+          </li>
+          <li>
+            <img
+              src="screenshots/downloading.png"
+              alt="Plexo combining Wi-Fi and USB tethering into one 27.9 MB/s download, with per-network speed and progress."
+              loading="lazy"
+            />
+          </li>
+          <li>
+            <img
+              src="screenshots/complete.png"
+              alt="Plexo download complete summary: 109.3 MB in 8 seconds at 39.4 MB/s peak, split across Wi-Fi and USB tethering."
+              loading="lazy"
+            />
+          </li>
+        </ul>
+        <button
+          class="carousel-btn prev"
+          aria-label="Previous screenshot"
+          onclick="
+            document.getElementById('shots-track').scrollBy({
+              left: -document.getElementById('shots-track').clientWidth * 0.9,
+              behavior: 'smooth'
+            })
+          "
+        >
+          ‹
+        </button>
+        <button
+          class="carousel-btn next"
+          aria-label="Next screenshot"
+          onclick="
+            document.getElementById('shots-track').scrollBy({
+              left: document.getElementById('shots-track').clientWidth * 0.9,
+              behavior: 'smooth'
+            })
+          "
+        >
+          ›
+        </button>
+        <div class="carousel-dots" id="shots-dots">
+          <span class="dot active"></span>
+          <span class="dot"></span>
+          <span class="dot"></span>
+        </div>
+      </section>
+
+      <section class="downloads" id="downloads">
+        <div class="downloads-head">
+          <div class="title">All downloads</div>
+          <div class="source" id="asset-source">PUBLISHED ON GITHUB RELEASES</div>
+        </div>
+        <div class="groups" id="asset-groups">
+          <div class="asset-note">Loading releases…</div>
+        </div>
+      </section>
+
+      <section class="guide" id="mac-tethering">
+        <div class="downloads-head">
+          <div class="title">USB tethering on macOS</div>
+        </div>
+        <p>
+          Macs don't recognize an Android phone's USB tethering out of the box — you'll need a
+          free helper app called <a href="https://github.com/XiaoMiku01/TetherKit">TetherKit</a>
+          first.
+        </p>
+        <ol class="os-notes">
+          <li>
+            Install TetherKit: open Terminal and run
+            <code>brew install XiaoMiku01/tap/tetherkit</code>
+          </li>
+          <li>Connect your Android phone to your Mac with a USB cable.</li>
+          <li>
+            On your phone: Settings → Network & Internet → Hotspot & tethering → turn on USB
+            tethering.
+          </li>
+          <li>Open Plexo — it'll pick up the connection automatically.</li>
+        </ol>
+        <p>
+          <a href="https://github.com/anmolkapil/plexo#using-a-usb-tethered-android-phone"
+            >Full guide on GitHub →</a
+          >
+        </p>
+      </section>
+
+      <footer>
+        <div class="ver" id="version-label">PLEXO</div>
+        <div class="spacer"></div>
+        <a href="https://github.com/anmolkapil/plexo">Source</a>
+        <a href="https://github.com/anmolkapil/plexo/issues/new">Report an issue</a>
+      </footer>
+    </div>
+
+    <script src="downloads.js"></script>
+    <script>
+      ;(function () {
+        var track = document.getElementById('shots-track')
+        var dots = document.querySelectorAll('#shots-dots .dot')
+        if (track && dots.length && 'IntersectionObserver' in window) {
+          var io = new IntersectionObserver(
+            function (entries) {
+              entries.forEach(function (entry) {
+                if (!entry.isIntersecting) return
+                var idx = Array.prototype.indexOf.call(track.children, entry.target)
+                dots.forEach(function (d, i) {
+                  d.classList.toggle('active', i === idx)
+                })
+              })
+            },
+            { root: track, threshold: 0.6 }
+          )
+          Array.prototype.forEach.call(track.children, function (li) {
+            io.observe(li)
+          })
+        }
+      })()
+
+      ;(function () {
+        var REPO = 'anmolkapil/plexo'
+        var repoUrl = 'https://github.com/' + REPO
+        var D = window.PlexoDownloads
+
+        function $(id) {
+          return document.getElementById(id)
+        }
+
+        function el(tag, className, text) {
+          var node = document.createElement(tag)
+          if (className) node.className = className
+          if (text) node.textContent = text
+          return node
+        }
+
+        // Text with `code` spans, built without innerHTML.
+        function withCode(node, text) {
+          text.split('`').forEach(function (part, i) {
+            if (!part) return
+            node.appendChild(i % 2 ? el('code', '', part) : document.createTextNode(part))
+          })
+          return node
+        }
+
+        // Only Chromium browsers will say what chip this is; the rest leave it null.
+        function environment() {
+          var uaData = navigator.userAgentData
+          var hint =
+            uaData && uaData.getHighEntropyValues
+              ? uaData.getHighEntropyValues(['architecture']).catch(function () {
+                  return null
+                })
+              : Promise.resolve(null)
+          return hint.then(function (h) {
+            return D.detectEnvironment(navigator, h)
+          })
+        }
+
+        function row(asset) {
+          var r = el('div', 'asset-row' + (asset.recommended ? ' recommended' : ''))
+          var platform = el('div', 'platform', asset.title)
+          if (asset.recommended) platform.appendChild(el('span', 'rec', 'FOR YOUR COMPUTER'))
+          platform.appendChild(el('span', 'detail', asset.detail))
+          var file = el('div', 'file', asset.file + ' ')
+          if (asset.sizeText) file.appendChild(el('span', 'size', '· ' + asset.sizeText))
+          var dl = el('a', 'dl', 'Download')
+          dl.href = asset.url
+          r.appendChild(platform)
+          r.appendChild(file)
+          r.appendChild(dl)
+          return r
+        }
+
+        // Nothing to offer (no release yet, GitHub unreachable, or this page's own script missing):
+        // send the visitor to the Releases page rather than leave a spinner up.
+        function fallback(failed) {
+          $('asset-groups').textContent = ''
+          $('cta-alt').textContent = ''
+          $('asset-groups').appendChild(
+            el(
+              'div',
+              'asset-note',
+              failed
+                ? 'Couldn’t load the latest release from GitHub — get Plexo from the Releases page.'
+                : 'No published build assets yet — check the Releases page on GitHub.'
+            )
+          )
+          $('asset-source').textContent = REPO.toUpperCase()
+          $('release-line').textContent = failed
+            ? 'Couldn’t check for the latest release.'
+            : 'No release published yet.'
+          $('version-label').textContent = 'PLEXO'
+          $('primary-title').textContent = 'View releases on GitHub'
+          $('primary-meta').textContent = repoUrl
+          $('primary-btn').href = repoUrl + '/releases'
+        }
+
+        function render(release, env) {
+          var groupsEl = $('asset-groups')
+          var sourceEl = $('asset-source')
+          var releaseLine = $('release-line')
+          var versionEl = $('version-label')
+          var primaryTitle = $('primary-title')
+          var primaryMeta = $('primary-meta')
+          var primaryBtn = $('primary-btn')
+          var alt = $('cta-alt')
+          var model = D.build(release, env)
+
+          groupsEl.textContent = ''
+          alt.textContent = ''
+
+          if (!release || model.empty) return fallback()
+
+          var version = release.tag_name
+          var date = release.published_at
+            ? new Date(release.published_at).toLocaleDateString(undefined, {
+                year: 'numeric',
+                month: 'short',
+                day: 'numeric'
+              })
+            : ''
+          versionEl.textContent = 'PLEXO · ' + version
+          sourceEl.textContent = REPO.toUpperCase() + ' · ' + version.toUpperCase()
+          releaseLine.textContent =
+            version +
+            ' · ' +
+            (release.prerelease ? 'pre-release' : 'stable') +
+            (date ? ' · ' + date : '')
+
+          if (model.primary) {
+            primaryTitle.textContent = model.primary.title
+            primaryMeta.textContent = model.primary.meta
+            primaryBtn.href = model.primary.asset.url
+          } else {
+            // Phones, tablets and anything we don't build for.
+            primaryTitle.textContent = model.desktop
+              ? 'Choose a download'
+              : 'Plexo is a desktop app'
+            primaryMeta.textContent = model.desktop
+              ? 'Nothing published for your system yet'
+              : 'Open this page on a Mac, Windows or Linux computer'
+            primaryBtn.href = '#downloads'
+          }
+
+          model.alternates.forEach(function (a) {
+            var link = el('a', '', a.text + ' →')
+            link.href = a.asset.url
+            alt.appendChild(link)
+          })
+          if (model.hint) alt.appendChild(el('div', 'hint', model.hint))
+          if (env.os === 'mac') {
+            var tetherAlt = el('a', '', 'Tethering an Android phone? See the USB tethering guide →')
+            tetherAlt.href = '#mac-tethering'
+            alt.appendChild(tetherAlt)
+          }
+
+          model.groups.forEach(function (g) {
+            var section = el('section', 'os-group')
+            section.appendChild(el('h3', '', g.label))
+            var table = el('div', 'asset-table')
+            g.rows.forEach(function (asset) {
+              table.appendChild(row(asset))
+            })
+            section.appendChild(table)
+            var notes = el('ul', 'os-notes')
+            g.notes.forEach(function (text) {
+              notes.appendChild(withCode(el('li'), text))
+            })
+            section.appendChild(notes)
+            groupsEl.appendChild(section)
+            // Slot the static tethering guide right under the macOS group, not after every OS.
+            if (g.os === 'mac') {
+              var guideSection = $('mac-tethering')
+              if (guideSection) groupsEl.appendChild(guideSection)
+            }
+          })
+
+          if (release.prerelease) {
+            groupsEl.appendChild(
+              el(
+                'div',
+                'asset-note',
+                'Pre-release build. Expect rough edges, and file an issue if something breaks.'
+              )
+            )
+          }
+        }
+
+        if (!D) {
+          fallback(true)
+          return
+        }
+
+        Promise.all([
+          fetch('https://api.github.com/repos/' + REPO + '/releases?per_page=5').then(function (r) {
+            return r.ok ? r.json() : Promise.reject()
+          }),
+          environment()
+        ])
+          .then(function (results) {
+            var list = results[0]
+            render(Array.isArray(list) ? list[0] : null, results[1])
+          })
+          .catch(function () {
+            fallback(true)
+          })
+      })()
+    </script>
+  </body>
+</html>

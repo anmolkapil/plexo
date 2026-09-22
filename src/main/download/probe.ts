@@ -2,9 +2,13 @@ import { request as httpRequest } from 'node:http'
 import { request as httpsRequest } from 'node:https'
 import { URL } from 'node:url'
 import type { ProbeResult } from '../../shared/types'
+import { testKnobs } from '../testKnobs'
 
 const MAX_REDIRECTS = 5
 const USER_AGENT = 'Plexo/1.0'
+// A server that accepts the connection and never answers would otherwise hang the probe — and
+// the link field's "Checking…" — forever. Same budget as a stalled chunk.
+const PROBE_TIMEOUT_MS = testKnobs.stallTimeoutMs
 
 type Headers = Record<string, string | string[] | undefined>
 
@@ -37,23 +41,61 @@ function requestOneByte(url: URL): Promise<ProbeResponse> {
       }
     )
     req.on('error', reject)
+    req.setTimeout(PROBE_TIMEOUT_MS, () =>
+      req.destroy(new Error('The server did not respond — check the link and try again'))
+    )
     req.end()
   })
+}
+
+function parseContentDispositionFilename(disposition: string): string | null {
+  // RFC 6266 / RFC 5987: filename* takes precedence over filename
+  // format: filename*=charset'language'encoded-value
+  const extMatch = /\bfilename\*=(?:[a-zA-Z0-9_-]+)'[^']*'([^;\s]+)/i.exec(disposition)
+  if (extMatch?.[1]) {
+    try {
+      return decodeURIComponent(extMatch[1])
+    } catch {
+      return extMatch[1]
+    }
+  }
+
+  // Quoted string: preserves semicolons inside quotes, e.g. filename="report; final.pdf"
+  const quotedMatch = /\bfilename="((?:[^"\\]|\\.)*)"/i.exec(disposition)
+  if (quotedMatch?.[1]) {
+    const unescaped = quotedMatch[1].replace(/\\(.)/g, '$1')
+    try {
+      return decodeURIComponent(unescaped)
+    } catch {
+      return unescaped
+    }
+  }
+
+  // Unquoted token fallback
+  const tokenMatch = /\bfilename=([^;\s]+)/i.exec(disposition)
+  if (tokenMatch?.[1]) {
+    try {
+      return decodeURIComponent(tokenMatch[1])
+    } catch {
+      return tokenMatch[1]
+    }
+  }
+
+  return null
 }
 
 function fileNameFromHeaders(headers: Headers, url: URL): string {
   const disposition = headerValue(headers, 'content-disposition')
   if (disposition) {
-    const match = /filename\*?=(?:UTF-8'')?"?([^";]+)"?/i.exec(disposition)
-    if (match?.[1]) {
-      try {
-        return decodeURIComponent(match[1])
-      } catch {
-        return match[1]
-      }
-    }
+    const parsed = parseContentDispositionFilename(disposition)
+    if (parsed) return parsed
   }
-  const pathname = decodeURIComponent(url.pathname)
+  let pathname = url.pathname
+  try {
+    pathname = decodeURIComponent(pathname)
+  } catch {
+    // A malformed %-escape: the raw path still names the file well enough.
+  }
   const base = pathname.split('/').filter(Boolean).pop()
   return base && base.length > 0 ? base : 'download'
 }
@@ -78,47 +120,37 @@ async function requestFollowingRedirects(
   return { current, response }
 }
 
-/**
- * Re-checks a previously probed URL's strong validators before a paused
- * download resumes. Appending onto part files assumes the remote content
- * hasn't changed since it was probed — if it has (a different ETag or
- * Last-Modified), stitching old and new bytes together would silently
- * produce a corrupt file. Returns true when unchanged *or* when we can't
- * tell (no validators, or the check itself failed) — a probe failure isn't
- * proof the file changed, so it shouldn't block a resume on its own.
- */
-export async function isResourceUnchanged(
-  rawUrl: string,
-  etag: string | null,
-  lastModified: string | null
-): Promise<boolean> {
-  if (!etag && !lastModified) return true
-
-  try {
-    const { response } = await requestFollowingRedirects(rawUrl)
-    if (!response || response.statusCode >= 400) return true
-
-    const currentEtag = headerValue(response.headers, 'etag')
-    const currentLastModified = headerValue(response.headers, 'last-modified')
-    if (etag && currentEtag) return currentEtag === etag
-    if (lastModified && currentLastModified) return currentLastModified === lastModified
-    return true
-  } catch {
-    return true
-  }
-}
-
 export async function probeUrl(rawUrl: string): Promise<ProbeResult> {
   const { current, response } = await requestFollowingRedirects(rawUrl)
+
+  // An empty file can't satisfy a request for its first byte: the server answers 416 and gives
+  // the size as `bytes */0`. That's a valid, empty download, not an error.
+  if (
+    response?.statusCode === 416 &&
+    /^\s*bytes\s+\*\/0\s*$/i.test(headerValue(response.headers, 'content-range') ?? '')
+  ) {
+    return {
+      kind: 'http',
+      requestedUrl: rawUrl,
+      finalUrl: current.toString(),
+      supportsRanges: false,
+      totalBytes: 0,
+      suggestedFileName: fileNameFromHeaders(response.headers, current),
+      contentType: headerValue(response.headers, 'content-type') ?? null,
+      etag: headerValue(response.headers, 'etag') ?? null,
+      lastModified: headerValue(response.headers, 'last-modified') ?? null
+    }
+  }
 
   if (!response || response.statusCode === 0 || response.statusCode >= 400) {
     throw new Error(`Server responded with status ${response?.statusCode || 'unknown'}`)
   }
 
   const contentRange = headerValue(response.headers, 'content-range')
-  const acceptRanges = headerValue(response.headers, 'accept-ranges')
-  const supportsRanges =
-    response.statusCode === 206 || (acceptRanges != null && acceptRanges !== 'none')
+  // A server that supports range requests must answer our 1-byte range GET with 206 Partial Content.
+  // If it returned 200 OK, it ignored the Range header and sent the whole file — even if its headers
+  // statically claim `Accept-Ranges: bytes`.
+  const supportsRanges = response.statusCode === 206
 
   let totalBytes: number | null = null
   if (contentRange) {
