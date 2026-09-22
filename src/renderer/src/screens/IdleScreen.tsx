@@ -20,7 +20,19 @@ type ProbeState =
 
 const PROBE_DEBOUNCE_MS = 600
 const PRESET_STREAMS = [1, 2, 4, 8] as const
+
+/** Peer counts, an order of magnitude above the HTTP stream presets. A BitTorrent peer serves
+ * only while it chooses to unchoke you and most of a tracker's list is stale, so throughput
+ * comes from holding many connections — a handful leaves a torrent crawling. */
+const PRESET_PEERS = [10, 25, 50, 100] as const
+
 const PASTE_SHORTCUT = window.plexo.platform === 'darwin' ? '⌘V' : 'Ctrl+V'
+
+/** Matched in the renderer purely to word the UI — the main process does its own parsing and
+ * is the one that decides what a link actually is. */
+function looksLikeMagnet(value: string): boolean {
+  return value.trim().toLowerCase().startsWith('magnet:')
+}
 
 const fieldLabelClass = 'shrink-0 font-mono text-[10px] tracking-[0.14em] text-muted-foreground'
 
@@ -49,6 +61,10 @@ export function IdleScreen(): React.JSX.Element {
   // Tracks deselections rather than selections, so a newly-detected interface starts selected.
   const [deselectedInterfaceIds, setDeselectedInterfaceIds] = useState<string[]>([])
   const [chunksPerNetwork, setChunksPerNetwork] = useState(2)
+  // Kept separate from the stream count rather than shared: the two are different quantities in
+  // different units, so a user who picked 8 streams for an HTTP file can't carry that figure
+  // onto a torrent, where it would mean eight peers.
+  const [peersPerNetwork, setPeersPerNetwork] = useState(50)
   const [starting, setStarting] = useState(false)
   const [startError, setStartError] = useState<string | null>(null)
   const [fileNameOverride, setFileNameOverride] = useState<string | null>(null)
@@ -94,19 +110,40 @@ export function IdleScreen(): React.JSX.Element {
   const enabledIds = detectedIds.filter((id) => !deselectedInterfaceIds.includes(id))
   const selectedInterfaceIds = isSingleStreamOnly ? enabledIds.slice(0, 1) : enabledIds
 
-  const connectionsPerNetwork = isSingleStreamOnly ? 1 : chunksPerNetwork
+  // While probing there is no result to read a kind off yet, so the wording leans on the text
+  // in the box; once resolved, the main process's answer takes over.
+  const isMagnetInput = looksLikeMagnet(url)
+  const torrent = ready?.torrent
+  const isTorrent = isMagnetInput || Boolean(torrent)
+  const streamsLabel = isTorrent ? 'PEERS / NETWORK' : 'PARALLEL STREAMS'
+  const presets: readonly number[] = isTorrent ? PRESET_PEERS : PRESET_STREAMS
+  const perNetwork = isTorrent ? peersPerNetwork : chunksPerNetwork
+  const setPerNetwork = isTorrent ? setPeersPerNetwork : setChunksPerNetwork
+
+  const connectionsPerNetwork = isSingleStreamOnly ? 1 : perNetwork
   // A small file gets fewer streams than asked for — one with no block to claim would only
   // idle — so once the file's size is known the count comes from the same plan the download
-  // will use.
-  const totalChunks = ready
-    ? planDownload({
-        totalBytes: ready.totalBytes ?? 0,
-        splittable: multiChunkAllowed,
-        networkCount: selectedInterfaceIds.length,
-        streamsPerNetwork: chunksPerNetwork
-      }).streamNetworks.length
-    : selectedInterfaceIds.length * chunksPerNetwork
-  const startLabel = starting ? 'Starting…' : probe.status === 'probing' ? 'Checking…' : 'Start'
+  // will use. A torrent's units are its pieces, which the HTTP planner knows nothing about, so
+  // its slot count is simply what was asked for on each network.
+  let totalChunks: number
+  if (isTorrent) {
+    totalChunks = selectedInterfaceIds.length * perNetwork
+  } else if (ready) {
+    totalChunks = planDownload({
+      totalBytes: ready.totalBytes ?? 0,
+      splittable: multiChunkAllowed,
+      networkCount: selectedInterfaceIds.length,
+      streamsPerNetwork: chunksPerNetwork
+    }).streamNetworks.length
+  } else {
+    totalChunks = selectedInterfaceIds.length * chunksPerNetwork
+  }
+
+  let startLabel = 'Start'
+  if (starting) startLabel = 'Starting…'
+  // Resolving a magnet means asking the swarm for its metadata, which takes noticeably longer
+  // than an HTTP probe — worth naming so the wait doesn't look like a hang.
+  else if (probe.status === 'probing') startLabel = isMagnetInput ? 'Finding…' : 'Checking…'
   const canStart =
     probe.status === 'ready' &&
     selectedInterfaceIds.length > 0 &&
@@ -117,7 +154,14 @@ export function IdleScreen(): React.JSX.Element {
     `${selectedInterfaceIds.length} ${selectedInterfaceIds.length === 1 ? 'network' : 'networks'} selected`
   ]
   if (selectedInterfaceIds.length > 0) {
-    footerParts.push(`${totalChunks} ${totalChunks === 1 ? 'stream' : 'parallel streams'}`)
+    const unitWord = isTorrent
+      ? totalChunks === 1
+        ? 'peer connection'
+        : 'peer connections'
+      : totalChunks === 1
+        ? 'stream'
+        : 'parallel streams'
+    footerParts.push(`${totalChunks} ${unitWord}`)
   }
   if (ready && ready.totalBytes !== null) footerParts.push(formatBytes(ready.totalBytes))
 
@@ -159,6 +203,7 @@ export function IdleScreen(): React.JSX.Element {
     setStartError(null)
     try {
       await window.plexo.startDownload({
+        kind: probe.result.kind,
         url: probe.result.finalUrl,
         destinationDir,
         suggestedFileName: fileNameOverride?.trim() || probe.result.suggestedFileName,
@@ -194,7 +239,7 @@ export function IdleScreen(): React.JSX.Element {
               type="url"
               value={url}
               onChange={(event) => setUrl(event.target.value)}
-              placeholder="https://"
+              placeholder="https://… or magnet:?xt=urn:btih:…"
               spellCheck={false}
               aria-labelledby="idle-link-label"
               className="min-w-0 flex-1 rounded-[3px] border-none bg-transparent font-mono text-[13px] text-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
@@ -221,6 +266,23 @@ export function IdleScreen(): React.JSX.Element {
         </div>
 
         {probe.status === 'error' && <ErrorAlert message={probe.message} />}
+
+        {probe.status === 'probing' && isMagnetInput && (
+          <p className="text-[11.5px] leading-[1.4] text-muted-foreground">
+            Asking the swarm for this torrent&apos;s file list — a magnet link carries only an
+            infohash, so there is nothing to show until a peer answers.
+          </p>
+        )}
+
+        {torrent && (
+          <p className="text-[11.5px] leading-[1.4] text-muted-foreground">
+            Torrent · {torrent.pieceCount.toLocaleString()} pieces of{' '}
+            {formatBytes(torrent.pieceLengthBytes)} ·{' '}
+            {torrent.isSingleFile
+              ? '1 file'
+              : `${torrent.files.length.toLocaleString()} files in a folder`}
+          </p>
+        )}
 
         <div
           className={cn(
@@ -271,13 +333,13 @@ export function IdleScreen(): React.JSX.Element {
         >
           <div className="flex flex-wrap items-center gap-2">
             <div id="idle-streams-label" className={fieldLabelClass}>
-              PARALLEL STREAMS
+              {streamsLabel}
             </div>
             <ToggleGroup
-              value={[String(chunksPerNetwork)]}
+              value={[String(perNetwork)]}
               onValueChange={(values) => {
                 if (values.length === 0) return
-                setChunksPerNetwork(Number(values[0]))
+                setPerNetwork(Number(values[0]))
               }}
               disabled={isSingleStreamOnly}
               aria-labelledby="idle-streams-label"
@@ -285,11 +347,11 @@ export function IdleScreen(): React.JSX.Element {
               size="xs"
               spacing={1}
             >
-              {PRESET_STREAMS.map((preset) => (
+              {presets.map((preset) => (
                 // h-6/min-w-6: WCAG 2.5.8's 24px floor — the xs toggle size is 20px, and this is
                 // the primary "how many parallel connections" control.
                 <ToggleGroupItem key={preset} value={String(preset)} className="h-6 min-w-6">
-                  {preset}×
+                  {isTorrent ? preset : `${preset}×`}
                 </ToggleGroupItem>
               ))}
             </ToggleGroup>
@@ -305,12 +367,14 @@ export function IdleScreen(): React.JSX.Element {
               '1 stream (server does not support ranges)'
             ) : (
               <>
-                <span className="font-semibold text-foreground">{chunksPerNetwork}</span> / network
+                <span className="font-semibold text-foreground">{perNetwork}</span> / network
                 {selectedInterfaceIds.length > 0 && (
                   <>
                     {' · '}
-                    <span className="font-semibold text-foreground">{totalChunks}</span> total
-                    parallel {totalChunks === 1 ? 'stream' : 'streams'}
+                    <span className="font-semibold text-foreground">{totalChunks}</span>{' '}
+                    {isTorrent
+                      ? `total peer ${totalChunks === 1 ? 'connection' : 'connections'}`
+                      : `total parallel ${totalChunks === 1 ? 'stream' : 'streams'}`}
                   </>
                 )}
               </>

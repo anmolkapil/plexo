@@ -2,6 +2,28 @@ export type NetworkInterfaceKind = 'wifi' | 'usb' | 'ethernet' | 'bridge' | 'oth
 
 export type ThemeSource = 'light' | 'dark'
 
+/** Where a download's bytes come from: an HTTP(S) URL, or a BitTorrent swarm named by a
+ * magnet link. The two share this whole progress model — a torrent piece stands in for a
+ * block, and a peer connection for a chunk worker bound to one network. */
+export type DownloadKind = 'http' | 'torrent'
+
+/** The parts of a resolved torrent worth showing the user. Piece hashes are deliberately
+ * absent: the renderer has no use for them, and they're megabytes on a large torrent. */
+export interface TorrentMetadata {
+  infoHashHex: string
+  pieceCount: number
+  pieceLengthBytes: number
+  /** true when the torrent holds one file, rather than a directory of them. */
+  isSingleFile: boolean
+  files: TorrentFileSummary[]
+}
+
+export interface TorrentFileSummary {
+  /** Path within the torrent, joined with '/'. */
+  path: string
+  length: number
+}
+
 export interface NetworkInterfaceInfo {
   /** Stable identifier for this interface (currently the OS device name, e.g. "en0"). */
   id: string
@@ -13,17 +35,22 @@ export interface NetworkInterfaceInfo {
 }
 
 export interface ProbeResult {
+  kind: DownloadKind
   requestedUrl: string
-  /** URL after following redirects — this is what the download should actually fetch. */
+  /** URL after following redirects — this is what the download should actually fetch. For a
+   * torrent, the magnet link itself, which stays the download's identity. */
   finalUrl: string
   supportsRanges: boolean
   /** null when the server did not report a size. */
   totalBytes: number | null
   suggestedFileName: string
   contentType: string | null
-  /** Strong validators, used to detect if the remote content changes between pause and resume. */
+  /** Strong validators, used to detect if the remote content changes between pause and resume.
+   * Always null for a torrent, whose piece hashes make them unnecessary. */
   etag: string | null
   lastModified: string | null
+  /** Present only when `kind` is 'torrent'. */
+  torrent?: TorrentMetadata
 }
 
 export type DownloadStatus =
@@ -51,6 +78,9 @@ export interface ChunkState {
   retryCount: number
   /** The block this stream is fetching. Unset whenever it holds none (idle, retrying, paused, done). */
   currentBlockIndex?: number
+  /** For a torrent, the `host:port` of the peer this slot currently holds. HTTP chunks talk
+   * to one origin the download already names, so they leave it unset. */
+  peerAddress?: string
   /** True while this stream is racing another stream for `currentBlockIndex`, because that one
    * was too slow — see main/download/scheduler.ts. Whichever finishes first wins. */
   hedge?: boolean
@@ -77,8 +107,10 @@ export interface BlockState {
 
 export interface DownloadState {
   id: string
+  kind: DownloadKind
   url: string
   fileName: string
+  /** For a multi-file torrent this is the directory the files are written into, not a file. */
   destinationPath: string
   /** 0 means the size could not be determined ahead of time. */
   totalBytes: number
@@ -94,6 +126,11 @@ export interface DownloadState {
   pausedAt?: number
   totalPausedMs?: number
   completedAt?: number
+  /** Present only when `kind` is 'torrent'. */
+  torrent?: TorrentMetadata
+  /** Peers currently connected, for a torrent. Peer count moves independently of the slot
+   * count, since a slot sits empty whenever its peer drops and no replacement is queued. */
+  connectedPeers?: number
   /** Bytes written to the destination file so far while `status` is 'assembling' — the part
    * files are already all complete at that point, so this tracks the sequential reassembly step
    * rather than the network transfer. */
@@ -157,6 +194,8 @@ export interface InitialPaths {
 }
 
 export interface StartDownloadRequest {
+  kind: DownloadKind
+  /** The HTTP(S) URL, or the magnet link for a torrent. */
   url: string
   destinationDir: string
   suggestedFileName: string

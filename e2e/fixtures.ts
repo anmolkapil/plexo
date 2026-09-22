@@ -159,6 +159,7 @@ export class PlexoApp {
     const destBefore = existsSync(destinationDir) ? await readdir(destinationDir) : []
 
     const id = await this.api.startDownload({
+      kind: probe.kind,
       url: probe.finalUrl,
       destinationDir,
       suggestedFileName: options.fileName ?? probe.suggestedFileName,

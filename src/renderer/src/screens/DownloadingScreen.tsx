@@ -356,6 +356,7 @@ export function DownloadingScreen({ download }: { download: DownloadState }): Re
           knownSize={knownSize}
           remainingBytes={remainingBytes}
           isPaused={isPaused}
+          unit={download.kind === 'torrent' ? 'piece' : 'chunk'}
           assembling={isAssembling}
           assembledBytes={assembledBytes}
         />

@@ -14,7 +14,7 @@ import type { IpcContract } from '../../shared/ipc-contract'
 import type { NetworkInterfaceInfo, ThemeSource } from '../../shared/types'
 import { DownloadManager } from '../download/downloadManager'
 import { getDefaultDownloadsDir, getHomeDir } from '../download/paths'
-import { probeUrl } from '../download/probe'
+import { probeSource } from '../download/sourceProbe'
 import { deviceBindingSupported } from '../network/deviceBinding'
 import { measureLatencies } from '../network/latency'
 import { listActiveInterfaces } from '../network/interfaces'
@@ -102,7 +102,13 @@ export function registerIpcHandlers(getWindow: () => BrowserWindow | null): Down
     await openNetworkSettings()
   })
 
-  handle('probeUrl', async (_event, url) => probeUrl(url))
+  handle('probeUrl', async (_event, url) => {
+    // A magnet link's probe needs somewhere to dial peers from; an http(s) one is passed
+    // straight through to probeUrl by probeSource. The renderer polls interfaces
+    // continuously, but a probe can still arrive before the first poll lands.
+    const interfaces = cachedInterfaces.length > 0 ? cachedInterfaces : await refreshInterfaces()
+    return probeSource(url, interfaces)
+  })
 
   handle('getInitialPaths', async () => ({
     homeDir: getHomeDir(),

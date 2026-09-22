@@ -23,6 +23,16 @@ const TARGET_CELL_PX = 12
 const CELL_GAP_PX = 3
 const CELL_HEIGHT_PX = 13
 const MIN_COLS = 8
+
+// Ceiling on grid squares, above which consecutive units share one square.
+//
+// The 1:1 rule above holds for HTTP because that engine caps itself at the same number by
+// growing its block size instead of its block count. A torrent can't: its piece size is fixed
+// by the torrent, so a 6 GB ISO at 256 KB pieces is 24,729 of them. One square each would be
+// 24,729 elements reconciled on every progress push, to draw detail finer than a pixel. Above
+// the cap the grid stays a faithful byte-space map, just at a coarser resolution — and it says
+// so, rather than quietly implying one square is still one piece.
+const MAX_CELLS = 4096
 // Rows visible before the grid starts scrolling.
 const MAX_VISIBLE_ROWS = 6
 // Room for the hover outline (1.5px, offset 1) so it isn't clipped against the scroll edges.
@@ -59,9 +69,11 @@ interface DisplayCell {
   fillRatio: number
   totalBytes: number
   bytesDownloaded: number
-  /** 1-based chunk number, matching the "Chunk #N" badges in the streams table so a hovered
-   * square points back at a specific stream's work. */
+  /** 1-based number of the first unit in this square, matching the badges in the streams table
+   * so a hovered square points back at a specific stream's work. */
   chunkNumber: number
+  /** How many units this square stands for — 1 unless the grid is above MAX_CELLS. */
+  cellSpan: number
 }
 
 /** Describes each chunk as one grid square.
@@ -71,19 +83,53 @@ interface DisplayCell {
  * retry or a pause/resume handed from one network to another would otherwise be repainted in the
  * finishing network's color. `orderedInterfaceIds` fixes the order contributors are listed in, so
  * a square's readout doesn't reshuffle between progress pushes. */
-function describeBlocks(blocks: BlockState[], orderedInterfaceIds: string[]): DisplayCell[] {
-  return blocks.map((block, index) => {
-    const totalBytes = block.rangeEnd !== null ? block.rangeEnd - block.rangeStart + 1 : 0
+function describeBlocks(
+  blocks: BlockState[],
+  orderedInterfaceIds: string[],
+  blocksPerCell: number
+): DisplayCell[] {
+  const cells: DisplayCell[] = []
 
-    // Per-network tallies are the accurate source. When a block has none — bytes recorded by an
-    // older main process, or a block adopted whole off disk — fall back to crediting its whole
-    // byte count to the network holding it. That is the coarse attribution this replaced, but it
-    // is still far better than dropping the block to "unknown".
-    let tallies = Object.entries(block.bytesByInterface ?? {}).filter(([, bytes]) => bytes > 0)
-    if (tallies.length === 0 && block.interfaceId && block.bytesDownloaded > 0) {
-      tallies = [[block.interfaceId, block.bytesDownloaded]]
+  for (let start = 0; start < blocks.length; start += blocksPerCell) {
+    const span = blocks.slice(start, start + blocksPerCell)
+    const bytesByInterface = new Map<string, number>()
+    let totalBytes = 0
+    let bytesDownloaded = 0
+    let anyDownloading = false
+    let anyError = false
+    let allCompleted = true
+    let activeHolder: string | undefined
+
+    for (const block of span) {
+      totalBytes += block.rangeEnd !== null ? block.rangeEnd - block.rangeStart + 1 : 0
+      bytesDownloaded += block.bytesDownloaded
+
+      if (block.status === 'downloading') {
+        anyDownloading = true
+        activeHolder ??= block.interfaceId
+      }
+      if (block.status === 'error') anyError = true
+      if (block.status !== 'completed') allCompleted = false
+
+      // Per-network tallies are the accurate source. When a block has none — bytes recorded by
+      // an older main process, or a block adopted whole off disk — fall back to crediting its
+      // whole byte count to the network holding it. That is the coarse attribution this
+      // replaced, but it is still far better than dropping the block to "unknown".
+      let tallies = Object.entries(block.bytesByInterface ?? {}).filter(([, bytes]) => bytes > 0)
+      if (tallies.length === 0 && block.interfaceId && block.bytesDownloaded > 0) {
+        tallies = [[block.interfaceId, block.bytesDownloaded]]
+      }
+      for (const [interfaceId, bytes] of tallies) {
+        bytesByInterface.set(interfaceId, (bytesByInterface.get(interfaceId) ?? 0) + bytes)
+      }
     }
-    const bytesByInterface = new Map(tallies)
+
+    // In-progress beats failed beats done: a square covering many units should read as live
+    // while any part of it still is. With one unit per square this is just its own status.
+    let status: BlockStatus = 'pending'
+    if (anyDownloading) status = 'downloading'
+    else if (anyError) status = 'error'
+    else if (allCompleted) status = 'completed'
 
     const knownOrder = orderedInterfaceIds.filter((id) => bytesByInterface.has(id))
     const extras = [...bytesByInterface.keys()].filter((id) => !orderedInterfaceIds.includes(id))
@@ -101,19 +147,21 @@ function describeBlocks(blocks: BlockState[], orderedInterfaceIds: string[]): Di
       }
     }
 
-    return {
-      status: block.status,
-      // Before any bytes land, a chunk in flight is still fairly labelled by the network that is
+    cells.push({
+      status,
+      // Before any bytes land, work in flight is still fairly labelled by the network that is
       // fetching it — but only then.
-      interfaceId:
-        dominantInterfaceId ?? (block.status === 'downloading' ? block.interfaceId : undefined),
+      interfaceId: dominantInterfaceId ?? activeHolder,
       segments,
-      fillRatio: totalBytes > 0 ? block.bytesDownloaded / totalBytes : 0,
+      fillRatio: totalBytes > 0 ? bytesDownloaded / totalBytes : 0,
       totalBytes,
-      bytesDownloaded: block.bytesDownloaded,
-      chunkNumber: index + 1
-    }
-  })
+      bytesDownloaded,
+      chunkNumber: start + 1,
+      cellSpan: span.length
+    })
+  }
+
+  return cells
 }
 
 /** Names the networks behind a cell: one name when a single network delivered it, and a
@@ -150,6 +198,10 @@ interface BlockGridProps {
   knownSize: boolean
   remainingBytes: number
   isPaused?: boolean
+  /** What one unit of this download is called. An HTTP download fetches 8 MB chunks of its own
+   * choosing; a torrent fetches pieces, whose size and count the torrent itself fixes. Calling
+   * a piece a chunk would misname the one thing the grid is a map of. */
+  unit?: 'chunk' | 'piece'
   /** All blocks are 'completed' by the time this is true — the grid switches from showing which
    * network fetched each chunk to showing reassembly progress instead: a wipe, in the same
    * part-file order `reassemble()` actually writes in, that fades a square once its bytes are
@@ -167,6 +219,7 @@ export function BlockGrid({
   knownSize,
   remainingBytes,
   isPaused = false,
+  unit = 'chunk',
   assembling = false,
   assembledBytes = 0
 }: BlockGridProps): React.JSX.Element {
@@ -197,12 +250,15 @@ export function BlockGrid({
     const fittedCols = Math.floor((gridWidth + CELL_GAP_PX) / (TARGET_CELL_PX + CELL_GAP_PX))
     // Squares keep their size and the grid wraps; how many rows that takes is the file's business,
     // not the window's. Only the width decides the wrap, exactly like a paragraph reflowing.
-    const cols = Math.min(blocks.length, Math.max(MIN_COLS, fittedCols))
+    const blocksPerCell = Math.ceil(blocks.length / MAX_CELLS)
+    const cellCount = Math.ceil(blocks.length / blocksPerCell)
+    const cols = Math.min(cellCount, Math.max(MIN_COLS, fittedCols))
     const orderedInterfaceIds = groups.map((g) => g.interfaceId)
-    const cells = gridWidth > 0 ? describeBlocks(blocks, orderedInterfaceIds) : []
+    const cells = gridWidth > 0 ? describeBlocks(blocks, orderedInterfaceIds, blocksPerCell) : []
     const chunkBytes =
       blocks[0].rangeEnd !== null ? blocks[0].rangeEnd - blocks[0].rangeStart + 1 : 0
-    const rows = Math.ceil(blocks.length / cols)
+    const unitPlural = `${unit}s`
+    const rows = Math.ceil(cellCount / cols)
     const visibleRows = Math.min(rows, MAX_VISIBLE_ROWS)
     // Cut the viewport exactly on a row boundary, so a scrollable grid never shows a half-row
     // that could be mistaken for a shorter square.
@@ -221,9 +277,16 @@ export function BlockGrid({
       const where =
         describeContributors(hoveredCell, visualByInterfaceId) ??
         (hoveredCell.status === 'pending' ? 'queued' : '—')
-      readout = `Chunk #${hoveredCell.chunkNumber} · ${formatBytes(hoveredCell.bytesDownloaded)} / ${formatBytes(hoveredCell.totalBytes)} · ${where}`
+      const label =
+        hoveredCell.cellSpan > 1
+          ? `${unitPlural} #${hoveredCell.chunkNumber}–${hoveredCell.chunkNumber + hoveredCell.cellSpan - 1}`
+          : `${unit} #${hoveredCell.chunkNumber}`
+      readout = `${label} · ${formatBytes(hoveredCell.bytesDownloaded)} / ${formatBytes(hoveredCell.totalBytes)} · ${where}`
     } else {
-      readout = `${blocks.length} chunks · ${formatBytes(chunkBytes)} each`
+      const scrollHint = rows > MAX_VISIBLE_ROWS ? ' · scroll' : ''
+      // Says outright when a square is no longer one unit, so the map isn't read finer than it is.
+      const density = blocksPerCell > 1 ? ` · ${blocksPerCell} per square` : ''
+      readout = `${blocks.length.toLocaleString()} ${unitPlural} · ${formatBytes(chunkBytes)} each${density}${scrollHint}`
     }
 
     // Cumulative byte offset per cell, in the exact order reassemble() appends part files —

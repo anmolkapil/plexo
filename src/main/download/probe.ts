@@ -130,6 +130,7 @@ export async function probeUrl(rawUrl: string): Promise<ProbeResult> {
     /^\s*bytes\s+\*\/0\s*$/i.test(headerValue(response.headers, 'content-range') ?? '')
   ) {
     return {
+      kind: 'http',
       requestedUrl: rawUrl,
       finalUrl: current.toString(),
       supportsRanges: false,
@@ -164,6 +165,7 @@ export async function probeUrl(rawUrl: string): Promise<ProbeResult> {
   }
 
   return {
+    kind: 'http',
     requestedUrl: rawUrl,
     finalUrl: current.toString(),
     supportsRanges,
