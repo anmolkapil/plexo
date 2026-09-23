@@ -1,11 +1,11 @@
-import { PRESET_STREAMS, planDownload } from '@shared/plan'
+import { planDownload } from '@shared/plan'
 import type { ProbeResult } from '@shared/types'
 import { cn } from 'cn'
-import { AlertTriangle, ClipboardPaste, Info } from 'lucide-react'
+import { AlertTriangle, ClipboardPaste } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 import { NetworkCard } from '../components/NetworkCard'
 import { ScreenFooter } from '../components/ScreenFooter'
-import { Alert, AlertDescription, AlertTitle } from '../components/ui/alert'
+import { Alert, AlertDescription } from '../components/ui/alert'
 import { Button } from '../components/ui/button'
 import { ToggleGroup, ToggleGroupItem } from '../components/ui/toggle-group'
 import { useNetworkPolling } from '../hooks/useNetworkPolling'
@@ -19,6 +19,7 @@ type ProbeState =
   | { status: 'error'; message: string }
 
 const PROBE_DEBOUNCE_MS = 600
+const PRESET_STREAMS = [1, 2, 4, 8] as const
 const PASTE_SHORTCUT = window.plexo.platform === 'darwin' ? '⌘V' : 'Ctrl+V'
 
 const fieldLabelClass = 'shrink-0 font-mono text-[10px] tracking-[0.14em] text-muted-foreground'
@@ -32,51 +33,31 @@ function ErrorAlert({ message }: { message: string }): React.JSX.Element {
   )
 }
 
-function WarningAlert({ title, message }: { title?: string; message: string }): React.JSX.Element {
-  return (
-    <Alert className="border-amber-500/40 bg-amber-500/10 text-amber-700 dark:text-amber-300 py-2">
-      <AlertTriangle className="text-amber-600 dark:text-amber-400" />
-      {title && <AlertTitle className="text-xs font-semibold">{title}</AlertTitle>}
-      <AlertDescription className="text-xs text-amber-800 dark:text-amber-200/90 leading-relaxed">
-        {message}
-      </AlertDescription>
-    </Alert>
-  )
-}
-
-function InfoAlert({ title, message }: { title?: string; message: string }): React.JSX.Element {
-  return (
-    <Alert className="border-blue-500/40 bg-blue-500/10 text-blue-700 dark:text-blue-300 py-2">
-      <Info className="text-blue-600 dark:text-blue-400" />
-      {title && <AlertTitle className="text-xs font-semibold">{title}</AlertTitle>}
-      <AlertDescription className="text-xs text-blue-800 dark:text-blue-200/90 leading-relaxed">
-        {message}
-      </AlertDescription>
-    </Alert>
-  )
-}
-
 export function IdleScreen(): React.JSX.Element {
   useNetworkPolling(true)
 
   const interfaces = useAppStore((store) => store.interfaces)
   const homeDir = useAppStore((store) => store.homeDir)
+  const downloadsDir = useAppStore((store) => store.downloadsDir)
   const latencies = useAppStore((store) => store.latencies)
   const url = useAppStore((store) => store.draftUrl)
   const setUrl = useAppStore((store) => store.setDraftUrl)
-  const destinationDir = useAppStore((store) => store.destinationDir)
-  const setDestinationDir = useAppStore((store) => store.setDestinationDir)
-  const chunksPerNetwork = useAppStore((store) => store.streamsPerNetwork)
-  const setChunksPerNetwork = useAppStore((store) => store.setStreamsPerNetwork)
+  const destinationDir = useAppStore((store) => store.draftDestinationDir)
+  const setDestinationDir = useAppStore((store) => store.setDraftDestinationDir)
 
   const [probe, setProbe] = useState<ProbeState>({ status: 'idle' })
   // Tracks deselections rather than selections, so a newly-detected interface starts selected.
   const [deselectedInterfaceIds, setDeselectedInterfaceIds] = useState<string[]>([])
+  const [chunksPerNetwork, setChunksPerNetwork] = useState(2)
   const [starting, setStarting] = useState(false)
   const [startError, setStartError] = useState<string | null>(null)
   const [fileNameOverride, setFileNameOverride] = useState<string | null>(null)
 
   const probeRequestId = useRef(0)
+
+  useEffect(() => {
+    if (!destinationDir && downloadsDir) setDestinationDir(downloadsDir)
+  }, [destinationDir, downloadsDir, setDestinationDir])
 
   useEffect(() => {
     const trimmed = url.trim()
@@ -106,7 +87,11 @@ export function IdleScreen(): React.JSX.Element {
   }, [url])
 
   const ready = probe.status === 'ready' ? probe.result : null
-  const multiChunkAllowed = ready !== null && ready.supportsRanges && ready.totalBytes !== null
+  const isMagnet =
+    ready !== null &&
+    (ready.contentType === 'application/x-bittorrent' || ready.requestedUrl.startsWith('magnet:'))
+  const multiChunkAllowed =
+    ready !== null && (ready.supportsRanges || isMagnet) && (ready.totalBytes !== null || isMagnet)
   const isSingleStreamOnly = ready !== null && !multiChunkAllowed
 
   const detectedIds = interfaces.map((iface) => iface.id)
@@ -131,6 +116,7 @@ export function IdleScreen(): React.JSX.Element {
     selectedInterfaceIds.length > 0 &&
     Boolean(destinationDir) &&
     !starting
+  const effectiveDestinationDir = destinationDir || downloadsDir
   const footerParts = [
     `${selectedInterfaceIds.length} ${selectedInterfaceIds.length === 1 ? 'network' : 'networks'} selected`
   ]
@@ -138,25 +124,6 @@ export function IdleScreen(): React.JSX.Element {
     footerParts.push(`${totalChunks} ${totalChunks === 1 ? 'stream' : 'parallel streams'}`)
   }
   if (ready && ready.totalBytes !== null) footerParts.push(formatBytes(ready.totalBytes))
-
-  let subnetConflict: { subnet: string; names: string[] } | null = null
-  if (selectedInterfaceIds.length > 1) {
-    const subnets = new Map<string, string[]>()
-    for (const id of selectedInterfaceIds) {
-      const iface = interfaces.find((i) => i.id === id)
-      if (iface?.subnet) {
-        const names = subnets.get(iface.subnet) ?? []
-        names.push(iface.displayName)
-        subnets.set(iface.subnet, names)
-      }
-    }
-    for (const [subnet, names] of subnets.entries()) {
-      if (names.length > 1) {
-        subnetConflict = { subnet, names }
-        break
-      }
-    }
-  }
 
   const handleToggleInterface = (id: string): void => {
     if (isSingleStreamOnly) {
@@ -181,7 +148,7 @@ export function IdleScreen(): React.JSX.Element {
   }
 
   const handleBrowse = async (): Promise<void> => {
-    const chosen = await window.plexo.chooseDestinationFolder(destinationDir)
+    const chosen = await window.plexo.chooseDestinationFolder(effectiveDestinationDir)
     if (chosen) setDestinationDir(chosen)
   }
 
@@ -259,20 +226,6 @@ export function IdleScreen(): React.JSX.Element {
 
         {probe.status === 'error' && <ErrorAlert message={probe.message} />}
 
-        {isSingleStreamOnly && (
-          <InfoAlert
-            title="Single-connection mode"
-            message="This server does not support parallel range requests (206 Partial Content). The download will run as a single stream through whichever network you choose below."
-          />
-        )}
-
-        {subnetConflict && (
-          <WarningAlert
-            title="Same local network detected"
-            message={`${subnetConflict.names.join(' and ')} are connected to the same subnet (${subnetConflict.subnet}). The operating system routes all traffic through one connection on the same subnet, so speeds cannot be combined. Connect to distinct networks (e.g. Wi-Fi + phone USB tethering) to combine bandwidth.`}
-          />
-        )}
-
         <div
           className={cn(
             'flex h-9 items-center gap-[9px] rounded-[9px] border px-3',
@@ -301,7 +254,7 @@ export function IdleScreen(): React.JSX.Element {
         <div className="flex h-9 items-center gap-[9px] rounded-[9px] border border-border px-3">
           <div className={fieldLabelClass}>TO</div>
           <div className="min-w-0 flex-1 truncate font-mono text-[12.5px] text-[var(--text-secondary)]">
-            {toDisplayPath(destinationDir, homeDir)}
+            {toDisplayPath(effectiveDestinationDir, homeDir)}
           </div>
           <Button
             type="button"
@@ -369,6 +322,12 @@ export function IdleScreen(): React.JSX.Element {
           </div>
         </div>
 
+        {isSingleStreamOnly && (
+          <div className="text-[11.5px] text-muted-foreground">
+            This server doesn’t support multi-chunk downloads for this file — using a single
+            network.
+          </div>
+        )}
         {startError && <ErrorAlert message={startError} />}
       </div>
 

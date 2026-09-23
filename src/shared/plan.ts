@@ -17,8 +17,6 @@ export const MAX_BLOCKS = 4096
 
 export const MAX_STREAMS_PER_NETWORK = 8
 export const MAX_STREAMS = 32
-/** The per-network stream counts offered in the UI. */
-export const PRESET_STREAMS = [1, 2, 4, 8] as const
 
 /** Blocks planned per stream, at least. Streams pull blocks as they free up, so a fast network
  * takes more of them — but only if there are more blocks than streams to begin with. With one

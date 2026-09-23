@@ -1,7 +1,5 @@
 # Plexo
 
-[![Sponsor](https://img.shields.io/badge/Sponsor-GitHub-ea4aaa?logo=githubsponsors)](https://github.com/sponsors/anmolkapil)
-
 A fast download manager for Windows, macOS, and Linux that speeds up downloads by pulling chunks in parallel across **multiple network connections at the same time**.
 
 For example, if your computer has:
@@ -17,20 +15,6 @@ https://github.com/user-attachments/assets/e57728f4-fb63-441f-839c-174eef954b17
 ---
 
 ## ⚠️ Before you start
-
-### Combining multiple network connections?
-
-To successfully combine bandwidth across multiple network adapters (on Windows, macOS, or Linux):
-
-- **Use distinct internet connections:**
-  - Each connection must have its own gateway / subnet (e.g., **Wi-Fi** via home router + **USB Tethering** via mobile phone, or two distinct WAN networks).
-  - Connecting both Wi-Fi and Ethernet to the **same router** (same local subnet like `192.168.1.0/24`) will not increase speeds: both share the same upstream broadband connection, and operating system routing will send all packets through whichever interface has the lower metric or higher priority (usually Ethernet).
-
-### Wi-Fi disconnecting when Ethernet is plugged in on Windows?
-
-Some Windows 10/11 installations automatically disconnect or sleep Wi-Fi when an active Ethernet cable is detected.
-
-If Wi-Fi turns off when Ethernet is plugged in: open **Group Policy Editor** (`gpedit.msc`) → _Computer Configuration_ → _Administrative Templates_ → _Network_ → _Windows Connection Manager_ → set **"Minimize the number of simultaneous connections to the Internet or a Windows domain"** to **Disabled**.
 
 ### Using Android USB tethering on macOS?
 
@@ -383,16 +367,6 @@ Plexo is built with:
 - **Playwright** — end-to-end testing suite
 - **electron-vite** — fast HMR and build tooling
 - **electron-builder** — multi-platform packaging (macOS, Windows, Linux)
-
----
-
-# Support
-
-If Plexo is useful to you, you can support it by:
-
-- ⭐ Starring the repo
-- 🐛 [Reporting bugs and suggesting features](https://github.com/anmolkapil/plexo/issues)
-- ❤️ [Sponsoring development](https://github.com/sponsors/anmolkapil)
 
 ---
 

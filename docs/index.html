@@ -386,14 +386,10 @@
       .os-group h3 {
         margin: 0;
         font:
-          700 19px/1.2 Manrope,
+          700 15px/1.2 Manrope,
           sans-serif;
-        letter-spacing: -0.015em;
+        letter-spacing: -0.01em;
         color: #f5f2ed;
-      }
-      /* Guides slotted under an OS group sit below its heading, not beside it. */
-      .groups .guide .title {
-        font-size: 16px;
       }
       .asset-table .asset-row:last-child {
         border-bottom: 0;
@@ -619,22 +615,6 @@
         </div>
       </section>
 
-      <section class="guide" id="multiple-connections">
-        <div class="downloads-head">
-          <div class="title">Use separate connections</div>
-        </div>
-        <p>
-          Plexo is faster only when each network has its own Internet line, like home Wi-Fi plus a
-          phone on USB tethering. Two connections to the same router share one line, so they won't
-          add speed.
-        </p>
-        <p>
-          <a href="https://github.com/anmolkapil/plexo#combining-multiple-network-connections"
-            >Full guide on GitHub →</a
-          >
-        </p>
-      </section>
-
       <section class="downloads" id="downloads">
         <div class="downloads-head">
           <div class="title">All downloads</div>
@@ -671,27 +651,6 @@
             >Full guide on GitHub →</a
           >
         </p>
-      </section>
-
-      <section class="guide" id="windows-wifi">
-        <div class="downloads-head">
-          <div class="title">Wi-Fi keeps dropping?</div>
-        </div>
-        <p>
-          Some Windows 10/11 PCs switch off Wi-Fi as soon as an Ethernet cable is connected. To stop
-          that:
-        </p>
-        <ol class="os-notes">
-          <li>Press Win + R, type <code>gpedit.msc</code>, and press Enter.</li>
-          <li>
-            Go to Computer Configuration → Administrative Templates → Network → Windows Connection
-            Manager.
-          </li>
-          <li>
-            Set “Minimize the number of simultaneous connections to the Internet or a Windows
-            domain” to <strong>Disabled</strong>.
-          </li>
-        </ol>
       </section>
 
       <footer>
@@ -877,9 +836,11 @@
             })
             section.appendChild(notes)
             groupsEl.appendChild(section)
-            // Slot each OS's static guide right under its group, not after every OS.
-            var guideSection = $({ mac: 'mac-tethering', win: 'windows-wifi' }[g.os])
-            if (guideSection) groupsEl.appendChild(guideSection)
+            // Slot the static tethering guide right under the macOS group, not after every OS.
+            if (g.os === 'mac') {
+              var guideSection = $('mac-tethering')
+              if (guideSection) groupsEl.appendChild(guideSection)
+            }
           })
 
           if (release.prerelease) {

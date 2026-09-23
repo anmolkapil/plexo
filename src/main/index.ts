@@ -3,7 +3,7 @@ import { app, BrowserWindow, Menu, nativeTheme, shell } from 'electron'
 import { join } from 'path'
 import icon from '../../resources/icon-dark.png?asset'
 import { registerIpcHandlers } from './ipc/handlers'
-import { loadThemeSource, migrateLegacyNetworkPreferences } from './settings'
+import { loadThemeSource } from './settings'
 import { testKnobs } from './testKnobs'
 import { IpcChannels } from '../shared/ipc-channels'
 import type { DownloadManager } from './download/downloadManager'
@@ -95,11 +95,6 @@ function createWindow(): void {
 app.whenReady().then(async () => {
   electronApp.setAppUserModelId('com.plexo.app')
 
-  // A failed move keeps the old file, to retry next launch — it must never stop the window opening.
-  await migrateLegacyNetworkPreferences().catch((error) =>
-    console.error('[plexo] failed to migrate network-preferences.json', error)
-  )
-
   // Applied before the window is created so the initial background/icon already match —
   // the saved preference otherwise only takes effect on the next 'updated' event.
   nativeTheme.themeSource = await loadThemeSource()
@@ -128,16 +123,9 @@ app.on('before-quit', (event) => {
   if (quitAfterSuspending || !downloadManager) return
 
   event.preventDefault()
-
-  // Guarantee the process exits even if suspending hangs
-  const forceQuitTimeout = setTimeout(() => {
-    app.exit(0)
-  }, 3000)
-
   void downloadManager.suspendAll().finally(() => {
-    clearTimeout(forceQuitTimeout)
     quitAfterSuspending = true
-    app.exit(0)
+    app.quit()
   })
 })
 

@@ -187,3 +187,25 @@ test.describe('a network that never answers', () => {
     expect(deliveredByB, 'the silent network delivered nothing').toBe(0)
   })
 })
+
+test.describe('magnet links @smoke', () => {
+  test('probes magnet link without AggregateError and extracts file name from dn', async ({
+    plexo
+  }) => {
+    const magnetUrl =
+      'magnet:?xt=urn:btih:6DDD53E2121711C0021EF0BAF749A8C549E150BB&dn=OnlyFans+24+08+24+Skylar+Mae+I+Turned+Into+Such+A+Slut+For+You&tr=http%3A%2F%2Fp4p.arenabg.com%3A1337%2Fannounce'
+    const result = await plexo.api.probeUrl(magnetUrl)
+    expect(result.requestedUrl).toBe(magnetUrl)
+    expect(result.finalUrl).toBe(magnetUrl)
+    expect(result.suggestedFileName).toBe(
+      'OnlyFans 24 08 24 Skylar Mae I Turned Into Such A Slut For You'
+    )
+    expect(result.supportsRanges).toBe(true)
+    expect(result.contentType).toBe('application/x-bittorrent')
+  })
+
+  test('magnet link validation rejects invalid info hash', async ({ plexo }) => {
+    const invalidMagnet = 'magnet:?dn=test'
+    await expect(plexo.api.probeUrl(invalidMagnet)).rejects.toThrow(/missing or invalid info hash/)
+  })
+})
