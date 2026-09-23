@@ -6,6 +6,8 @@ import type {
   AppSettings,
   NetworkPreference,
   NetworkPreferences,
+  ProxyConfig,
+  ProxyType,
   ThemeSource
 } from '../shared/types'
 import { readJson, updateJson } from './jsonFile'
@@ -18,8 +20,39 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
 
-/** Keeps only string customName/colorId fields (what every reader downstream assumes, e.g.
- * NetworkEditPopover's `customName?.trim()`), entry by entry, rather than discarding every
+const VALID_PROXY_TYPES: readonly ProxyType[] = ['http', 'https', 'socks4', 'socks5']
+
+function sanitizeProxyConfig(value: unknown): ProxyConfig | undefined {
+  if (!isRecord(value)) return undefined
+  const enabled = typeof value.enabled === 'boolean' ? value.enabled : false
+  const type =
+    typeof value.type === 'string' && (VALID_PROXY_TYPES as readonly string[]).includes(value.type)
+      ? (value.type as ProxyType)
+      : 'http'
+  const host = typeof value.host === 'string' ? value.host.trim() : ''
+  const port =
+    typeof value.port === 'number' &&
+    Number.isInteger(value.port) &&
+    value.port >= 1 &&
+    value.port <= 65535
+      ? value.port
+      : 8080
+  const username =
+    typeof value.username === 'string' && value.username.length > 0 ? value.username : undefined
+  const password =
+    typeof value.password === 'string' && value.password.length > 0 ? value.password : undefined
+
+  return {
+    enabled,
+    type,
+    host,
+    port,
+    ...(username ? { username } : {}),
+    ...(password ? { password } : {})
+  }
+}
+
+/** Keeps only valid customName, colorId, and proxy fields, entry by entry, rather than discarding every
  * network over one bad entry. An entry left with neither field is dropped, so resetting a
  * network removes it from the file. */
 function sanitizeNetworkPreferences(parsed: unknown): NetworkPreferences {
@@ -31,7 +64,9 @@ function sanitizeNetworkPreferences(parsed: unknown): NetworkPreferences {
     const preference: NetworkPreference = {}
     if (typeof value.customName === 'string') preference.customName = value.customName
     if (typeof value.colorId === 'string') preference.colorId = value.colorId
-    if (preference.customName || preference.colorId) result[id] = preference
+    const proxy = sanitizeProxyConfig(value.proxy)
+    if (proxy) preference.proxy = proxy
+    if (preference.customName || preference.colorId || preference.proxy) result[id] = preference
   }
   return result
 }

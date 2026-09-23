@@ -1,4 +1,4 @@
-import type { NetworkInterfaceInfo } from '../../shared/types'
+import type { NetworkInterfaceInfo, NetworkPreferences, ProxyConfig } from '../../shared/types'
 import { connectFrom } from './deviceBinding'
 
 const PROBE_HOSTS = ['1.1.1.1', '8.8.8.8']
@@ -6,11 +6,15 @@ const PROBE_PORT = 443
 const TIMEOUT_MS = 2000
 
 /** Rough per-interface latency: time to open a TCP connection to a reliable
- * host, sourced from that interface's local address. null means unreachable. */
-function measureLatencyToHost(localAddress: string, host: string): Promise<number | null> {
+ * host or configured proxy, sourced from that interface's local address. null means unreachable. */
+function measureLatencyToHost(
+  localAddress: string,
+  host: string,
+  port = PROBE_PORT
+): Promise<number | null> {
   return new Promise((resolve) => {
     const start = Date.now()
-    const socket = connectFrom(localAddress, host, PROBE_PORT)
+    const socket = connectFrom(localAddress, host, port)
     let settled = false
 
     const finish = (result: number | null): void => {
@@ -27,7 +31,10 @@ function measureLatencyToHost(localAddress: string, host: string): Promise<numbe
   })
 }
 
-async function measureLatency(localAddress: string): Promise<number | null> {
+async function measureLatency(localAddress: string, proxy?: ProxyConfig): Promise<number | null> {
+  if (proxy && proxy.enabled && proxy.host && proxy.port) {
+    return measureLatencyToHost(localAddress, proxy.host, proxy.port)
+  }
   for (const host of PROBE_HOSTS) {
     const latency = await measureLatencyToHost(localAddress, host)
     if (latency !== null) return latency
@@ -36,10 +43,14 @@ async function measureLatency(localAddress: string): Promise<number | null> {
 }
 
 export async function measureLatencies(
-  interfaces: NetworkInterfaceInfo[]
+  interfaces: NetworkInterfaceInfo[],
+  preferences?: NetworkPreferences
 ): Promise<Record<string, number | null>> {
   const entries = await Promise.all(
-    interfaces.map(async (iface) => [iface.id, await measureLatency(iface.address)] as const)
+    interfaces.map(
+      async (iface) =>
+        [iface.id, await measureLatency(iface.address, preferences?.[iface.id]?.proxy)] as const
+    )
   )
   return Object.fromEntries(entries)
 }

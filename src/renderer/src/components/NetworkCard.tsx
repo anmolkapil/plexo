@@ -1,5 +1,6 @@
 import type { NetworkInterfaceInfo } from '@shared/types'
 import { useNetworkVisuals } from '../hooks/useNetworkVisuals'
+import { useAppStore } from '../store/useAppStore'
 import { ColorBadge } from './ColorBadge'
 import { NetworkEditPopover } from './NetworkEditPopover'
 
@@ -41,6 +42,9 @@ export function NetworkCard({
   onToggle
 }: NetworkCardProps): React.JSX.Element {
   const visual = useNetworkVisuals()(iface.id, iface.kind, iface.displayName)
+  const preference = useAppStore((store) => store.networkPreferences[iface.id])
+  const proxy = preference?.proxy
+  const isProxyActive = Boolean(proxy?.enabled && proxy.host)
   const online = latencyMs != null
 
   return (
@@ -77,6 +81,16 @@ export function NetworkCard({
             osName={iface.displayName}
           />
         </div>
+        {isProxyActive && (
+          <ColorBadge
+            bg={selected ? visual.bg : 'transparent'}
+            border={selected ? visual.border : 'var(--border)'}
+            text={selected ? visual.text : 'var(--text-tertiary)'}
+            className="font-mono text-[9px] font-semibold tracking-[0.08em] uppercase"
+          >
+            PROXY · {proxy!.type}
+          </ColorBadge>
+        )}
         <ColorBadge
           bg={selected ? visual.bg : 'transparent'}
           border={selected ? visual.border : 'var(--border)'}
@@ -88,11 +102,17 @@ export function NetworkCard({
       </div>
       <div className="truncate font-mono text-[10.5px] leading-normal text-muted-foreground">
         {iface.device} · {iface.address}
+        {isProxyActive && (
+          <span className="opacity-75">
+            {' '}
+            → {proxy!.host}:{proxy!.port}
+          </span>
+        )}
       </div>
       <div className="flex items-end justify-between">
         <div className="flex flex-col gap-[5px]">
           <div className="font-mono text-[9px] leading-none font-medium tracking-[0.12em] text-muted-foreground">
-            PING
+            {isProxyActive ? 'PROXY PING' : 'PING'}
           </div>
           <div
             className="font-mono text-[13px] leading-none font-medium"

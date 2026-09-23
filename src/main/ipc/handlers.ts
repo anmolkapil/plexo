@@ -12,7 +12,12 @@ import {
 } from 'electron'
 import { IpcChannels } from '../../shared/ipc-channels'
 import type { IpcContract } from '../../shared/ipc-contract'
-import type { InitialState, NetworkInterfaceInfo, ThemeSource } from '../../shared/types'
+import type {
+  InitialState,
+  NetworkInterfaceInfo,
+  NetworkPreferences,
+  ThemeSource
+} from '../../shared/types'
 import { DownloadManager } from '../download/downloadManager'
 import { getDefaultDownloadsDir, getHomeDir } from '../download/paths'
 import { probeUrl } from '../download/probe'
@@ -64,15 +69,29 @@ export function registerIpcHandlers(getWindow: () => BrowserWindow | null): Down
     return cachedInterfaces
   }
 
+  let cachedPreferences: NetworkPreferences = {}
+
+  const refreshPreferences = async (): Promise<NetworkPreferences> => {
+    const settings = await loadSettings()
+    cachedPreferences = settings.networkPreferences ?? {}
+    return cachedPreferences
+  }
+  // Load preferences once at startup
+  void refreshPreferences()
+
   const manager = new DownloadManager(
     getWindow,
     (id) => cachedInterfaces.find((iface) => iface.id === id),
-    refreshInterfaces
+    refreshInterfaces,
+    (interfaceId) => cachedPreferences[interfaceId]?.proxy
   )
 
   handle('listInterfaces', refreshInterfaces)
 
-  handle('pingInterfaces', async () => measureLatencies(cachedInterfaces))
+  handle('pingInterfaces', async () => {
+    await refreshPreferences()
+    return measureLatencies(cachedInterfaces, cachedPreferences)
+  })
 
   // Started now so it has settled before the first ping or download needs it.
   const bindingSupport = deviceBindingSupported()
@@ -91,6 +110,8 @@ export function registerIpcHandlers(getWindow: () => BrowserWindow | null): Down
       nativeTheme.themeSource = patch.themeSource
     }
     await saveSettings(patch)
+    // Refresh cached preferences so proxy changes take effect immediately
+    await refreshPreferences()
   })
 
   // Answered via sendSync from the preload, which blocks the page until returnValue is set — so a

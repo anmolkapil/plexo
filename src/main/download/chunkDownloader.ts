@@ -2,6 +2,7 @@ import { createWriteStream, type WriteStream } from 'node:fs'
 import { request as httpRequest, type ClientRequest, type IncomingMessage } from 'node:http'
 import { request as httpsRequest } from 'node:https'
 import { URL } from 'node:url'
+import type { ProxyConfig } from '../../shared/types'
 import { routeFrom } from '../network/deviceBinding'
 import { testKnobs } from '../testKnobs'
 import { compareVersion, type FileVersion, type VersionCheck } from './fileVersion'
@@ -14,6 +15,8 @@ export interface ChunkDownloadOptions {
   /** Local IP of the network interface this chunk's connection binds to. */
   localAddress: string
   destinationPath: string
+  /** Optional per-interface proxy settings. */
+  proxy?: ProxyConfig
   /** true when resuming a paused chunk — appends to the existing part file instead of overwriting it. */
   append: boolean
   onProgress: (bytesDownloadedThisRun: number) => void
@@ -99,6 +102,7 @@ export function downloadChunk(options: ChunkDownloadOptions): Promise<void> {
     rangeEnd,
     localAddress,
     destinationPath,
+    proxy,
     append,
     onProgress,
     signal,
@@ -183,7 +187,7 @@ export function downloadChunk(options: ChunkDownloadOptions): Promise<void> {
           hostname: targetUrl.hostname,
           port: targetUrl.port || undefined,
           path: `${targetUrl.pathname}${targetUrl.search}`,
-          ...routeFrom(localAddress, targetUrl),
+          ...routeFrom(localAddress, targetUrl, proxy),
           headers
         },
         (res: IncomingMessage) => {
@@ -329,7 +333,8 @@ export function fetchRange(
   url: string,
   start: number,
   end: number,
-  localAddress: string
+  localAddress: string,
+  proxy?: ProxyConfig
 ): Promise<{ body: Buffer; version: FileVersion }> {
   return new Promise((resolve, reject) => {
     const attempt = (target: URL, redirectsLeft: number): void => {
@@ -340,7 +345,7 @@ export function fetchRange(
           hostname: target.hostname,
           port: target.port || undefined,
           path: `${target.pathname}${target.search}`,
-          ...routeFrom(localAddress, target),
+          ...routeFrom(localAddress, target, proxy),
           headers: { 'User-Agent': 'Plexo/1.0', Range: `bytes=${start}-${end}` }
         },
         (res) => {
