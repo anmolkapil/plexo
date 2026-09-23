@@ -102,7 +102,7 @@ export function registerIpcHandlers(getWindow: () => BrowserWindow | null): Down
     await openNetworkSettings()
   })
 
-  handle('probeUrl', async (_event, url) => probeUrl(url))
+  handle('probeUrl', async (_event, url, headers) => probeUrl(url, headers))
 
   handle('getInitialPaths', async () => ({
     homeDir: getHomeDir(),

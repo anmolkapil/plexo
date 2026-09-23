@@ -27,7 +27,7 @@ export interface IpcContract {
   }
   getThemeSource: { args: []; result: ThemeSource }
   setThemeSource: { args: [source: ThemeSource]; result: ThemeSource }
-  probeUrl: { args: [url: string]; result: ProbeResult }
+  probeUrl: { args: [url: string, headers?: Record<string, string>]; result: ProbeResult }
   getInitialPaths: { args: []; result: InitialPaths }
   chooseDestinationFolder: { args: [defaultPath: string]; result: string | null }
   chooseSourceFile: { args: []; result: string | null }

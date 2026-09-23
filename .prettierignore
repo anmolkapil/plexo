@@ -6,3 +6,4 @@ tsconfig.json
 tsconfig.*.json
 test-results
 playwright-report
+companion-extension

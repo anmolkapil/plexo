@@ -2,9 +2,14 @@ appId: com.plexo.app
 productName: Plexo
 directories:
   buildResources: build
+protocols:
+  - name: Plexo Protocol
+    schemes:
+      - plexo
 files:
   - '!**/.vscode/*'
   - '!src/*'
+  - '!companion-extension/**'
   - '!electron.vite.config.{js,ts,mjs,cjs}'
   - '!{.eslintcache,eslint.config.mjs,.prettierignore,.prettierrc.yaml,dev-app-update.yml,CHANGELOG.md,README.md}'
   - '!{.env,.env.*,.npmrc,pnpm-lock.yaml}'

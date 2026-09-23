@@ -429,7 +429,7 @@ export class DownloadManager {
   /** Plexo shows one download at a time (see useAppStore's currentDownload) — starting a second
    * one while one is already running/paused/assembling would silently race it for disk I/O and
    * scramble the renderer's single-download view as updates from both interleave. */
-  private hasActiveDownload(): boolean {
+  hasActiveDownload(): boolean {
     for (const runtime of this.runtimes.values()) {
       if (
         runtime.state.status === 'downloading' ||
@@ -1121,6 +1121,7 @@ export class DownloadManager {
         append: attempt.kind === 'primary' && attempt.startOffset > 0,
         signal: AbortSignal.any([self.controller.signal, attempt.abort.signal]),
         acceptedVersions: runtime.acceptedVersions,
+        headers: runtime.requestPayload.headers,
         onResponse: (info) => (attempt.response = info),
         onProgress: (bytesThisRun) => {
           const delta = bytesThisRun - attempt.received
@@ -1555,7 +1556,8 @@ export class DownloadManager {
             runtime.requestPayload.url,
             block.rangeStart,
             block.rangeStart + local.length - 1,
-            iface.address
+            iface.address,
+            runtime.requestPayload.headers
           )
           // A reply from a server still presenting an accepted label proves nothing here.
           if (compareVersion([seen], remote.version).kind !== 'same') continue

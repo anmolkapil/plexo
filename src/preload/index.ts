@@ -1,7 +1,12 @@
 import { contextBridge, ipcRenderer, type IpcRendererEvent } from 'electron'
 import { IpcChannels } from '../shared/ipc-channels'
 import type { IpcContract } from '../shared/ipc-contract'
-import type { DownloadState, NetworkPreference, ThemeSource } from '../shared/types'
+import type {
+  CompanionDownloadPayload,
+  DownloadState,
+  NetworkPreference,
+  ThemeSource
+} from '../shared/types'
 
 /** Typed wrapper around ipcRenderer.invoke — the channel name picks its args/result shape out of
  * IpcContract, so a call here that doesn't match what registerIpcHandlers (main) actually handles
@@ -25,7 +30,7 @@ const plexoApi = {
     invoke('setNetworkPreference', id, patch),
   getThemeSource: () => invoke('getThemeSource'),
   setThemeSource: (source: ThemeSource) => invoke('setThemeSource', source),
-  probeUrl: (url: string) => invoke('probeUrl', url),
+  probeUrl: (url: string, headers?: Record<string, string>) => invoke('probeUrl', url, headers),
   getInitialPaths: () => invoke('getInitialPaths'),
   chooseDestinationFolder: (defaultPath: string) => invoke('chooseDestinationFolder', defaultPath),
   chooseSourceFile: () => invoke('chooseSourceFile'),
@@ -47,6 +52,13 @@ const plexoApi = {
     const listener = (_event: IpcRendererEvent, state: DownloadState): void => callback(state)
     ipcRenderer.on(IpcChannels.downloadUpdated, listener)
     return () => ipcRenderer.removeListener(IpcChannels.downloadUpdated, listener)
+  },
+
+  onCompanionDownload: (callback: (payload: CompanionDownloadPayload) => void): (() => void) => {
+    const listener = (_event: IpcRendererEvent, payload: CompanionDownloadPayload): void =>
+      callback(payload)
+    ipcRenderer.on(IpcChannels.companionDownload, listener)
+    return () => ipcRenderer.removeListener(IpcChannels.companionDownload, listener)
   },
 
   onToggleDevToolsPanel: (callback: () => void): (() => void) => {

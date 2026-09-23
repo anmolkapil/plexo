@@ -1,4 +1,5 @@
 import type {
+  CompanionDownloadPayload,
   DownloadState,
   NetworkInterfaceInfo,
   NetworkPreference,
@@ -52,6 +53,9 @@ interface AppStore {
   /** Lifted out of the Idle screen so it survives a swap to/from the No-connections screen. */
   draftUrl: string
   draftDestinationDir: string
+  draftHeaders?: Record<string, string>
+  draftFileName?: string
+  incomingCompanionAlert: string | null
 
   loadInterfaces: () => Promise<void>
   refreshLatencies: () => Promise<void>
@@ -66,6 +70,10 @@ interface AppStore {
   clearCurrentDownload: () => void
   setDraftUrl: (url: string) => void
   setDraftDestinationDir: (dir: string) => void
+  setDraftHeaders: (headers?: Record<string, string>) => void
+  setDraftFileName: (name?: string) => void
+  setIncomingCompanionAlert: (alert: string | null) => void
+  ingestCompanionDownload: (payload: CompanionDownloadPayload) => void
 }
 
 export const useAppStore = create<AppStore>((set, get) => ({
@@ -89,6 +97,9 @@ export const useAppStore = create<AppStore>((set, get) => ({
 
   draftUrl: '',
   draftDestinationDir: '',
+  draftHeaders: undefined,
+  draftFileName: undefined,
+  incomingCompanionAlert: null,
 
   loadInterfaces: async () => {
     // A re-scan keeps showing the last result. Dropping back to 'loading' would swap App off the
@@ -228,5 +239,30 @@ export const useAppStore = create<AppStore>((set, get) => ({
     }),
 
   setDraftUrl: (draftUrl) => set({ draftUrl }),
-  setDraftDestinationDir: (draftDestinationDir) => set({ draftDestinationDir })
+  setDraftDestinationDir: (draftDestinationDir) => set({ draftDestinationDir }),
+  setDraftHeaders: (draftHeaders) => set({ draftHeaders }),
+  setDraftFileName: (draftFileName) => set({ draftFileName }),
+  setIncomingCompanionAlert: (incomingCompanionAlert) => set({ incomingCompanionAlert }),
+  ingestCompanionDownload: (payload) => {
+    const current = get().currentDownload
+    if (
+      current &&
+      (current.status === 'downloading' ||
+        current.status === 'assembling' ||
+        current.status === 'paused')
+    ) {
+      const name = payload.suggestedFileName || payload.url
+      set({
+        incomingCompanionAlert: `Browser download received: ${name}. Current download is in progress.`
+      })
+      return
+    }
+
+    set({
+      draftUrl: payload.url,
+      draftHeaders: payload.headers,
+      draftFileName: payload.suggestedFileName,
+      incomingCompanionAlert: null
+    })
+  }
 }))

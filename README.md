@@ -65,6 +65,7 @@ File ──→ Split ─────┼── Ethernet (IP: 10.0.0.12) ───
 - 🗺️ **Interactive progress grid** — 1:1 visual map of individual chunks, color-coded by the network interface that fetched each chunk with accurate per-network byte attribution.
 - 🎨 **Network customization** — rename and recolor physical network interfaces with persistent user preferences.
 - 🌓 **Light & Dark modes** — full theme support with an instant toggle between light and dark modes.
+- 🧩 **Chrome & Edge Companion Extension** — automatically captures downloads from Chromium browsers, forwards authenticated session cookies, and transfers files into Plexo (see [`companion-extension/`](companion-extension/README.md)).
 
 ---
 

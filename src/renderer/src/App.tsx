@@ -11,6 +11,7 @@ import { DownloadingScreen } from './screens/DownloadingScreen'
 import { ErrorScreen } from './screens/ErrorScreen'
 import { IdleScreen } from './screens/IdleScreen'
 import { NoConnectionsScreen } from './screens/NoConnectionsScreen'
+import { Info, X } from 'lucide-react'
 import { useAppStore } from './store/useAppStore'
 
 function assertNever(status: never): never {
@@ -79,6 +80,11 @@ function App(): React.JSX.Element {
   const loadThemeSource = useAppStore((store) => store.loadThemeSource)
   const loadInitialPaths = useAppStore((store) => store.loadInitialPaths)
   const checkForUpdate = useAppStore((store) => store.checkForUpdate)
+  const ingestCompanionDownload = useAppStore((store) => store.ingestCompanionDownload)
+  const incomingCompanionAlert = useAppStore((store) => store.incomingCompanionAlert)
+  const setIncomingCompanionAlert = useAppStore((store) => store.setIncomingCompanionAlert)
+  const setDraftHeaders = useAppStore((store) => store.setDraftHeaders)
+  const setDraftFileName = useAppStore((store) => store.setDraftFileName)
 
   useEffect(() => {
     loadNetworkPreferences()
@@ -87,9 +93,25 @@ function App(): React.JSX.Element {
     checkForUpdate()
   }, [loadNetworkPreferences, loadThemeSource, loadInitialPaths, checkForUpdate])
 
+  useEffect(() => {
+    return window.plexo.onCompanionDownload((payload) => {
+      ingestCompanionDownload(payload)
+    })
+  }, [ingestCompanionDownload])
+
+  useEffect(() => {
+    if (!incomingCompanionAlert) return
+    const timer = setTimeout(() => {
+      setIncomingCompanionAlert(null)
+    }, 8000)
+    return () => clearTimeout(timer)
+  }, [incomingCompanionAlert, setIncomingCompanionAlert])
+
   const handleNewDownload = (): void => {
     if (currentDownload) void window.plexo.removeDownload(currentDownload.id)
     clearCurrentDownload()
+    setDraftHeaders(undefined)
+    setDraftFileName(undefined)
   }
 
   const handleDownloadAgain = (): void => {
@@ -97,6 +119,8 @@ function App(): React.JSX.Element {
       const url = currentDownload.url
       void window.plexo.removeDownload(currentDownload.id)
       clearCurrentDownload()
+      setDraftHeaders(undefined)
+      setDraftFileName(undefined)
       useAppStore.getState().setDraftUrl(url)
     }
   }
@@ -122,6 +146,21 @@ function App(): React.JSX.Element {
     <TooltipProvider>
       <div className="flex h-full flex-col">
         <TitleBar status={titleBarStatus} />
+        {incomingCompanionAlert && (
+          <div className="mx-4 mt-2 flex items-center justify-between gap-2 rounded-lg border border-primary/40 bg-primary/10 px-3 py-2 text-xs text-foreground shadow-sm">
+            <div className="flex min-w-0 items-center gap-2">
+              <Info className="h-4 w-4 shrink-0 text-primary" />
+              <span className="truncate">{incomingCompanionAlert}</span>
+            </div>
+            <button
+              onClick={() => setIncomingCompanionAlert(null)}
+              className="flex h-5 w-5 shrink-0 items-center justify-center rounded hover:bg-primary/20 text-muted-foreground hover:text-foreground cursor-pointer transition-colors"
+              title="Dismiss notification"
+            >
+              <X className="h-3.5 w-3.5" />
+            </button>
+          </div>
+        )}
         <div className="min-h-0 flex-1">{screen}</div>
         <DevToolsPanel />
         <UpdateDialog />

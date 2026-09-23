@@ -1,12 +1,15 @@
 import { electronApp, is, optimizer } from '@electron-toolkit/utils'
 import { app, BrowserWindow, Menu, nativeTheme, shell } from 'electron'
+import { resolve } from 'path'
 import { join } from 'path'
 import icon from '../../resources/icon-dark.png?asset'
 import { registerIpcHandlers } from './ipc/handlers'
 import { loadThemeSource } from './settings'
 import { testKnobs } from './testKnobs'
 import { IpcChannels } from '../shared/ipc-channels'
+import type { CompanionDownloadPayload } from '../shared/types'
 import type { DownloadManager } from './download/downloadManager'
+import { CompanionServer } from './companion/server'
 
 // In dev mode the app runs as the raw `electron` binary, which otherwise shows "Electron" in
 // the Dock tooltip/menu bar — must be set before the app is ready. Packaged builds already get
@@ -16,9 +19,76 @@ app.setName('Plexo')
 // Each e2e test runs against its own throwaway userData folder (downloads, manifests, settings).
 if (testKnobs.userDataDir) app.setPath('userData', testKnobs.userDataDir)
 
+const isTesting = Boolean(testKnobs.userDataDir)
 let mainWindow: BrowserWindow | null = null
 let downloadManager: DownloadManager | null = null
+let companionServer: CompanionServer | null = null
+let pendingCompanionPayload: CompanionDownloadPayload | null = null
 let quitAfterSuspending = false
+
+function parsePlexoProtocolUrl(rawUrl: string): CompanionDownloadPayload | null {
+  try {
+    const parsed = new URL(rawUrl)
+    if (parsed.protocol !== 'plexo:') return null
+    const downloadUrl = parsed.searchParams.get('url')
+    if (!downloadUrl || !/^https?:/i.test(downloadUrl)) return null
+    return {
+      url: downloadUrl,
+      suggestedFileName: parsed.searchParams.get('filename') ?? undefined,
+      referer: parsed.searchParams.get('referer') ?? undefined
+    }
+  } catch {
+    return null
+  }
+}
+
+function findProtocolUrlInArgv(argv: string[]): string | undefined {
+  return argv.find((arg) => arg.startsWith('plexo://') || arg.startsWith('plexo:'))
+}
+
+if (!isTesting) {
+  const gotTheLock = app.requestSingleInstanceLock()
+  if (!gotTheLock) {
+    app.quit()
+  } else {
+    app.on('second-instance', (_event, commandLine) => {
+      if (mainWindow) {
+        if (mainWindow.isMinimized()) mainWindow.restore()
+        mainWindow.show()
+        mainWindow.focus()
+      }
+      const protoUrl = findProtocolUrlInArgv(commandLine)
+      if (protoUrl) {
+        const payload = parsePlexoProtocolUrl(protoUrl)
+        if (payload) {
+          if (mainWindow && !mainWindow.webContents.isLoading()) {
+            mainWindow.webContents.send(IpcChannels.companionDownload, payload)
+          } else {
+            pendingCompanionPayload = payload
+          }
+        }
+      }
+    })
+
+    if (process.defaultApp && process.argv.length >= 2) {
+      app.setAsDefaultProtocolClient('plexo', process.execPath, [resolve(process.argv[1])])
+    } else {
+      app.setAsDefaultProtocolClient('plexo')
+    }
+  }
+
+  app.on('open-url', (event, url) => {
+    event.preventDefault()
+    const payload = parsePlexoProtocolUrl(url)
+    if (payload) {
+      if (mainWindow && !mainWindow.webContents.isLoading()) {
+        mainWindow.webContents.send(IpcChannels.companionDownload, payload)
+      } else {
+        pendingCompanionPayload = payload
+      }
+    }
+  })
+}
 
 // Only wired in dev — mirrors the default Electron menu (app/edit/view/window) plus one item to
 // toggle the renderer's floating simulate-download panel, which itself only renders in dev.
@@ -85,6 +155,13 @@ function createWindow(): void {
     return { action: 'deny' }
   })
 
+  mainWindow.webContents.on('did-finish-load', () => {
+    if (pendingCompanionPayload) {
+      mainWindow?.webContents.send(IpcChannels.companionDownload, pendingCompanionPayload)
+      pendingCompanionPayload = null
+    }
+  })
+
   if (is.dev && process.env['ELECTRON_RENDERER_URL']) {
     mainWindow.loadURL(process.env['ELECTRON_RENDERER_URL'])
   } else {
@@ -105,6 +182,19 @@ app.whenReady().then(async () => {
 
   downloadManager = registerIpcHandlers(() => mainWindow)
 
+  companionServer = new CompanionServer(
+    () => mainWindow,
+    () => downloadManager?.hasActiveDownload() ?? false
+  )
+  if (!isTesting) {
+    void companionServer.start()
+  }
+
+  const startupUrl = findProtocolUrlInArgv(process.argv)
+  if (startupUrl) {
+    pendingCompanionPayload = parsePlexoProtocolUrl(startupUrl)
+  }
+
   nativeTheme.on('updated', () => {
     mainWindow?.setBackgroundColor(nativeTheme.shouldUseDarkColors ? '#1c1c1e' : '#ffffff')
   })
@@ -120,6 +210,9 @@ app.whenReady().then(async () => {
 })
 
 app.on('before-quit', (event) => {
+  if (companionServer) {
+    void companionServer.stop()
+  }
   if (quitAfterSuspending || !downloadManager) return
 
   event.preventDefault()
