@@ -1,6 +1,9 @@
 {
   "name": "plexo",
-  "version": "1.0.0-rc.9",
+  "version": "1.0.0-rc.8",
+  "overrides": {
+    "@noble/hashes": "1.8.0"
+  },
   "description": "Speed up downloads by combining multiple network connections in parallel",
   "main": "./out/main/index.js",
   "author": "Anmol Kapil",
@@ -31,6 +34,7 @@
     "cn": "^0.3.0",
     "koffi": "^2.16.3",
     "lucide-react": "^1.47.0",
+    "webtorrent": "^3.0.21",
     "zustand": "^5.0.15"
   },
   "devDependencies": {
@@ -42,8 +46,9 @@
     "@types/node": "^22.19.1",
     "@types/react": "^19.2.7",
     "@types/react-dom": "^19.2.3",
+    "@types/webtorrent": "^3.0.0",
     "@vitejs/plugin-react": "^5.1.1",
-    "electron": "^44.4.4",
+    "electron": "^39.2.6",
     "electron-builder": "^26.0.12",
     "electron-vite": "^5.0.0",
     "eslint": "^9.39.1",

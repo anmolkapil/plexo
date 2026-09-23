@@ -1,4 +1,3 @@
-import type {} from '../src/preload/globals'
 import { execFile } from 'node:child_process'
 import { existsSync } from 'node:fs'
 import { mkdir, mkdtemp, readdir, readFile, realpath, rm } from 'node:fs/promises'
@@ -80,33 +79,21 @@ export class PlexoApp {
 
   async launch(extraEnv: Record<string, string> = {}): Promise<this> {
     Object.assign(this.extraEnv, extraEnv)
-    let retries = 5
-    while (true) {
-      try {
-        this.electronApp = await electron.launch({
-          args: [PROJECT_ROOT, ...(process.platform === 'linux' ? ['--no-sandbox'] : [])],
-          env: {
-            ...(process.env as Record<string, string>),
-            PLEXO_USER_DATA: this.dirs.userData,
-            PLEXO_E2E_HIDE_WINDOW: '1',
-            PLEXO_E2E_BLOCK_BYTES: String(BLOCK),
-            PLEXO_E2E_RETRY_BASE_MS: '20',
-            PLEXO_E2E_STALL_MS: '1500',
-            // Off unless a test asks for it: a hedge is an extra request, and most tests count them.
-            PLEXO_E2E_HEDGE_MS: '600000',
-            PLEXO_E2E_INTERFACES: interfacesEnv(NETWORKS),
-            ...this.extraEnv
-          }
-        })
-        break
-      } catch (e: unknown) {
-        if (retries-- > 0 && e instanceof Error && e.message?.includes('ETXTBSY')) {
-          await new Promise((resolve) => setTimeout(resolve, 100))
-          continue
-        }
-        throw e
+    this.electronApp = await electron.launch({
+      args: [PROJECT_ROOT, ...(process.platform === 'linux' ? ['--no-sandbox'] : [])],
+      env: {
+        ...(process.env as Record<string, string>),
+        PLEXO_USER_DATA: this.dirs.userData,
+        PLEXO_E2E_HIDE_WINDOW: '1',
+        PLEXO_E2E_BLOCK_BYTES: String(BLOCK),
+        PLEXO_E2E_RETRY_BASE_MS: '20',
+        PLEXO_E2E_STALL_MS: '1500',
+        // Off unless a test asks for it: a hedge is an extra request, and most tests count them.
+        PLEXO_E2E_HEDGE_MS: '600000',
+        PLEXO_E2E_INTERFACES: interfacesEnv(NETWORKS),
+        ...this.extraEnv
       }
-    }
+    })
     const child = this.electronApp.process()
     child.stdout?.on('data', (data) => this.output.push(String(data)))
     child.stderr?.on('data', (data) => this.output.push(String(data)))

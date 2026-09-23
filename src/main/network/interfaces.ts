@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-explicit-any */
 import { execFile } from 'node:child_process'
 import { networkInterfaces } from 'node:os'
 import { promisify } from 'node:util'
@@ -42,17 +43,30 @@ async function getMacHardwarePortNames(): Promise<Map<string, string>> {
 
 function classifyInterface(hardwarePortName: string): NetworkInterfaceKind {
   const name = hardwarePortName.toLowerCase()
-  if (/wi-?fi|wireless|wlan|802\.11|airport/.test(name)) return 'wifi'
-  if (/rndis|remote ndis|tether|apple mobile device/.test(name)) return 'usb'
+  if (
+    /wi-?fi|wireless|wlan|802\.11|airport|realtek|intel\(r\) dual band|broadcom|qualcomm|ath/i.test(
+      name
+    )
+  )
+    return 'wifi'
+  if (/rndis|remote ndis|tether|apple mobile device/i.test(name)) return 'usb'
   if (name.includes('iphone') || name.includes('ipad') || name.includes('usb')) return 'usb'
   if (name.includes('bridge')) return 'bridge'
   if (name.includes('ethernet') || name.includes('lan')) return 'ethernet'
   return 'other'
 }
 
+let cachedWindowsAdapters: Map<string, WindowsAdapter> | null = null
+let lastWindowsAdaptersFetch = 0
+const WINDOWS_ADAPTER_CACHE_TTL_MS = 30_000
+
 /** Adapter aliases match Node's interface names; metadata identifies renamed or localized adapters. */
 async function getWindowsAdapters(): Promise<Map<string, WindowsAdapter>> {
   if (process.platform !== 'win32') return new Map()
+  const now = Date.now()
+  if (cachedWindowsAdapters && now - lastWindowsAdaptersFetch < WINDOWS_ADAPTER_CACHE_TTL_MS) {
+    return cachedWindowsAdapters
+  }
   try {
     const { stdout } = await execFileAsync(
       'powershell.exe',
@@ -67,35 +81,17 @@ async function getWindowsAdapters(): Promise<Map<string, WindowsAdapter>> {
     )
     const parsed = JSON.parse(stdout.trim().replace(/^\uFEFF/, ''))
     const adapters: WindowsAdapter[] = Array.isArray(parsed) ? parsed : parsed ? [parsed] : []
-    return new Map(
+    cachedWindowsAdapters = new Map(
       adapters
         .filter((adapter) => typeof adapter.Name === 'string')
         .map((adapter) => [adapter.Name, adapter])
     )
+    lastWindowsAdaptersFetch = now
+    return cachedWindowsAdapters
   } catch {
     // Restricted PowerShell or unavailable metadata must not prevent downloads.
-    return new Map()
+    return cachedWindowsAdapters ?? new Map()
   }
-}
-
-/** Computes the CIDR subnet (e.g. "192.168.1.0/24") from an IPv4 address and netmask. */
-export function ipv4Subnet(address: string, netmask: string): string | null {
-  const ipParts = address.split('.').map(Number)
-  const maskParts = netmask.split('.').map(Number)
-  if (ipParts.length !== 4 || maskParts.length !== 4) return null
-  if (
-    ipParts.some((p) => isNaN(p) || p < 0 || p > 255) ||
-    maskParts.some((p) => isNaN(p) || p < 0 || p > 255)
-  ) {
-    return null
-  }
-  const subnetParts = ipParts.map((part, i) => part & maskParts[i])
-  const maskBits =
-    maskParts
-      .map((b) => b.toString(2).padStart(8, '0'))
-      .join('')
-      .split('1').length - 1
-  return `${subnetParts.join('.')}/${maskBits}`
 }
 
 /**
@@ -115,7 +111,10 @@ export async function listActiveInterfaces(): Promise<NetworkInterfaceInfo[]> {
   for (const [device, addresses] of Object.entries(all)) {
     if (!addresses) continue
     const ipv4 = addresses.find(
-      (addr) => addr.family === 'IPv4' && !addr.internal && !addr.address.startsWith('169.254.')
+      (addr) =>
+        (addr.family === 'IPv4' || (addr.family as any) === 4 || (addr.family as any) === '4') &&
+        !addr.internal &&
+        !addr.address.startsWith('169.254.')
     )
     if (!ipv4) continue
 
@@ -125,16 +124,13 @@ export async function listActiveInterfaces(): Promise<NetworkInterfaceInfo[]> {
     // NDIS media: 1 = wireless LAN, 9 = native 802.11, 14 = Ethernet (802.3).
     if (adapter?.NdisPhysicalMedium === 1 || adapter?.NdisPhysicalMedium === 9) kind = 'wifi'
     else if (kind === 'other' && adapter?.NdisPhysicalMedium === 14) kind = 'ethernet'
-    const subnet = ipv4.netmask ? (ipv4Subnet(ipv4.address, ipv4.netmask) ?? undefined) : undefined
     result.push({
       id: device,
       device,
       displayName: hardwareName ?? adapter?.InterfaceDescription ?? device,
       address: ipv4.address,
       kind,
-      mac: ipv4.mac && ipv4.mac !== '00:00:00:00:00:00' ? ipv4.mac : undefined,
-      subnet,
-      netmask: ipv4.netmask
+      mac: ipv4.mac && ipv4.mac !== '00:00:00:00:00:00' ? ipv4.mac : undefined
     })
   }
 

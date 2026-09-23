@@ -1,5 +1,4 @@
 import type {
-  AppSettings,
   DownloadState,
   NetworkInterfaceInfo,
   NetworkPreference,
@@ -29,7 +28,6 @@ interface AppStore {
 
   /** Persisted in the main process alongside nativeTheme.themeSource. */
   themeSource: ThemeSource
-  streamsPerNetwork: number
 
   /** Null until the one-time startup check resolves, or if it found nothing worth showing
    * (already up to date, already dismissed, or the check failed). */
@@ -37,6 +35,7 @@ interface AppStore {
 
   homeDir: string
   downloadsDir: string
+  pathsStatus: LoadStatus
   /** True in electron-vite's dev server, false in a packaged build — gates the dev tools panel. */
   isDev: boolean
 
@@ -52,30 +51,21 @@ interface AppStore {
 
   /** Lifted out of the Idle screen so it survives a swap to/from the No-connections screen. */
   draftUrl: string
-  /** Persisted — the last folder picked, falling back to downloadsDir. */
-  destinationDir: string
+  draftDestinationDir: string
 
   loadInterfaces: () => Promise<void>
   refreshLatencies: () => Promise<void>
-  setNetworkPreference: (id: string, patch: NetworkPreference) => void
-  setThemeSource: (source: ThemeSource) => void
-  setStreamsPerNetwork: (streamsPerNetwork: number) => void
+  loadInitialPaths: () => Promise<void>
+  loadNetworkPreferences: () => Promise<void>
+  setNetworkPreference: (id: string, patch: NetworkPreference) => Promise<void>
+  loadThemeSource: () => Promise<void>
+  setThemeSource: (source: ThemeSource) => Promise<void>
   checkForUpdate: () => Promise<void>
   dismissUpdate: () => void
   setCurrentDownload: (state: DownloadState) => void
   clearCurrentDownload: () => void
   setDraftUrl: (url: string) => void
-  setDestinationDir: (dir: string) => void
-}
-
-// Settings saved by the main process, read once before the first paint (see InitialState).
-const initial = window.plexo.initialState
-
-/** Every setting changes optimistically: the store is updated first so the UI feels instant,
- * then this saves it. The store stays the source of truth either way — a failed save just means
- * the change isn't remembered next launch. */
-function persist(patch: AppSettings): void {
-  window.plexo.updateSettings(patch).catch(() => {})
+  setDraftDestinationDir: (dir: string) => void
 }
 
 export const useAppStore = create<AppStore>((set, get) => ({
@@ -83,14 +73,14 @@ export const useAppStore = create<AppStore>((set, get) => ({
   interfacesStatus: 'idle',
   interfacesError: null,
   latencies: {},
-  networkPreferences: initial.networkPreferences,
-  themeSource: initial.themeSource,
-  streamsPerNetwork: initial.streamsPerNetwork ?? 2,
+  networkPreferences: {},
+  themeSource: 'light',
   availableUpdate: null,
 
-  homeDir: initial.homeDir,
-  downloadsDir: initial.downloadsDir,
-  isDev: initial.isDev,
+  homeDir: '',
+  downloadsDir: '',
+  pathsStatus: 'idle',
+  isDev: false,
 
   currentDownload: null,
   speedHistory: [],
@@ -98,7 +88,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
   peakSpeedBytesPerSec: 0,
 
   draftUrl: '',
-  destinationDir: initial.destinationDir ?? initial.downloadsDir,
+  draftDestinationDir: '',
 
   loadInterfaces: async () => {
     // A re-scan keeps showing the last result. Dropping back to 'loading' would swap App off the
@@ -126,24 +116,65 @@ export const useAppStore = create<AppStore>((set, get) => ({
     }
   },
 
-  // An explicit `undefined` in `patch` clears that field; main drops an entry left with neither.
-  setNetworkPreference: (id, patch) => {
-    const networkPreferences = {
-      ...get().networkPreferences,
-      [id]: { ...get().networkPreferences[id], ...patch }
+  loadInitialPaths: async () => {
+    set({ pathsStatus: 'loading' })
+    try {
+      const { homeDir, downloadsDir, isDev } = await window.plexo.getInitialPaths()
+      set((state) => ({
+        homeDir,
+        downloadsDir,
+        draftDestinationDir: state.draftDestinationDir || downloadsDir,
+        isDev,
+        pathsStatus: 'ready'
+      }))
+    } catch {
+      set({ pathsStatus: 'error' })
     }
-    set({ networkPreferences })
-    persist({ networkPreferences })
   },
 
-  setThemeSource: (themeSource) => {
+  loadNetworkPreferences: async () => {
+    try {
+      const networkPreferences = await window.plexo.getNetworkPreferences()
+      set({ networkPreferences })
+    } catch {
+      // Best-effort — a failed read just leaves networks under their OS names/default colors.
+    }
+  },
+
+  setNetworkPreference: async (id, patch) => {
+    // Optimistic update so the rename/recolor feels instant — the IPC round trip resolves
+    // (or, on failure, quietly leaves the optimistic value as the source of truth for now).
+    set((state) => ({
+      networkPreferences: {
+        ...state.networkPreferences,
+        [id]: { ...state.networkPreferences[id], ...patch }
+      }
+    }))
+    try {
+      const networkPreferences = await window.plexo.setNetworkPreference(id, patch)
+      set({ networkPreferences })
+    } catch {
+      // Leave the optimistic value in place — not persisted to disk, but still usable this session.
+    }
+  },
+
+  loadThemeSource: async () => {
+    try {
+      const themeSource = await window.plexo.getThemeSource()
+      set({ themeSource })
+    } catch {
+      // Best-effort — a failed read just leaves the toggle showing the 'light' default.
+    }
+  },
+
+  setThemeSource: async (themeSource) => {
+    // Optimistic update, same as setNetworkPreference — the toggle should feel instant.
     set({ themeSource })
-    persist({ themeSource })
-  },
-
-  setStreamsPerNetwork: (streamsPerNetwork) => {
-    set({ streamsPerNetwork })
-    persist({ streamsPerNetwork })
+    try {
+      await window.plexo.setThemeSource(themeSource)
+    } catch {
+      // Leave the optimistic value in place — not persisted to disk, but still usable this session.
+    }
   },
 
   checkForUpdate: async () => {
@@ -160,7 +191,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
     if (!update) return
     // Keeps the update visible as a quiet titlebar icon rather than clearing it outright.
     set({ availableUpdate: { ...update, dismissed: true } })
-    persist({ dismissedUpdateVersion: update.version })
+    void window.plexo.dismissUpdate(update.version)
   },
 
   setCurrentDownload: (download) => {
@@ -203,8 +234,5 @@ export const useAppStore = create<AppStore>((set, get) => ({
     }),
 
   setDraftUrl: (draftUrl) => set({ draftUrl }),
-  setDestinationDir: (destinationDir) => {
-    set({ destinationDir })
-    persist({ destinationDir })
-  }
+  setDraftDestinationDir: (draftDestinationDir) => set({ draftDestinationDir })
 }))

@@ -1,11 +1,55 @@
+/* eslint-disable @typescript-eslint/no-explicit-any, @typescript-eslint/no-require-imports, @typescript-eslint/explicit-function-return-type */
+import { AsyncLocalStorage } from 'node:async_hooks'
 import { randomUUID } from 'node:crypto'
 import { createReadStream, createWriteStream } from 'node:fs'
-import { readFile, readdir, rename, rm, stat, statfs, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, readdir, rename, rm, stat, statfs, writeFile } from 'node:fs/promises'
 import { basename, join } from 'node:path'
 import { Readable } from 'node:stream'
 import { finished, pipeline } from 'node:stream/promises'
 import type { BrowserWindow } from 'electron'
 import { app, Notification } from 'electron'
+
+const netCjs = require('node:net')
+const origNetConnect = netCjs.connect
+const dgramCjs = require('node:dgram')
+const origCreateSocket = dgramCjs.createSocket
+const netBindingStorage = new AsyncLocalStorage<string>()
+
+netCjs.connect = function (...args: any[]) {
+  const localAddress = netBindingStorage.getStore()
+  if (localAddress && localAddress !== '0.0.0.0') {
+    if (typeof args[0] === 'object' && args[0] !== null) {
+      args[0] = { family: 4, ...args[0], localAddress }
+    } else if (typeof args[0] === 'number') {
+      args[0] = { family: 4, port: args[0], host: args[1], localAddress }
+    } else {
+      args[0] = { family: 4, localAddress }
+    }
+  }
+  return origNetConnect.apply(netCjs, args)
+}
+
+dgramCjs.createSocket = function (...args: any[]) {
+  const socket = origCreateSocket.apply(dgramCjs, args)
+  const localAddress = netBindingStorage.getStore()
+  if (localAddress && localAddress !== '0.0.0.0') {
+    const origSend = socket.send
+    let bound = false
+    socket.send = function (...sendArgs: any[]) {
+      if (!bound) {
+        try {
+          socket.bind({ address: localAddress })
+          bound = true
+        } catch {
+          // ignore if already bound
+        }
+      }
+      return origSend.apply(socket, sendArgs)
+    }
+  }
+  return socket
+}
+
 import { IpcChannels } from '../../shared/ipc-channels'
 import type {
   BlockState,
@@ -18,6 +62,7 @@ import type {
 } from '../../shared/types'
 import { interleave, planDownload } from '../../shared/plan'
 import { testKnobs } from '../testKnobs'
+import { isMagnetUrl } from './probe'
 import { advanceBlock, retractBlock } from './blockProgress'
 import { downloadChunk, fetchRange, RemoteChangedError } from './chunkDownloader'
 import { compareVersion, type FileVersion } from './fileVersion'
@@ -29,7 +74,7 @@ import {
   reconcilePartFileSize,
   removeHedgeFiles
 } from './partFiles'
-import { ensureDirectory, reserveDestinationPath } from './paths'
+import { ensureDirectoryExists, reserveDestinationPath } from './paths'
 import { pickWork, type SchedulerPolicy, type Work } from './scheduler'
 import {
   createSimSession,
@@ -305,6 +350,15 @@ async function ensureDiskSpace(
   }
 }
 
+function extractMagnetTrackers(magnetUrl: string): string[] {
+  try {
+    const parsed = new URL(magnetUrl.replace(/^magnet:\?/, 'http://dummy/?'))
+    return parsed.searchParams.getAll('tr')
+  } catch {
+    return []
+  }
+}
+
 export class DownloadManager {
   private runtimes = new Map<string, DownloadRuntime>()
   private readonly initialization: Promise<void>
@@ -502,8 +556,8 @@ export class DownloadManager {
     requestPayload: StartDownloadRequest,
     interfaces: NetworkInterfaceInfo[]
   ): Promise<string> {
-    await ensureDirectory(this.downloadsRoot())
-    await ensureDirectory(requestPayload.destinationDir)
+    await mkdir(this.downloadsRoot(), { recursive: true })
+    await ensureDirectoryExists(requestPayload.destinationDir)
     await ensureDiskSpace(
       requestPayload.destinationDir,
       this.downloadsRoot(),
@@ -522,7 +576,7 @@ export class DownloadManager {
     const id = randomUUID()
     const tempDir = join(this.downloadDir(id), 'parts')
     try {
-      await ensureDirectory(tempDir)
+      await mkdir(tempDir, { recursive: true })
     } catch (error) {
       await rm(destinationPath, { force: true })
       throw error
@@ -633,6 +687,20 @@ export class DownloadManager {
     const runtime = this.runtimes.get(id)
     if (!runtime || runtime.state.status !== 'downloading') return
 
+    if ((runtime as any).magnetClients) {
+      const clientsList = (runtime as any).magnetClients
+      if (Array.isArray(clientsList)) {
+        for (const item of clientsList) {
+          try {
+            item.client?.destroy()
+          } catch {
+            // ignore
+          }
+        }
+      }
+      ;(runtime as any).magnetClients = null
+    }
+
     runtime.state.status = 'paused'
     runtime.state.speedBytesPerSec = 0
     runtime.state.pausedAt = Date.now()
@@ -677,6 +745,14 @@ export class DownloadManager {
   private async resumeAfterVerifying(runtime: DownloadRuntime): Promise<void> {
     const { url } = runtime.requestPayload
 
+    if (isMagnetUrl(url)) {
+      runtime.state.status = 'downloading'
+      runtime.state.error = undefined
+      this.pushUpdate(runtime)
+      void this.runMagnetDownload(runtime)
+      return
+    }
+
     let availableInterfaces: NetworkInterfaceInfo[]
     if (isSimulatedUrl(url)) {
       // Synthetic sim interfaces aren't real NICs the OS enumerates — they never "disconnect",
@@ -705,7 +781,7 @@ export class DownloadManager {
     // The part files are the real record of what's downloaded, not the manifest. If one went
     // missing or came up short while paused (userData cleaned out, a crash before a write hit
     // the disk), fetch that block again instead of failing at assembly.
-    await ensureDirectory(runtime.tempDir)
+    await mkdir(runtime.tempDir, { recursive: true })
     await removeHedgeFiles(runtime.tempDir)
     await Promise.all(
       runtime.blocks.map(async (block) => {
@@ -771,6 +847,20 @@ export class DownloadManager {
     )
       return
 
+    if ((runtime as any).magnetClients) {
+      const clientsList = (runtime as any).magnetClients
+      if (Array.isArray(clientsList)) {
+        for (const item of clientsList) {
+          try {
+            item.client?.destroy()
+          } catch {
+            // ignore
+          }
+        }
+      }
+      ;(runtime as any).magnetClients = null
+    }
+
     runtime.state.status = 'cancelled'
     runtime.state.speedBytesPerSec = 0
     for (const chunk of runtime.state.chunks) {
@@ -781,9 +871,9 @@ export class DownloadManager {
       chunkRuntime.controller.abort()
     }
     this.pushUpdate(runtime, false)
-    void this.cleanupTempDir(runtime)
-    void this.discardUnfinishedDestination(runtime)
-    void this.removePersistedDownload(runtime)
+    void this.cleanupTempDir(runtime).catch(() => {})
+    void this.discardUnfinishedDestination(runtime).catch(() => {})
+    void this.removePersistedDownload(runtime).catch(() => {})
   }
 
   remove(id: string): void {
@@ -797,7 +887,7 @@ export class DownloadManager {
       this.cancel(id)
     }
     this.runtimes.delete(id)
-    if (runtime) void this.removePersistedDownload(runtime)
+    if (runtime) void this.removePersistedDownload(runtime).catch(() => {})
   }
 
   async suspendAll(): Promise<void> {
@@ -811,11 +901,271 @@ export class DownloadManager {
     )
   }
 
+  private async runMagnetDownload(runtime: DownloadRuntime): Promise<void> {
+    const { url, destinationDir } = runtime.requestPayload
+
+    try {
+      const WebTorrentMod = await import('webtorrent')
+      const WebTorrent = WebTorrentMod.default || WebTorrentMod
+
+      const magnetTrackers = extractMagnetTrackers(url)
+
+      // Remove 0-byte placeholder reserved at start so WebTorrent can create file/folder without EEXIST collision
+      try {
+        await rm(runtime.state.destinationPath, { force: true })
+      } catch {
+        // ignore
+      }
+
+      for (const chunk of runtime.state.chunks) {
+        chunk.status = 'downloading'
+      }
+      this.pushUpdate(runtime)
+
+      const interfacesToUse =
+        runtime.activeInterfaces.length > 0
+          ? runtime.activeInterfaces
+          : [{ id: 'default', address: '0.0.0.0', displayName: 'Default' } as any]
+
+      const clientsInfo: {
+        interfaceId: string
+        iface: NetworkInterfaceInfo
+        client: any
+        torrent: any
+        downloadSpeed: number
+        downloaded: number
+        done: boolean
+      }[] = []
+
+      ;(runtime as any).magnetClients = clientsInfo
+
+      // Instantiate WebTorrent client per active interface
+      for (const iface of interfacesToUse) {
+        let client: any = null
+        netBindingStorage.run(iface.address, () => {
+          client = new WebTorrent({ maxConns: 55 })
+        })
+
+        const info = {
+          interfaceId: iface.id,
+          iface,
+          client,
+          torrent: null as any,
+          downloadSpeed: 0,
+          downloaded: 0,
+          done: false
+        }
+        clientsInfo.push(info)
+
+        client.on('error', (err: any) => {
+          if (runtime.state.status === 'downloading' && clientsInfo.length === 1) {
+            runtime.state.status = 'error'
+            runtime.state.error = err?.message || 'BitTorrent client error'
+            this.pushUpdate(runtime)
+          }
+        })
+      }
+
+      let sharedTorrentFile: Buffer | null = null
+
+      const setupTorrentEvents = (info: (typeof clientsInfo)[0], torrent: any) => {
+        info.torrent = torrent
+        const iface = info.iface
+
+        const announceList = [...new Set([...magnetTrackers, ...(torrent.announce || [])])]
+
+        // Capture raw .torrent buffer so lagging interfaces bypass tracker metadata lookup instantly
+        if (torrent.torrentFile && !sharedTorrentFile) {
+          const torrentBuf: Buffer = torrent.torrentFile
+          sharedTorrentFile = torrentBuf
+          for (const item of clientsInfo) {
+            if (item.client !== info.client && !item.torrent) {
+              try {
+                if (item.client.torrents && item.client.torrents.length > 0) {
+                  item.client.remove(item.client.torrents[0])
+                }
+              } catch {
+                // ignore
+              }
+              netBindingStorage.run(item.iface.address, () => {
+                item.client.add(
+                  torrentBuf,
+                  { path: destinationDir, announce: announceList },
+                  (t: any) => {
+                    setupTorrentEvents(item, t)
+                  }
+                )
+              })
+            }
+          }
+        }
+
+        if (typeof torrent.throttleUpload === 'function') {
+          torrent.throttleUpload(15 * 1024)
+        }
+
+        if (torrent.length && (!runtime.state.totalBytes || runtime.state.totalBytes === 0)) {
+          runtime.state.totalBytes = torrent.length
+        }
+        if (torrent.name && (!runtime.state.fileName || runtime.state.fileName === 'download')) {
+          runtime.state.fileName = torrent.name
+        }
+
+        const configurePieceSelection = () => {
+          if (!torrent || !torrent.pieces || torrent.pieces.length === 0) return
+          const numPieces = torrent.pieces.length
+          const totalClients = clientsInfo.length
+          const clientIndex = clientsInfo.findIndex((item) => item.client === info.client)
+
+          if (totalClients > 1 && clientIndex !== -1) {
+            const startPiece = Math.floor((clientIndex * numPieces) / totalClients)
+            const endPiece =
+              clientIndex === totalClients - 1
+                ? numPieces - 1
+                : Math.floor(((clientIndex + 1) * numPieces) / totalClients) - 1
+
+            if (typeof torrent.select === 'function') {
+              // Enable all pieces at standard priority (1) so fast interfaces never starve when their partition is finished
+              torrent.select(0, numPieces - 1, 1)
+              // Elevate primary assigned partition to high priority (2)
+              if (startPiece <= endPiece) {
+                torrent.select(startPiece, endPiece, 2)
+              }
+            }
+          }
+        }
+
+        if (torrent.pieces && torrent.pieces.length > 0) {
+          configurePieceSelection()
+        } else if (typeof torrent.on === 'function') {
+          torrent.on('ready', () => {
+            configurePieceSelection()
+          })
+        }
+
+        torrent.on('download', () => {
+          if (runtime.state.status !== 'downloading') return
+          info.downloadSpeed = torrent.downloadSpeed
+          info.downloaded = torrent.downloaded
+
+          // Update chunk speeds & downloaded bytes for this interface's specific chunks
+          const ifaceChunks = runtime.state.chunks.filter((c) => c.interfaceId === iface.id)
+          const chunkCount = ifaceChunks.length || 1
+          const perChunkSpeed = Math.round(torrent.downloadSpeed / chunkCount)
+          const perChunkDownloaded = Math.round(torrent.downloaded / chunkCount)
+
+          for (const chunk of ifaceChunks) {
+            chunk.status = 'downloading'
+            chunk.speedBytesPerSec = perChunkSpeed
+            chunk.bytesDownloaded = perChunkDownloaded
+          }
+
+          // Calculate aggregate download speed & downloaded bytes across all bound clients
+          const totalSpeed = clientsInfo.reduce((sum, item) => sum + item.downloadSpeed, 0)
+          const totalDownloaded = clientsInfo.reduce((sum, item) => sum + item.downloaded, 0)
+          const maxBytes = runtime.state.totalBytes || totalDownloaded
+
+          runtime.state.speedBytesPerSec = totalSpeed
+          runtime.state.bytesDownloaded = Math.min(maxBytes, totalDownloaded)
+
+          if (runtime.blocks.length > 0 && maxBytes > 0) {
+            const ratio = Math.min(1, totalDownloaded / maxBytes)
+            const completedBlocks = Math.floor(ratio * runtime.blocks.length)
+
+            for (let i = 0; i < runtime.blocks.length; i++) {
+              const block = runtime.blocks[i]
+              const bSize = block.rangeEnd ? block.rangeEnd - block.rangeStart + 1 : 0
+
+              block.bytesByInterface[iface.id] = Math.min(bSize, info.downloaded)
+
+              if (i < completedBlocks) {
+                block.status = 'completed'
+                block.bytesDownloaded = bSize
+              } else if (i === completedBlocks) {
+                block.status = 'downloading'
+                block.bytesDownloaded = Math.round(
+                  (ratio * runtime.blocks.length - completedBlocks) * bSize
+                )
+              }
+            }
+          }
+          this.scheduleUpdate(runtime)
+        })
+
+        torrent.on('done', () => {
+          info.done = true
+          info.downloadSpeed = 0
+          info.downloaded = torrent.length || torrent.downloaded
+
+          const allDone = clientsInfo.every(
+            (item) => item.done || (item.torrent && item.torrent.progress === 1)
+          )
+
+          if (allDone || torrent.progress === 1) {
+            const finalBytes = runtime.state.totalBytes || torrent.length || torrent.downloaded
+            runtime.state.bytesDownloaded = finalBytes
+            runtime.state.speedBytesPerSec = 0
+            runtime.state.status = 'completed'
+
+            for (const block of runtime.blocks) {
+              block.status = 'completed'
+              const bSize = block.rangeEnd ? block.rangeEnd - block.rangeStart + 1 : 0
+              block.bytesDownloaded = bSize
+            }
+            for (const chunk of runtime.state.chunks) {
+              chunk.status = 'completed'
+              chunk.speedBytesPerSec = 0
+            }
+            this.pushUpdate(runtime)
+            void this.persistNow(runtime)
+
+            for (const item of clientsInfo) {
+              try {
+                item.client?.destroy()
+              } catch {
+                // ignore
+              }
+            }
+            ;(runtime as any).magnetClients = null
+          }
+        })
+
+        torrent.on('error', (err: any) => {
+          if (clientsInfo.every((item) => !item.torrent || item.torrent.destroyed)) {
+            runtime.state.status = 'error'
+            runtime.state.error = err?.message || 'Magnet transfer error'
+            this.pushUpdate(runtime)
+          }
+        })
+      }
+
+      // Add magnet URL to all clients concurrently
+      for (const info of clientsInfo) {
+        netBindingStorage.run(info.iface.address, () => {
+          info.client.add(
+            url,
+            { path: destinationDir, announce: magnetTrackers },
+            (torrent: any) => {
+              setupTorrentEvents(info, torrent)
+            }
+          )
+        })
+      }
+    } catch (err: any) {
+      runtime.state.status = 'error'
+      runtime.state.error = err?.message || 'Failed to initialize BitTorrent client'
+      this.pushUpdate(runtime)
+    }
+  }
+
   /** Runs (or resumes) fixed worker streams in parallel, leasing blocks until all are completed. */
   private async runChunksToCompletion(
     runtime: DownloadRuntime,
     chunks: ChunkState[]
   ): Promise<void> {
+    if (isMagnetUrl(runtime.requestPayload.url)) {
+      return this.runMagnetDownload(runtime)
+    }
     const active = new Map<number, Promise<number>>()
     for (const chunk of chunks) {
       active.set(
@@ -1755,7 +2105,7 @@ export class DownloadManager {
           requestPayload: runtime.requestPayload,
           activeInterfaces: runtime.activeInterfaces
         }
-        await ensureDirectory(dir)
+        await mkdir(dir, { recursive: true })
         await writeFile(temporaryPath, JSON.stringify(persisted), 'utf-8')
         await rename(temporaryPath, path)
       })
@@ -1769,6 +2119,10 @@ export class DownloadManager {
     runtime.removed = true
     if (runtime.persistenceTimer) clearTimeout(runtime.persistenceTimer)
     await runtime.persistenceChain.catch(() => {})
-    await rm(this.downloadDir(runtime.state.id), { recursive: true, force: true })
+    try {
+      await rm(this.downloadDir(runtime.state.id), { recursive: true, force: true })
+    } catch {
+      // Best-effort cleanup
+    }
   }
 }

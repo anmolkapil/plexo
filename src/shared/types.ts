@@ -10,8 +10,6 @@ export interface NetworkInterfaceInfo {
   address: string
   kind: NetworkInterfaceKind
   mac?: string
-  subnet?: string
-  netmask?: string
 }
 
 export interface ProbeResult {
@@ -151,30 +149,11 @@ export interface UpdateInfo {
   dismissed: boolean
 }
 
-/** What app-settings.json holds, and what the renderer sends to change it (merged over the saved
- * values, `undefined` clearing one). A missing field was never set. */
-export interface AppSettings {
-  themeSource?: ThemeSource
-  dismissedUpdateVersion?: string
-  streamsPerNetwork?: number
-  /** The last destination folder picked. */
-  destinationDir?: string
-  /** User customizations (name/color) per network interface id. */
-  networkPreferences?: NetworkPreferences
-}
-
-/** Everything the renderer needs for its first paint, read synchronously by the preload so no
- * saved value flashes in over a default a moment after launch. */
-export interface InitialState {
+export interface InitialPaths {
   homeDir: string
   downloadsDir: string
   /** True in electron-vite's dev server, false in a packaged build — gates the dev tools panel. */
   isDev: boolean
-  themeSource: ThemeSource
-  networkPreferences: NetworkPreferences
-  streamsPerNetwork?: number
-  /** The last folder picked, if it still exists — otherwise the renderer uses downloadsDir. */
-  destinationDir?: string
 }
 
 export interface StartDownloadRequest {

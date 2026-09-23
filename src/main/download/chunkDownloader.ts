@@ -174,6 +174,10 @@ export function downloadChunk(options: ChunkDownloadOptions): Promise<void> {
     }
 
     const attempt = (targetUrl: URL, redirectsLeft: number): void => {
+      if (targetUrl.protocol === 'magnet:') {
+        fail(new Error('BitTorrent engine required for magnet link transfers'))
+        return
+      }
       const requester = targetUrl.protocol === 'https:' ? httpsRequest : httpRequest
       const sentAt = Date.now()
 

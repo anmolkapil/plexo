@@ -1,4 +1,3 @@
-import { stat } from 'node:fs/promises'
 import { is } from '@electron-toolkit/utils'
 import {
   app,
@@ -12,14 +11,21 @@ import {
 } from 'electron'
 import { IpcChannels } from '../../shared/ipc-channels'
 import type { IpcContract } from '../../shared/ipc-contract'
-import type { InitialState, NetworkInterfaceInfo, ThemeSource } from '../../shared/types'
+import type { NetworkInterfaceInfo, ThemeSource } from '../../shared/types'
 import { DownloadManager } from '../download/downloadManager'
 import { getDefaultDownloadsDir, getHomeDir } from '../download/paths'
 import { probeUrl } from '../download/probe'
 import { deviceBindingSupported } from '../network/deviceBinding'
 import { measureLatencies } from '../network/latency'
 import { listActiveInterfaces } from '../network/interfaces'
-import { loadSettings, saveSettings } from '../settings'
+import { loadNetworkPreferences, saveNetworkPreference } from '../network/preferences'
+import {
+  loadDismissedUpdateVersion,
+  loadLastDownloadDir,
+  saveDismissedUpdateVersion,
+  saveLastDownloadDir,
+  saveThemeSource
+} from '../settings'
 import { testKnobs } from '../testKnobs'
 import { checkForUpdate, UPDATE_PAGE_URL } from '../updateCheck'
 
@@ -54,8 +60,6 @@ function handle<K extends keyof IpcContract>(
   )
 }
 
-const DESTINATION_CHECK_MS = 300
-
 export function registerIpcHandlers(getWindow: () => BrowserWindow | null): DownloadManager {
   let cachedInterfaces: NetworkInterfaceInfo[] = []
 
@@ -78,58 +82,22 @@ export function registerIpcHandlers(getWindow: () => BrowserWindow | null): Down
   const bindingSupport = deviceBindingSupported()
   handle('deviceBindingSupported', async () => bindingSupport)
 
+  handle('getNetworkPreferences', async () => loadNetworkPreferences())
+
+  handle('setNetworkPreference', async (_event, id, patch) => saveNetworkPreference(id, patch))
+
   // The app only ever assigns 'light'/'dark' to nativeTheme.themeSource (main/index.ts's startup
   // call to loadThemeSource() never resolves to 'system') — narrow Electron's wider type here
   // rather than widening our own ThemeSource just to match it.
   const currentThemeSource = (): ThemeSource =>
     nativeTheme.themeSource === 'dark' ? 'dark' : 'light'
 
-  handle('updateSettings', async (_event, patch) => {
-    // The one setting main also applies — before saving, so a failed write still switches the
-    // window to the theme the toggle now shows.
-    if (patch?.themeSource === 'light' || patch?.themeSource === 'dark') {
-      nativeTheme.themeSource = patch.themeSource
-    }
-    await saveSettings(patch)
-  })
+  handle('getThemeSource', async () => currentThemeSource())
 
-  // Answered via sendSync from the preload, which blocks the page until returnValue is set — so a
-  // throw here must still reply (with no saved values) rather than leave the window never showing.
-  ipcMain.on(IpcChannels.getInitialState, async (event) => {
-    try {
-      const settings = await loadSettings()
-      const { destinationDir } = settings
-      // Capped: a folder on a dropped network share can take many seconds to answer, and launch
-      // waits on this reply — past the cap it's treated as gone and Downloads is used instead.
-      const destinationExists =
-        destinationDir !== undefined &&
-        (await Promise.race([
-          stat(destinationDir).then(
-            (stats) => stats.isDirectory(),
-            () => false
-          ),
-          new Promise<boolean>((resolve) => setTimeout(resolve, DESTINATION_CHECK_MS, false))
-        ]))
-      event.returnValue = {
-        homeDir: getHomeDir(),
-        downloadsDir: getDefaultDownloadsDir(),
-        isDev: is.dev,
-        themeSource: currentThemeSource(),
-        networkPreferences: settings.networkPreferences ?? {},
-        streamsPerNetwork: settings.streamsPerNetwork,
-        destinationDir: destinationExists ? destinationDir : undefined
-      } satisfies InitialState
-    } catch (error) {
-      console.error('[plexo] failed to read initial state', error)
-      // No getPath() here — it may be what threw. An empty destination just keeps Start disabled.
-      event.returnValue = {
-        homeDir: '',
-        downloadsDir: '',
-        isDev: is.dev,
-        themeSource: currentThemeSource(),
-        networkPreferences: {}
-      } satisfies InitialState
-    }
+  handle('setThemeSource', async (_event, source) => {
+    nativeTheme.themeSource = source
+    await saveThemeSource(source)
+    return currentThemeSource()
   })
 
   handle('openNetworkSettings', async () => {
@@ -137,6 +105,15 @@ export function registerIpcHandlers(getWindow: () => BrowserWindow | null): Down
   })
 
   handle('probeUrl', async (_event, url) => probeUrl(url))
+
+  handle('getInitialPaths', async () => {
+    const lastDir = await loadLastDownloadDir()
+    return {
+      homeDir: getHomeDir(),
+      downloadsDir: lastDir || getDefaultDownloadsDir(),
+      isDev: is.dev
+    }
+  })
 
   handle('chooseDestinationFolder', async (_event, defaultPath) => {
     const window = getWindow()
@@ -146,7 +123,9 @@ export function registerIpcHandlers(getWindow: () => BrowserWindow | null): Down
       properties: ['openDirectory', 'createDirectory']
     })
     if (result.canceled || result.filePaths.length === 0) return null
-    return result.filePaths[0]
+    const chosen = result.filePaths[0]
+    await saveLastDownloadDir(chosen)
+    return chosen
   })
 
   handle('chooseSourceFile', async () => {
@@ -163,7 +142,12 @@ export function registerIpcHandlers(getWindow: () => BrowserWindow | null): Down
     shell.showItemInFolder(filePath)
   })
 
-  handle('startDownload', async (_event, request) => manager.start(request))
+  handle('startDownload', async (_event, request) => {
+    if (request.destinationDir) {
+      await saveLastDownloadDir(request.destinationDir)
+    }
+    return manager.start(request)
+  })
 
   handle('startSimulatedDownload', async (_event, request) => manager.startSimulated(request))
 
@@ -191,16 +175,15 @@ export function registerIpcHandlers(getWindow: () => BrowserWindow | null): Down
     const info = testKnobs.forceUpdateVersion
       ? { version: testKnobs.forceUpdateVersion, url: UPDATE_PAGE_URL }
       : await checkForUpdate(app.getVersion())
-    return info
+    if (!info) return null
+    const dismissedVersion = await loadDismissedUpdateVersion()
+    return { ...info, dismissed: info.version === dismissedVersion }
   })()
 
-  // Dismissal is read per call, not cached with the check — a reload after "Not now" must not
-  // bring the dialog back.
-  handle('checkForUpdate', async () => {
-    const info = await updateCheckPromise
-    if (!info) return null
-    const { dismissedUpdateVersion } = await loadSettings()
-    return { ...info, dismissed: info.version === dismissedUpdateVersion }
+  handle('checkForUpdate', async () => updateCheckPromise)
+
+  handle('dismissUpdate', async (_event, version) => {
+    await saveDismissedUpdateVersion(version)
   })
 
   return manager

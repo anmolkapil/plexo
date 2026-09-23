@@ -7,3 +7,7 @@ out
 test-results
 playwright-report
 *.tsbuildinfo
+scratch/
+test_dir*/
+electron.vite.config.*.mjs
+

@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-explicit-any */
 import { request as httpRequest } from 'node:http'
 import { request as httpsRequest } from 'node:https'
 import { URL } from 'node:url'
@@ -120,7 +121,168 @@ async function requestFollowingRedirects(
   return { current, response }
 }
 
+export function isMagnetUrl(rawUrl: string): boolean {
+  const sanitized = rawUrl.trim().replace(/^["']|["']$/g, '')
+  return sanitized.toLowerCase().startsWith('magnet:')
+}
+
+export function parseMagnetUrl(rawUrl: string): ProbeResult {
+  const sanitized = rawUrl.trim().replace(/^["']|["']$/g, '')
+  const searchIndex = sanitized.indexOf('?')
+  const queryStr = searchIndex !== -1 ? sanitized.slice(searchIndex) : ''
+  const searchParams = new URLSearchParams(queryStr)
+
+  const xtList = searchParams.getAll('xt')
+  let validXt = xtList.find((xt) => /^urn:btih:/i.test(xt) || /^urn:btmh:/i.test(xt))
+
+  if (!validXt && /urn:btih:|urn:btmh:/i.test(sanitized)) {
+    const match = /(urn:bt[ih|mh]:[a-zA-Z0-9]+)/i.exec(sanitized)
+    if (match) {
+      validXt = match[1]
+    }
+  }
+
+  if (!validXt) {
+    throw new Error('Invalid magnet URI: missing or invalid info hash (xt parameter)')
+  }
+
+  const parts = validXt.split(':')
+  const infoHash = parts[parts.length - 1] || ''
+
+  if (!infoHash || !/^([a-fA-F0-9]{40}|[2-7a-zA-Z]{32}|[a-fA-F0-9]{64})$/i.test(infoHash)) {
+    throw new Error('Invalid magnet URI: missing or invalid info hash (xt parameter)')
+  }
+
+  const dn = searchParams.get('dn')
+  let suggestedFileName = dn ? dn.trim() : ''
+
+  if (!suggestedFileName) {
+    const dnMatch = /[?&]dn=([^&]+)/i.exec(sanitized)
+    if (dnMatch) {
+      try {
+        suggestedFileName = decodeURIComponent(dnMatch[1].replace(/\+/g, ' ')).trim()
+      } catch {
+        suggestedFileName = dnMatch[1].replace(/\+/g, ' ').trim()
+      }
+    }
+  }
+
+  if (!suggestedFileName) {
+    suggestedFileName = infoHash ? `magnet-${infoHash.slice(0, 8)}` : 'download'
+  }
+
+  const xl = searchParams.get('xl') || (/[?&]xl=(\d+)/i.exec(sanitized)?.[1] ?? null)
+  let totalBytes: number | null = null
+  if (xl && /^\d+$/.test(xl)) {
+    const parsedSize = parseInt(xl, 10)
+    if (!isNaN(parsedSize) && parsedSize >= 0) {
+      totalBytes = parsedSize
+    }
+  }
+
+  return {
+    requestedUrl: sanitized,
+    finalUrl: sanitized,
+    supportsRanges: true,
+    totalBytes,
+    suggestedFileName,
+    contentType: 'application/x-bittorrent',
+    etag: null,
+    lastModified: null
+  }
+}
+
+async function getWebTorrent(): Promise<any> {
+  try {
+    const mod = await import('webtorrent')
+    return mod.default || mod
+  } catch {
+    return null
+  }
+}
+
+export async function resolveMagnetMetadata(
+  magnetUrl: string,
+  timeoutMs = 4000
+): Promise<{ name?: string; length?: number } | null> {
+  return new Promise((resolve) => {
+    let client: any = null
+    let timer: NodeJS.Timeout | null = null
+
+    const cleanup = (): void => {
+      if (timer) clearTimeout(timer)
+      if (client) {
+        try {
+          client.destroy()
+        } catch {
+          // ignore
+        }
+      }
+    }
+
+    timer = setTimeout(() => {
+      cleanup()
+      resolve(null)
+    }, timeoutMs)
+
+    getWebTorrent()
+      .then((WebTorrent) => {
+        if (!WebTorrent || timer === null) {
+          cleanup()
+          resolve(null)
+          return
+        }
+        client = new WebTorrent()
+        client.add(magnetUrl, { destroyStoreOnDestroy: true }, (torrent: any) => {
+          const name = torrent.name
+          const length = torrent.length
+          cleanup()
+          resolve({ name, length })
+        })
+        client.on('error', () => {
+          cleanup()
+          resolve(null)
+        })
+      })
+      .catch(() => {
+        cleanup()
+        resolve(null)
+      })
+  })
+}
+
 export async function probeUrl(rawUrl: string): Promise<ProbeResult> {
+  if (isMagnetUrl(rawUrl)) {
+    const syncResult = parseMagnetUrl(rawUrl)
+    try {
+      const meta = await resolveMagnetMetadata(rawUrl, 4000)
+      if (meta) {
+        if (meta.name) syncResult.suggestedFileName = meta.name
+        if (typeof meta.length === 'number' && meta.length > 0) {
+          syncResult.totalBytes = meta.length
+        }
+      }
+    } catch {
+      // Fall back to parsed magnet URL parameters if metadata resolution times out
+    }
+    return syncResult
+  }
+
+  let parsedUrl: URL
+  try {
+    parsedUrl = new URL(rawUrl)
+  } catch {
+    throw new Error(
+      'Invalid URL format. Please provide a valid http://, https://, or magnet: link.'
+    )
+  }
+
+  if (parsedUrl.protocol !== 'http:' && parsedUrl.protocol !== 'https:') {
+    throw new Error(
+      `Unsupported protocol '${parsedUrl.protocol}'. Supported protocols are http:, https:, and magnet:.`
+    )
+  }
+
   const { current, response } = await requestFollowingRedirects(rawUrl)
 
   // An empty file can't satisfy a request for its first byte: the server answers 416 and gives

@@ -1,4 +1,3 @@
-import { useRef } from 'react'
 import { DownloadIcon } from 'lucide-react'
 import { useAppStore } from '../store/useAppStore'
 import {
@@ -16,7 +15,6 @@ import { buttonVariants } from './ui/button'
 export function UpdateDialog(): React.JSX.Element | null {
   const availableUpdate = useAppStore((store) => store.availableUpdate)
   const dismissUpdate = useAppStore((store) => store.dismissUpdate)
-  const downloadRef = useRef<HTMLAnchorElement>(null)
 
   if (!availableUpdate) return null
 
@@ -27,8 +25,7 @@ export function UpdateDialog(): React.JSX.Element | null {
         if (!open) dismissUpdate()
       }}
     >
-      {/* Focus Download, not the first button (Not now), so the primary action is the default. */}
-      <AlertDialogContent initialFocus={downloadRef}>
+      <AlertDialogContent>
         <AlertDialogHeader>
           <AlertDialogTitle>Plexo {availableUpdate.version} is available</AlertDialogTitle>
           <AlertDialogDescription>A new version is ready to download.</AlertDialogDescription>
@@ -39,9 +36,7 @@ export function UpdateDialog(): React.JSX.Element | null {
            * http(s) links to the OS browser instead of opening a second app window. */}
           <AlertDialogAction
             className={buttonVariants({ size: 'sm' })}
-            render={
-              <a ref={downloadRef} href={availableUpdate.url} target="_blank" rel="noreferrer" />
-            }
+            render={<a href={availableUpdate.url} target="_blank" rel="noreferrer" />}
           >
             <DownloadIcon /> Download
           </AlertDialogAction>

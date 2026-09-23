@@ -24,21 +24,6 @@ function sanitizeFileName(fileName: string): string {
   return !safe || /^\.+$/.test(safe) ? 'download' : safe
 }
 
-import { stat } from 'node:fs/promises'
-
-export async function ensureDirectory(directory: string): Promise<void> {
-  try {
-    await mkdir(directory, { recursive: true })
-  } catch (error) {
-    // Windows throws EPERM when trying to mkdir a drive root
-    if ((error as NodeJS.ErrnoException).code === 'EPERM') {
-      const stats = await stat(directory).catch(() => null)
-      if (stats?.isDirectory()) return
-    }
-    throw error
-  }
-}
-
 /**
  * Claims <directory>/<fileName>, or <directory>/<fileName> (1), (2), ... if it
  * already exists, by creating an empty file at that path.
@@ -53,8 +38,17 @@ export async function ensureDirectory(directory: string): Promise<void> {
  * The caller owns the placeholder from here: it must be removed if the
  * download doesn't end up producing a file.
  */
+export async function ensureDirectoryExists(directory: string): Promise<void> {
+  const { parse, resolve } = await import('node:path')
+  const resolvedDir = resolve(directory)
+  const resolvedRoot = resolve(parse(directory).root)
+  if (resolvedDir !== resolvedRoot) {
+    await mkdir(directory, { recursive: true })
+  }
+}
+
 export async function reserveDestinationPath(directory: string, fileName: string): Promise<string> {
-  await ensureDirectory(directory)
+  await ensureDirectoryExists(directory)
   fileName = sanitizeFileName(fileName)
   const ext = extname(fileName)
   const base = basename(fileName, ext)

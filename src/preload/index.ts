@@ -1,7 +1,7 @@
 import { contextBridge, ipcRenderer, type IpcRendererEvent } from 'electron'
 import { IpcChannels } from '../shared/ipc-channels'
 import type { IpcContract } from '../shared/ipc-contract'
-import type { AppSettings, DownloadState, InitialState } from '../shared/types'
+import type { DownloadState, NetworkPreference, ThemeSource } from '../shared/types'
 
 /** Typed wrapper around ipcRenderer.invoke — the channel name picks its args/result shape out of
  * IpcContract, so a call here that doesn't match what registerIpcHandlers (main) actually handles
@@ -15,15 +15,18 @@ function invoke<K extends keyof IpcContract>(
 
 const plexoApi = {
   platform: process.platform,
-  // Sync on purpose — see InitialState. One small read, once, before the renderer's first paint.
-  initialState: ipcRenderer.sendSync(IpcChannels.getInitialState) as InitialState,
 
   listInterfaces: () => invoke('listInterfaces'),
   pingInterfaces: () => invoke('pingInterfaces'),
   deviceBindingSupported: () => invoke('deviceBindingSupported'),
   openNetworkSettings: () => invoke('openNetworkSettings'),
-  updateSettings: (patch: AppSettings) => invoke('updateSettings', patch),
+  getNetworkPreferences: () => invoke('getNetworkPreferences'),
+  setNetworkPreference: (id: string, patch: NetworkPreference) =>
+    invoke('setNetworkPreference', id, patch),
+  getThemeSource: () => invoke('getThemeSource'),
+  setThemeSource: (source: ThemeSource) => invoke('setThemeSource', source),
   probeUrl: (url: string) => invoke('probeUrl', url),
+  getInitialPaths: () => invoke('getInitialPaths'),
   chooseDestinationFolder: (defaultPath: string) => invoke('chooseDestinationFolder', defaultPath),
   chooseSourceFile: () => invoke('chooseSourceFile'),
   readClipboardText: () => invoke('readClipboardText'),
@@ -38,6 +41,7 @@ const plexoApi = {
   cancelDownload: (downloadId: string) => invoke('cancelDownload', downloadId),
   removeDownload: (downloadId: string) => invoke('removeDownload', downloadId),
   checkForUpdate: () => invoke('checkForUpdate'),
+  dismissUpdate: (version: string) => invoke('dismissUpdate', version),
 
   onDownloadUpdated: (callback: (state: DownloadState) => void): (() => void) => {
     const listener = (_event: IpcRendererEvent, state: DownloadState): void => callback(state)
