@@ -1,5 +1,6 @@
 import type { BlockState, ChunkState } from '@shared/types'
 import { useState } from 'react'
+import { useAppStore } from '../store/useAppStore'
 import { DANGER, type NetworkVisual } from '../theme'
 import type { NetworkGroup } from '../utils/format'
 import { formatBytes, formatSpeed } from '../utils/format'
@@ -82,6 +83,9 @@ export function NetworkRow({
   blocks
 }: NetworkRowProps): React.JSX.Element {
   const [expanded, setExpanded] = useState(false)
+  const preference = useAppStore((store) => store.networkPreferences[group.interfaceId])
+  const proxy = preference?.proxy
+  const isProxyActive = Boolean(proxy?.enabled && proxy.host)
   const hasError = group.chunks.some((chunk) => chunk.status === 'error')
   const isActive = group.chunks.some((chunk) => chunk.status === 'downloading')
 
@@ -114,6 +118,16 @@ export function NetworkRow({
             interfaceKind={group.interfaceKind}
             osName={group.interfaceLabel}
           />
+          {isProxyActive && (
+            <ColorBadge
+              bg={visual.bg}
+              border={visual.border}
+              text={visual.text}
+              className="h-[15px] rounded-[3px] px-[5px] py-px font-mono text-[8.5px] font-semibold tracking-[0.06em] uppercase"
+            >
+              PROXY · {proxy!.type}
+            </ColorBadge>
+          )}
           <Button
             type="button"
             variant="outline"

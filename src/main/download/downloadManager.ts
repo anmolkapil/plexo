@@ -13,6 +13,7 @@ import type {
   DownloadState,
   DownloadStatus,
   NetworkInterfaceInfo,
+  ProxyConfig,
   StartDownloadRequest,
   StartSimulatedDownloadRequest
 } from '../../shared/types'
@@ -313,7 +314,8 @@ export class DownloadManager {
   constructor(
     private getWindow: () => BrowserWindow | null,
     private getInterfaceById: (id: string) => NetworkInterfaceInfo | undefined,
-    private refreshInterfaces: () => Promise<NetworkInterfaceInfo[]>
+    private refreshInterfaces: () => Promise<NetworkInterfaceInfo[]>,
+    private getProxyForInterface: (interfaceId: string) => ProxyConfig | undefined = () => undefined
   ) {
     this.initialization = this.restorePersistedDownloads()
   }
@@ -1118,6 +1120,7 @@ export class DownloadManager {
         rangeEnd: block.rangeEnd,
         localAddress: iface.address,
         destinationPath: attempt.file,
+        proxy: this.getProxyForInterface(iface.id),
         append: attempt.kind === 'primary' && attempt.startOffset > 0,
         signal: AbortSignal.any([self.controller.signal, attempt.abort.signal]),
         acceptedVersions: runtime.acceptedVersions,
@@ -1555,7 +1558,8 @@ export class DownloadManager {
             runtime.requestPayload.url,
             block.rangeStart,
             block.rangeStart + local.length - 1,
-            iface.address
+            iface.address,
+            this.getProxyForInterface(iface.id)
           )
           // A reply from a server still presenting an accepted label proves nothing here.
           if (compareVersion([seen], remote.version).kind !== 'same') continue

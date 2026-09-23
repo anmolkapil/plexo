@@ -1,7 +1,10 @@
 import type { ClientRequestArgs } from 'node:http'
 import { connect, isIP, Socket, type SocketConstructorOpts } from 'node:net'
 import { networkInterfaces } from 'node:os'
+import type { Duplex } from 'node:stream'
 import { connect as tlsConnect } from 'node:tls'
+import type { ProxyConfig } from '../../shared/types'
+import { createProxyConnection } from './proxyTunnel'
 
 // Linux picks a socket's outgoing interface from the routing table alone: binding to an
 // interface's IP (Node's `localAddress`) still sends the packets out the default route, where the
@@ -98,22 +101,43 @@ export function connectFrom(localAddress: string, host: string, port: number): S
 }
 
 /** Options that route an http(s) request for `target` through the interface owning
- * `localAddress`. Spread them after `port`. */
+ * `localAddress`, optionally passing through a per-network proxy. Spread them after `port`. */
 export function routeFrom(
   localAddress: string,
-  target: URL
+  target: URL,
+  proxy?: ProxyConfig
 ): Pick<
   ClientRequestArgs,
   'localAddress' | 'family' | 'createConnection' | 'port' | 'defaultPort'
 > {
-  // localAddress is always an IPv4 interface address, so the remote host has to resolve to
-  // IPv4 too, or binding fails with EINVAL when DNS hands back an IPv6 address instead.
-  if (!libc || !deviceFor(localAddress, target.hostname)) return { localAddress, family: 4 }
-
   const secure = target.protocol === 'https:'
   const defaultPort = secure ? 443 : 80
   const port = Number(target.port) || defaultPort
   const host = target.hostname
+
+  if (proxy && proxy.enabled && proxy.host && proxy.port) {
+    return {
+      port,
+      defaultPort,
+      createConnection: (
+        _options: ClientRequestArgs,
+        oncreate?: (err: Error | null, socket: Duplex) => void
+      ): Duplex | undefined => {
+        if (typeof oncreate === 'function') {
+          createProxyConnection(localAddress, host, port, secure, proxy)
+            .then((sock) => oncreate(null, sock))
+            .catch((err: Error) => oncreate(err, undefined as unknown as Duplex))
+          return undefined
+        }
+        return connectFrom(localAddress, proxy.host, proxy.port)
+      }
+    }
+  }
+
+  // localAddress is always an IPv4 interface address, so the remote host has to resolve to
+  // IPv4 too, or binding fails with EINVAL when DNS hands back an IPv6 address instead.
+  if (!libc || !deviceFor(localAddress, target.hostname)) return { localAddress, family: 4 }
+
   return {
     // Without an agent, Node can't infer the scheme's port and would write it into Host.
     port,
