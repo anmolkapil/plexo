@@ -59,10 +59,11 @@
     "vite": "^7.2.6"
   },
   "allowScripts": {
-    "electron@39.8.10": true,
+    "electron@44.4.4": true,
     "electron-winstaller@5.4.0": true,
     "esbuild@0.25.12": true,
     "esbuild@0.28.2": true,
-    "fsevents@2.3.3": true
+    "fsevents@2.3.3": true,
+    "koffi@2.16.3": true
   }
 }
