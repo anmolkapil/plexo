@@ -8,6 +8,7 @@ test.describe('Companion Server POST /download', () => {
   let port: number
   let deliveredPayloads: CompanionDownloadPayload[] = []
   let activeDownload = false
+  const extensionOrigin = 'chrome-extension://abcdefghijklmnopabcdefghijklmnop'
 
   const mockWindow = {
     isDestroyed: () => false,
@@ -29,7 +30,8 @@ test.describe('Companion Server POST /download', () => {
     server = new CompanionServer(
       () => mockWindow,
       () => activeDownload,
-      0 // Bind to an ephemeral port
+      0, // Bind to an ephemeral port
+      [extensionOrigin]
     )
     port = await server.start()
   })
@@ -192,12 +194,14 @@ test.describe('Companion Server POST /download', () => {
   })
 
   test('validates extension origin pattern', () => {
-    expect(isAllowedOrigin('chrome-extension://abcdefghijklmnopabcdefghijklmnop')).toBe(true)
-    expect(isAllowedOrigin('moz-extension://12345678-1234-1234-1234-123456789abc')).toBe(true)
-    expect(isAllowedOrigin('https://google.com')).toBe(false)
-    expect(isAllowedOrigin('http://localhost:3000')).toBe(false)
-    expect(isAllowedOrigin('null')).toBe(false)
-    expect(isAllowedOrigin('')).toBe(false)
-    expect(isAllowedOrigin(undefined)).toBe(false)
+    expect(isAllowedOrigin(extensionOrigin, [extensionOrigin])).toBe(true)
+    expect(
+      isAllowedOrigin('moz-extension://12345678-1234-1234-1234-123456789abc', [extensionOrigin])
+    ).toBe(false)
+    expect(isAllowedOrigin('https://google.com', [extensionOrigin])).toBe(false)
+    expect(isAllowedOrigin('http://localhost:3000', [extensionOrigin])).toBe(false)
+    expect(isAllowedOrigin('null', [extensionOrigin])).toBe(false)
+    expect(isAllowedOrigin('', [extensionOrigin])).toBe(false)
+    expect(isAllowedOrigin(undefined, [extensionOrigin])).toBe(false)
   })
 })

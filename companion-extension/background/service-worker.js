@@ -17,12 +17,15 @@ async function loadSettings() {
   return currentSettings
 }
 
-settingsPromise = loadSettings()
+settingsPromise = loadSettings().catch(() => {
+  currentSettings = { ...DEFAULT_SETTINGS }
+  return currentSettings
+})
 
 chrome.storage.onChanged.addListener((changes, area) => {
   if (area === 'local' && changes.plexoSettings) {
     currentSettings = { ...DEFAULT_SETTINGS, ...changes.plexoSettings.newValue }
-    updateBadge()
+    void updateBadge().catch(() => {})
   }
 })
 
@@ -44,7 +47,7 @@ async function updateBadge() {
 
 // Initial setup
 chrome.runtime.onInstalled.addListener(() => {
-  void loadSettings()
+  void loadSettings().catch(() => {})
 
   chrome.contextMenus.removeAll(() => {
     chrome.contextMenus.create({
@@ -68,7 +71,7 @@ chrome.runtime.onInstalled.addListener(() => {
 })
 
 chrome.runtime.onStartup.addListener(() => {
-  void loadSettings()
+  void loadSettings().catch(() => {})
 })
 
 // Handle Context Menu clicks
@@ -136,13 +139,9 @@ chrome.downloads.onCreated.addListener(async (downloadItem) => {
   if (result.success) {
     // Successfully transferred to Plexo: cancel the native browser download
     chrome.downloads.cancel(downloadItem.id, () => {
-      if (chrome.runtime.lastError) {
-        // Download might have completed or cancelled already
-      }
-      chrome.downloads.erase({ id: downloadItem.id }, () => {
-        if (chrome.runtime.lastError) {
-          // Ignore
-        }
+      chrome.downloads.search({ id: downloadItem.id }, (items) => {
+        if (chrome.runtime.lastError || items.length === 0 || items[0].state === 'complete') return
+        chrome.downloads.erase({ id: downloadItem.id }, () => {})
       })
     })
   } else {
@@ -155,39 +154,51 @@ chrome.downloads.onCreated.addListener(async (downloadItem) => {
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   if (message.action === 'checkHealth') {
     void (async () => {
-      const settings = await (settingsPromise || loadSettings())
-      const res = await checkPlexoHealth(message.port || settings.port)
-      sendResponse(res)
+      try {
+        const settings = await (settingsPromise || loadSettings())
+        const res = await checkPlexoHealth(message.port || settings.port)
+        sendResponse(res)
+      } catch (error) {
+        sendResponse({ online: false, error: error instanceof Error ? error.message : 'Could not load settings' })
+      }
     })()
     return true
   }
 
   if (message.action === 'sendDownload') {
     void (async () => {
-      const settings = await (settingsPromise || loadSettings())
-      let cookieHeader = ''
       try {
-        const cookies = await chrome.cookies.getAll({ url: message.url })
-        cookieHeader = formatCookies(cookies)
-      } catch {
-        // ignore
-      }
+        const settings = await (settingsPromise || loadSettings())
+        let cookieHeader = ''
+        try {
+          const cookies = await chrome.cookies.getAll({ url: message.url })
+          cookieHeader = formatCookies(cookies)
+        } catch {
+          // ignore
+        }
 
-      const payload = {
-        url: message.url,
-        cookies: cookieHeader || undefined,
-        userAgent: navigator.userAgent
+        const payload = {
+          url: message.url,
+          cookies: cookieHeader || undefined,
+          userAgent: navigator.userAgent
+        }
+        const res = await sendDownloadToPlexo(payload, settings.port)
+        sendResponse(res)
+      } catch (error) {
+        sendResponse({ success: false, error: error instanceof Error ? error.message : 'Could not load settings' })
       }
-      const res = await sendDownloadToPlexo(payload, settings.port)
-      sendResponse(res)
     })()
     return true
   }
 
   if (message.action === 'getSettings') {
     void (async () => {
-      const settings = await (settingsPromise || loadSettings())
-      sendResponse(settings)
+      try {
+        const settings = await (settingsPromise || loadSettings())
+        sendResponse(settings)
+      } catch (error) {
+        sendResponse({ ...DEFAULT_SETTINGS, error: error instanceof Error ? error.message : 'Could not load settings' })
+      }
     })()
     return true
   }

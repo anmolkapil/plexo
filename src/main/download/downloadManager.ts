@@ -110,6 +110,7 @@ interface SpeedSample {
 interface DownloadRuntime {
   state: DownloadState
   requestPayload: StartDownloadRequest
+  credentialsRequiredAfterRestart: boolean
   activeInterfaces: NetworkInterfaceInfo[]
   chunkRuntimes: Map<number, ChunkRuntime>
   tempDir: string
@@ -141,6 +142,7 @@ interface PersistedDownload {
   state: DownloadState
   /** Request options persisted to disk. Custom headers (cookies, auth) are kept in memory only and never written to disk. */
   requestPayload: Omit<StartDownloadRequest, 'headers'>
+  credentialsRequiredAfterRestart?: boolean
   activeInterfaces: NetworkInterfaceInfo[]
 }
 
@@ -382,6 +384,7 @@ export class DownloadManager {
           restored.push({
             state,
             requestPayload: persisted.requestPayload,
+            credentialsRequiredAfterRestart: persisted.credentialsRequiredAfterRestart ?? false,
             activeInterfaces: persisted.activeInterfaces,
             chunkRuntimes: new Map(),
             tempDir: join(this.downloadDir(id), 'parts'),
@@ -606,6 +609,7 @@ export class DownloadManager {
     const runtime: DownloadRuntime = {
       state,
       requestPayload,
+      credentialsRequiredAfterRestart: false,
       activeInterfaces,
       chunkRuntimes: new Map(),
       tempDir,
@@ -693,6 +697,14 @@ export class DownloadManager {
       }
     }
     if (runtime.state.status !== 'paused' && runtime.state.status !== 'error') return
+
+    if (runtime.credentialsRequiredAfterRestart) {
+      runtime.state.status = 'error'
+      runtime.state.error =
+        'This download used Cookie or Authorization headers and cannot resume after restarting Plexo.'
+      this.pushUpdate(runtime)
+      return
+    }
 
     const selectedIds = new Set(runtime.requestPayload.interfaceIds)
     runtime.activeInterfaces = availableInterfaces.filter((iface) => selectedIds.has(iface.id))
@@ -1760,6 +1772,11 @@ export class DownloadManager {
           savedAt: Date.now(),
           state: structuredClone(runtime.state),
           requestPayload: persistedPayload,
+          credentialsRequiredAfterRestart:
+            runtime.credentialsRequiredAfterRestart ||
+            Object.keys(runtime.requestPayload.headers ?? {}).some((name) =>
+              /^(authorization|cookie)$/i.test(name)
+            ),
           activeInterfaces: runtime.activeInterfaces
         }
         await mkdir(dir, { recursive: true })
