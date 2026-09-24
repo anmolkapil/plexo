@@ -27,7 +27,8 @@ export async function sendDownloadToPlexo(payload, port = 41829) {
     const res = await fetch(`http://127.0.0.1:${port}/download`, {
       method: 'POST',
       headers: {
-        'Content-Type': 'application/json'
+        'Content-Type': 'application/json',
+        'X-Plexo-Companion': '1'
       },
       body: JSON.stringify(payload),
       signal: controller.signal

@@ -51,14 +51,18 @@ export function shouldCaptureDownload(downloadItem, settings) {
   // Only intercept HTTP and HTTPS downloads
   if (!/^https?:/i.test(url)) return false
 
-  // Check domain exclusions
+  // Check domain and path exclusions
   try {
     const parsed = new URL(url)
     const hostname = parsed.hostname.toLowerCase()
+    const fullHostAndPath = `${hostname}${parsed.pathname}`.toLowerCase()
     for (const domain of settings.excludedDomains || []) {
-      const cleanDomain = domain.trim().toLowerCase()
-      if (cleanDomain && (hostname === cleanDomain || hostname.endsWith(`.${cleanDomain}`))) {
-        return false
+      const clean = domain.trim().toLowerCase().replace(/^https?:\/\//, '').replace(/\/$/, '')
+      if (!clean) continue
+      if (clean.includes('/')) {
+        if (fullHostAndPath.startsWith(clean)) return false
+      } else {
+        if (hostname === clean || hostname.endsWith(`.${clean}`)) return false
       }
     }
   } catch {

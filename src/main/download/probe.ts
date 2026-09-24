@@ -33,7 +33,7 @@ function requestOneByte(url: URL, customHeaders?: Record<string, string>): Promi
         hostname: url.hostname,
         port: url.port || undefined,
         path: `${url.pathname}${url.search}`,
-        headers: { 'User-Agent': USER_AGENT, Range: 'bytes=0-0', ...(customHeaders ?? {}) }
+        headers: { 'User-Agent': USER_AGENT, ...(customHeaders ?? {}), Range: 'bytes=0-0' }
       },
       (res) => {
         res.destroy()

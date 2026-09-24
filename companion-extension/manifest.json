@@ -25,11 +25,12 @@
     "downloads",
     "cookies",
     "contextMenus",
-    "storage",
-    "notifications"
+    "storage"
   ],
+  "minimum_chrome_version": "109",
   "host_permissions": [
     "<all_urls>",
-    "http://127.0.0.1:41829/*"
+    "http://127.0.0.1/*",
+    "http://localhost/*"
   ]
 }

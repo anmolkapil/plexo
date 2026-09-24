@@ -2,10 +2,6 @@ appId: com.plexo.app
 productName: Plexo
 directories:
   buildResources: build
-protocols:
-  - name: Plexo Protocol
-    schemes:
-      - plexo
 files:
   - '!**/.vscode/*'
   - '!src/*'

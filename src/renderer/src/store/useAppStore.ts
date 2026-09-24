@@ -258,6 +258,11 @@ export const useAppStore = create<AppStore>((set, get) => ({
       return
     }
 
+    if (current && (current.status === 'completed' || current.status === 'cancelled')) {
+      void window.plexo.removeDownload(current.id)
+      set({ currentDownload: null })
+    }
+
     set({
       draftUrl: payload.url,
       draftHeaders: payload.headers,

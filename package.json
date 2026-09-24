@@ -15,7 +15,6 @@
     "start": "electron-vite preview",
     "dev": "electron-vite dev",
     "build": "npm run typecheck && electron-vite build",
-    "build:extension": "node scripts/pack-extension.mjs",
     "pack:extension": "node scripts/pack-extension.mjs",
     "postinstall": "electron-builder install-app-deps",
     "build:unpack": "npm run build && electron-builder --dir",
@@ -65,7 +64,6 @@
     "electron-winstaller@5.4.0": true,
     "esbuild@0.25.12": true,
     "esbuild@0.28.2": true,
-    "fsevents@2.3.3": true,
-    "koffi@2.16.3": true
+    "fsevents@2.3.3": true
   }
 }

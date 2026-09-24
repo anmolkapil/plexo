@@ -6,14 +6,31 @@ import type { CompanionDownloadPayload } from '../../shared/types'
 export const DEFAULT_COMPANION_PORT = 41829
 const MAX_BODY_BYTES = 1024 * 1024 // 1 MB
 
-function setCorsHeaders(res: ServerResponse): void {
-  res.setHeader('Access-Control-Allow-Origin', '*')
-  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS')
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Requested-With')
+export function isAllowedOrigin(origin?: string): boolean {
+  if (!origin) return false
+  return (
+    /^chrome-extension:\/\/[a-z0-9]+$/i.test(origin) ||
+    /^moz-extension:\/\/[a-z0-9-]+$/i.test(origin)
+  )
 }
 
-function sendJson(res: ServerResponse, statusCode: number, data: unknown): void {
-  setCorsHeaders(res)
+function setCorsHeaders(req: IncomingMessage, res: ServerResponse): void {
+  const origin = req.headers.origin
+  if (origin && isAllowedOrigin(origin)) {
+    res.setHeader('Access-Control-Allow-Origin', origin)
+    res.setHeader('Vary', 'Origin')
+    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS')
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, X-Plexo-Companion')
+  }
+}
+
+function sendJson(
+  req: IncomingMessage,
+  res: ServerResponse,
+  statusCode: number,
+  data: unknown
+): void {
+  setCorsHeaders(req, res)
   res.writeHead(statusCode, { 'Content-Type': 'application/json; charset=utf-8' })
   res.end(JSON.stringify(data))
 }
@@ -51,9 +68,24 @@ export class CompanionServer {
   start(): Promise<number> {
     return new Promise((resolve, reject) => {
       const server = createServer(async (req, res) => {
-        setCorsHeaders(res)
+        const origin = req.headers.origin
+        if (origin && !isAllowedOrigin(origin)) {
+          sendJson(req, res, 403, { error: 'Forbidden: Untrusted origin' })
+          return
+        }
+
+        if (req.headers['sec-fetch-site'] === 'cross-site' && !isAllowedOrigin(origin)) {
+          sendJson(req, res, 403, { error: 'Forbidden: Untrusted cross-site request' })
+          return
+        }
+
+        setCorsHeaders(req, res)
 
         if (req.method === 'OPTIONS') {
+          if (!isAllowedOrigin(origin)) {
+            sendJson(req, res, 403, { error: 'Forbidden: Untrusted origin' })
+            return
+          }
           res.writeHead(204)
           res.end()
           return
@@ -62,19 +94,30 @@ export class CompanionServer {
         const host = req.headers.host || ''
         const isLocalHost = /^127\.0\.0\.1(:\d+)?$/.test(host) || /^localhost(:\d+)?$/.test(host)
         if (!isLocalHost) {
-          sendJson(res, 403, { error: 'Forbidden: Invalid Host header' })
+          sendJson(req, res, 403, { error: 'Forbidden: Invalid Host header' })
           return
         }
 
         const url = new URL(req.url || '/', `http://${host || '127.0.0.1'}`)
 
         if (req.method === 'GET' && (url.pathname === '/health' || url.pathname === '/status')) {
-          sendJson(res, 200, {
+          sendJson(req, res, 200, {
             status: 'ok',
             app: 'Plexo',
-            version: app.getVersion(),
+            version: app?.getVersion ? app.getVersion() : '1.0.0',
             hasActiveDownload: this.hasActiveDownload()
           })
+          return
+        }
+
+        if (req.method === 'POST' && url.pathname === '/focus') {
+          const window = this.getWindow()
+          if (window && !window.isDestroyed()) {
+            if (window.isMinimized()) window.restore()
+            if (!window.isVisible()) window.show()
+            window.focus()
+          }
+          sendJson(req, res, 200, { success: true })
           return
         }
 
@@ -84,7 +127,7 @@ export class CompanionServer {
             const payload = (rawBody ? JSON.parse(rawBody) : {}) as CompanionDownloadPayload
 
             if (!payload.url || !/^https?:/i.test(payload.url.trim())) {
-              sendJson(res, 400, {
+              sendJson(req, res, 400, {
                 error: 'Invalid URL. Only HTTP and HTTPS URLs are supported.'
               })
               return
@@ -113,25 +156,27 @@ export class CompanionServer {
 
             this.deliverPayload(cleanPayload)
 
-            sendJson(res, 200, {
+            sendJson(req, res, 200, {
               success: true,
               message: 'Download received by Plexo',
               hasActiveDownload: this.hasActiveDownload()
             })
           } catch (error) {
-            sendJson(res, 400, {
+            sendJson(req, res, 400, {
               error: error instanceof Error ? error.message : 'Malformed JSON request body'
             })
           }
           return
         }
 
-        sendJson(res, 404, { error: 'Endpoint not found' })
+        sendJson(req, res, 404, { error: 'Endpoint not found' })
       })
 
       server.on('error', (err: NodeJS.ErrnoException) => {
         if (err.code === 'EADDRINUSE') {
-          console.warn(`[Plexo Companion] Port ${this.port} is already in use. Companion server disabled.`)
+          console.warn(
+            `[Plexo Companion] Port ${this.port} is already in use. Companion server disabled.`
+          )
           resolve(0)
         } else {
           reject(err)
@@ -139,10 +184,12 @@ export class CompanionServer {
       })
 
       server.listen(this.port, '127.0.0.1', () => {
-        this.listeningPort = this.port
+        const address = server.address()
+        const actualPort = typeof address === 'object' && address ? address.port : this.port
+        this.listeningPort = actualPort
         this.server = server
-        console.log(`[Plexo Companion] Listening for browser extension on 127.0.0.1:${this.port}`)
-        resolve(this.port)
+        console.log(`[Plexo Companion] Listening for browser extension on 127.0.0.1:${actualPort}`)
+        resolve(actualPort)
       })
     })
   }

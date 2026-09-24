@@ -71,9 +71,23 @@ linkInput.addEventListener('keydown', (e) => {
   }
 })
 
-openAppBtn.addEventListener('click', () => {
-  // Launch Plexo via custom protocol
-  window.location.href = 'plexo://open'
+openAppBtn.addEventListener('click', async () => {
+  try {
+    const res = await fetch(`http://127.0.0.1:${currentSettings.port}/focus`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Plexo-Companion': '1'
+      }
+    })
+    if (res.ok) {
+      window.close()
+      return
+    }
+  } catch {
+    // offline
+  }
+  showMessage('Plexo is offline. Start the Plexo desktop app to connect.', 'error')
 })
 
 optionsBtn.addEventListener('click', () => {

@@ -2,6 +2,7 @@ import { checkPlexoHealth, formatCookies, sendDownloadToPlexo } from './client.j
 import { DEFAULT_SETTINGS, shouldCaptureDownload } from './rules.js'
 
 let currentSettings = { ...DEFAULT_SETTINGS }
+let settingsPromise = null
 const processedDownloadIds = new Set()
 
 async function loadSettings() {
@@ -15,6 +16,8 @@ async function loadSettings() {
   updateBadge()
   return currentSettings
 }
+
+settingsPromise = loadSettings()
 
 chrome.storage.onChanged.addListener((changes, area) => {
   if (area === 'local' && changes.plexoSettings) {
@@ -91,13 +94,7 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
 
   const result = await sendDownloadToPlexo(payload, settings.port)
   if (!result.success) {
-    // Plexo desktop might not be running: attempt to open deep link as fallback
-    const fallbackUrl = `plexo://download?url=${encodeURIComponent(targetUrl)}&referer=${encodeURIComponent(payload.referer || '')}`
-    chrome.tabs.create({ url: fallbackUrl }, (newTab) => {
-      setTimeout(() => {
-        if (newTab?.id) chrome.tabs.remove(newTab.id)
-      }, 1000)
-    })
+    updateBadge()
   }
 })
 
@@ -139,7 +136,14 @@ chrome.downloads.onCreated.addListener(async (downloadItem) => {
   if (result.success) {
     // Successfully transferred to Plexo: cancel the native browser download
     chrome.downloads.cancel(downloadItem.id, () => {
-      chrome.downloads.erase({ id: downloadItem.id })
+      if (chrome.runtime.lastError) {
+        // Download might have completed or cancelled already
+      }
+      chrome.downloads.erase({ id: downloadItem.id }, () => {
+        if (chrome.runtime.lastError) {
+          // Ignore
+        }
+      })
     })
   } else {
     // Plexo is offline or unavailable: let the browser download proceed normally!
@@ -150,12 +154,17 @@ chrome.downloads.onCreated.addListener(async (downloadItem) => {
 // Handle messages from popup / options
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   if (message.action === 'checkHealth') {
-    void checkPlexoHealth(message.port || currentSettings.port).then((res) => sendResponse(res))
+    void (async () => {
+      const settings = await (settingsPromise || loadSettings())
+      const res = await checkPlexoHealth(message.port || settings.port)
+      sendResponse(res)
+    })()
     return true
   }
 
   if (message.action === 'sendDownload') {
     void (async () => {
+      const settings = await (settingsPromise || loadSettings())
       let cookieHeader = ''
       try {
         const cookies = await chrome.cookies.getAll({ url: message.url })
@@ -169,14 +178,17 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
         cookies: cookieHeader || undefined,
         userAgent: navigator.userAgent
       }
-      const res = await sendDownloadToPlexo(payload, currentSettings.port)
+      const res = await sendDownloadToPlexo(payload, settings.port)
       sendResponse(res)
     })()
     return true
   }
 
   if (message.action === 'getSettings') {
-    sendResponse(currentSettings)
-    return false
+    void (async () => {
+      const settings = await (settingsPromise || loadSettings())
+      sendResponse(settings)
+    })()
+    return true
   }
 })

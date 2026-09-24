@@ -139,7 +139,8 @@ interface PersistedDownload {
   version: 1
   savedAt: number
   state: DownloadState
-  requestPayload: StartDownloadRequest
+  /** Request options persisted to disk. Custom headers (cookies, auth) are kept in memory only and never written to disk. */
+  requestPayload: Omit<StartDownloadRequest, 'headers'>
   activeInterfaces: NetworkInterfaceInfo[]
 }
 
@@ -1750,11 +1751,15 @@ export class DownloadManager {
         const dir = this.downloadDir(runtime.state.id)
         const path = this.manifestPath(runtime.state.id)
         const temporaryPath = `${path}.tmp`
+        const persistedPayload: Omit<StartDownloadRequest, 'headers'> = {
+          ...runtime.requestPayload
+        }
+        delete (persistedPayload as { headers?: unknown }).headers
         const persisted: PersistedDownload = {
           version: 1,
           savedAt: Date.now(),
           state: structuredClone(runtime.state),
-          requestPayload: runtime.requestPayload,
+          requestPayload: persistedPayload,
           activeInterfaces: runtime.activeInterfaces
         }
         await mkdir(dir, { recursive: true })

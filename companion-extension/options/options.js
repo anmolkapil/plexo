@@ -61,14 +61,21 @@ function renderChips() {
   for (const ext of activeSettings.extensions) {
     const chip = document.createElement('div')
     chip.className = 'chip'
-    chip.innerHTML = `
-      <span>.${ext}</span>
-      <button class="chip-remove" title="Remove">&times;</button>
-    `
-    chip.querySelector('.chip-remove').addEventListener('click', () => {
+
+    const span = document.createElement('span')
+    span.textContent = `.${ext}`
+
+    const removeBtn = document.createElement('button')
+    removeBtn.className = 'chip-remove'
+    removeBtn.title = 'Remove'
+    removeBtn.textContent = '×'
+    removeBtn.addEventListener('click', () => {
       activeSettings.extensions = activeSettings.extensions.filter((e) => e !== ext)
       renderChips()
     })
+
+    chip.appendChild(span)
+    chip.appendChild(removeBtn)
     chipsContainer.appendChild(chip)
   }
 }
@@ -79,8 +86,10 @@ function addExtension() {
 
   const parts = raw.split(/[\s,]+/).filter(Boolean)
   for (const part of parts) {
-    if (!activeSettings.extensions.includes(part)) {
-      activeSettings.extensions.push(part)
+    // Only allow alphanumeric characters and dot
+    const clean = part.replace(/[^a-z0-9.]/g, '')
+    if (clean && !activeSettings.extensions.includes(clean)) {
+      activeSettings.extensions.push(clean)
     }
   }
   newExtInput.value = ''
