@@ -837,20 +837,34 @@
         .changes {
           flex: 1;
           min-height: 0;
-          overflow-y: auto;
-          padding-right: 8px;
+          /* Always show the scrollbar so the list reads as scrollable. A styled
+             ::-webkit-scrollbar stays visible in Chrome and Safari, even with macOS
+             overlay scrollbars, but only without scrollbar-width/-color, which are
+             Firefox's way. The fade spares the scrollbar's strip. */
+          overflow-y: scroll;
+          padding-right: 12px;
           margin-right: -8px;
           padding-bottom: 18px;
-          scrollbar-width: thin;
-          scrollbar-color: #33383c transparent;
-          mask-image: linear-gradient(to bottom, #000 calc(100% - 36px), transparent);
+          mask-image:
+            linear-gradient(to bottom, #000 calc(100% - 36px), transparent),
+            linear-gradient(#000, #000) right / 8px 100% no-repeat;
         }
         .changes::-webkit-scrollbar {
           width: 6px;
         }
+        .changes::-webkit-scrollbar-track {
+          border-radius: 3px;
+          background: #23262a;
+        }
         .changes::-webkit-scrollbar-thumb {
           border-radius: 3px;
-          background: #33383c;
+          background: #5d6165;
+        }
+        @supports (-moz-appearance: none) {
+          .changes {
+            scrollbar-width: thin;
+            scrollbar-color: #5d6165 #23262a;
+          }
         }
       }
       .changes li {
