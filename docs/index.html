@@ -42,7 +42,7 @@
         padding: 22px 26px 80px;
         display: flex;
         flex-direction: column;
-        gap: 72px;
+        gap: 56px;
       }
       header {
         display: flex;
@@ -233,7 +233,7 @@
       }
       @media (max-width: 700px) {
         .wrap {
-          gap: 44px;
+          gap: 32px;
           padding-top: 18px;
         }
         .top {
@@ -347,6 +347,11 @@
       .asset-row .dl:hover {
         background: #2f3437;
         color: #f5f2ed;
+      }
+      /* The pre-release line after the downloads sits with them, not as its own section. */
+      .groups > .asset-note:last-child {
+        margin-top: -14px;
+        padding: 0 4px;
       }
       .asset-note {
         padding: 14px 20px;
