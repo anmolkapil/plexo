@@ -261,6 +261,7 @@ test.describe('which download is offered', () => {
     for (const name of NOISE) expect(text).not.toContain(name)
     expect(text).toContain('[Apple silicon]')
     expect(text).toContain('https://anmolkapil.github.io/plexo/#downloads')
+    expect(text).toContain('`xattr -dr com.apple.quarantine /Applications/Plexo.app`')
   })
 })
 
@@ -341,14 +342,23 @@ test.describe('the download page', () => {
   test('each OS explains its first launch, with commands set apart as code', async () => {
     const { page, close } = await openPage(BROWSERS.chromeWindows)
     try {
-      const notes = page.locator('.os-group').nth(0).locator('.os-notes')
-      await expect(notes).toContainText('Open Anyway')
-      await expect(notes.locator('code').first()).toHaveText(
+      // The unsigned-app warning and the way past it, under the button for this visitor's OS...
+      const hero = page.locator('#first-launch-slot .first-launch')
+      await expect(hero).toHaveCount(1)
+      await expect(hero.locator('.fl-warning')).toHaveText('Windows protected your PC')
+      await expect(hero).toContainText('Run anyway')
+
+      // ...and with each OS's downloads.
+      const mac = page.locator('.os-group').nth(0).locator('.first-launch')
+      await expect(mac.locator('.fl-warning')).toContainText('is damaged and can’t be opened')
+      await expect(mac.locator('.fl-command code')).toHaveText(
         'xattr -dr com.apple.quarantine /Applications/Plexo.app'
       )
-      await expect(page.locator('.os-group').nth(1).locator('.os-notes')).toContainText(
+      await expect(mac).toContainText('Open Anyway')
+      await expect(page.locator('.os-group').nth(1).locator('.first-launch')).toContainText(
         'Run anyway'
       )
+      await expect(page.locator('.os-group').nth(2).locator('.first-launch')).toHaveCount(0)
       await expect(page.locator('.os-group').nth(2).locator('.os-notes')).toContainText(
         'libfuse2t64'
       )

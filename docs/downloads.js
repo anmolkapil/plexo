@@ -13,17 +13,41 @@
   var OS_ORDER = ['mac', 'win', 'linux']
   var OS_LABEL = { mac: 'macOS', win: 'Windows', linux: 'Linux' }
 
+  // What an unsigned build makes the OS say on first launch, and the way past it. Shown under the
+  // download button and above that OS's downloads. `code` in backticks, **button names** in stars.
+  var MAC_COMMAND = 'xattr -dr com.apple.quarantine /Applications/Plexo.app'
+  var FIRST_LAUNCH = {
+    mac: {
+      warning: '“Plexo” is damaged and can’t be opened. You should move it to the Trash.',
+      why: 'Plexo isn’t damaged. It isn’t signed with an Apple Developer certificate yet, so macOS blocks it until you allow it once.',
+      steps: [
+        { text: 'Open the .dmg and drag **Plexo** into **Applications**.' },
+        { text: 'Open **Terminal** and run this once:', command: MAC_COMMAND },
+        { text: 'Open Plexo again. It opens normally from now on.' }
+      ],
+      aside:
+        'If macOS says it can’t verify Plexo instead, open **System Settings → Privacy & Security** and choose **Open Anyway**.'
+    },
+    win: {
+      warning: 'Windows protected your PC',
+      why: 'The installer isn’t code-signed yet, so Microsoft SmartScreen doesn’t recognise it. It’s safe to run.',
+      steps: [
+        { text: 'If your browser says the file isn’t commonly downloaded, choose **Keep**.' },
+        {
+          text: 'Open the installer. On the blue “Windows protected your PC” screen, click **More info**.'
+        },
+        { text: 'Click **Run anyway**.' }
+      ],
+      aside: null
+    }
+  }
+
   // Shown under each OS's downloads. `code` spans are wrapped in backticks.
   var NOTES = {
     mac: [
-      'Plexo isn’t signed with an Apple Developer certificate yet, so macOS asks you to confirm the first launch: open the app once, then go to System Settings → Privacy & Security and choose Open Anyway.',
-      'If macOS says the app is damaged or can’t be opened, run `xattr -dr com.apple.quarantine /Applications/Plexo.app` in Terminal and open it again.',
       'Not sure which Mac you have? Apple menu → About This Mac: “Chip: Apple M…” is Apple silicon, “Processor: Intel…” is Intel.'
     ],
-    win: [
-      'The installer isn’t code-signed yet, so Windows may say “Windows protected your PC”. Choose More info, then Run anyway.',
-      'One installer covers both regular (x64) and ARM PCs.'
-    ],
+    win: ['One installer covers both regular (x64) and ARM PCs.'],
     linux: [
       'AppImage: `chmod +x plexo-*.AppImage`, then run it. Recent Ubuntu needs FUSE 2 first: `sudo apt install libfuse2t64` (older releases call it `libfuse2`) — or use the .deb, which needs nothing extra.',
       '.deb: `sudo apt install ./plexo_*.deb`.',
@@ -223,7 +247,13 @@
           a.recommended = a === primary
           return a
         })
-      return { os: os, label: OS_LABEL[os], rows: rows, notes: NOTES[os] }
+      return {
+        os: os,
+        label: OS_LABEL[os],
+        rows: rows,
+        notes: NOTES[os],
+        firstLaunch: FIRST_LAUNCH[os] || null
+      }
     }).filter(function (g) {
       return g.rows.length > 0
     })
@@ -241,6 +271,8 @@
       alternates: chosen ? chosen.alternates : [],
       hint: chosen ? chosen.hint : null,
       desktop: !!desktop,
+      // Only when there is a download for this visitor to open.
+      firstLaunch: primary ? FIRST_LAUNCH[env.os] || null : null,
       empty: assets.length === 0
     }
   }
@@ -267,10 +299,14 @@
       out.push('')
     })
     out.push(
-      'Not signed yet, so macOS and Windows ask you to confirm the first launch — how, and what ' +
-        'Linux needs: ' +
-        siteUrl +
-        '#downloads'
+      '**macOS says Plexo is damaged?** It isn’t: Plexo isn’t signed yet. Move it to Applications, ' +
+        'run `' +
+        MAC_COMMAND +
+        '` in Terminal, and open it again.',
+      '',
+      '**Windows protected your PC?** Click More info, then Run anyway.',
+      '',
+      'Step by step, and what Linux needs: ' + siteUrl + '#downloads'
     )
     return out.join('\n')
   }
