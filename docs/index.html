@@ -123,20 +123,6 @@
         max-width: 600px;
         text-wrap: pretty;
       }
-      .use-cases {
-        margin: 0;
-        padding: 0;
-        list-style: none;
-        display: flex;
-        flex-direction: column;
-        gap: 4px;
-      }
-      .use-cases li {
-        font:
-          400 15px/1.6 Manrope,
-          sans-serif;
-        color: #c7cace;
-      }
       .cta-row {
         display: flex;
         align-items: center;
@@ -174,13 +160,6 @@
           monospace;
         color: #5a4413;
         overflow-wrap: anywhere;
-      }
-      .release-line {
-        font:
-          400 11.5px/1.6 'Roboto Mono',
-          monospace;
-        color: #6f7479;
-        text-wrap: pretty;
       }
       .carousel {
         position: relative;
@@ -355,29 +334,6 @@
           monospace;
         color: #6f7479;
       }
-      .cta-alt {
-        display: flex;
-        flex-direction: column;
-        gap: 5px;
-        font:
-          500 12.5px/1.5 Manrope,
-          sans-serif;
-        color: #a9adb2;
-      }
-      .cta-alt a {
-        color: #d8a44c;
-        text-decoration: underline;
-        text-underline-offset: 3px;
-      }
-      .cta-alt a:hover {
-        color: #e8bb6d;
-      }
-      .cta-alt .hint {
-        font:
-          400 11.5px/1.5 'Roboto Mono',
-          monospace;
-        color: #6f7479;
-      }
       .groups {
         display: flex;
         flex-direction: column;
@@ -395,10 +351,6 @@
           sans-serif;
         letter-spacing: -0.015em;
         color: #f5f2ed;
-      }
-      /* Guides slotted under an OS group sit below its heading, not beside it. */
-      .groups .guide .title {
-        font-size: 16px;
       }
       .asset-table .asset-row:last-child {
         border-bottom: 0;
@@ -541,6 +493,253 @@
       .os-group .first-launch {
         margin-top: 4px;
       }
+      .use-cases {
+        margin: 0;
+        padding: 0;
+        list-style: none;
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+      }
+      .use-cases li {
+        padding: 7px 13px;
+        border-radius: 999px;
+        border: 1px solid #2b2f33;
+        background: #1b1e20;
+        font:
+          500 13px/1.3 Manrope,
+          sans-serif;
+        color: #c7cace;
+      }
+      .cta-meta {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: baseline;
+        gap: 6px 18px;
+        margin-top: -10px;
+        font:
+          500 12.5px/1.5 Manrope,
+          sans-serif;
+      }
+      .cta-meta #release-line {
+        font:
+          400 11.5px/1.5 'Roboto Mono',
+          monospace;
+        color: #6f7479;
+      }
+      .cta-alt {
+        display: contents;
+      }
+      .fl-details {
+        border-radius: 12px;
+        border: 1px solid #4a3a22;
+        background: #1f1b15;
+        transition:
+          border-color 0.3s,
+          box-shadow 0.3s;
+      }
+      .fl-details > summary {
+        display: flex;
+        align-items: flex-start;
+        gap: 10px;
+        padding: 12px 16px;
+        list-style: none;
+        cursor: pointer;
+        font:
+          500 13.5px/1.5 Manrope,
+          sans-serif;
+        color: #c7cace;
+      }
+      .fl-details > summary::-webkit-details-marker {
+        display: none;
+      }
+      .fl-details > summary svg {
+        flex-shrink: 0;
+        margin-top: 1px;
+      }
+      .fl-details > summary .how {
+        margin-left: auto;
+        padding-left: 12px;
+        font-weight: 700;
+        color: #d8a44c;
+        white-space: nowrap;
+      }
+      .fl-details[open] > summary .how {
+        color: #8d9196;
+      }
+      .fl-details > .first-launch {
+        border: 0;
+        border-top: 1px solid #3a2f1f;
+        border-radius: 0 0 12px 12px;
+        background: none;
+      }
+      /* The summary line already carries the icon. */
+      .fl-details > .first-launch .fl-warning svg {
+        display: none;
+      }
+      .fl-details.downloading {
+        border-color: #d8a44c;
+        box-shadow: 0 0 0 4px rgba(216, 164, 76, 0.14);
+      }
+      .fl-details.downloading > summary {
+        font-weight: 700;
+        color: #f5f2ed;
+      }
+      .whats-new-head {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        flex-wrap: wrap;
+        padding: 0;
+        border: 0;
+        background: none;
+        text-align: left;
+        cursor: default;
+      }
+      .whats-new-head .count {
+        display: none;
+      }
+      @media (max-width: 960px) {
+        .whats-new-head {
+          cursor: pointer;
+        }
+        .whats-new-head .count {
+          display: block;
+          margin-left: auto;
+          font:
+            600 12.5px/1 Manrope,
+            sans-serif;
+          color: #d8a44c;
+          white-space: nowrap;
+        }
+        .whats-new:not(.open) .ver,
+        .whats-new:not(.open) .changes,
+        .whats-new:not(.open) .older {
+          display: none;
+        }
+      }
+      .os-tabs {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+      }
+      .os-tabs button {
+        padding: 9px 16px;
+        border-radius: 999px;
+        border: 1px solid #33383c;
+        background: #1b1e20;
+        color: #c7cace;
+        font:
+          600 13.5px/1.2 Manrope,
+          sans-serif;
+        cursor: pointer;
+      }
+      .os-tabs button:hover {
+        background: #262a2d;
+        color: #f5f2ed;
+      }
+      .os-tabs button[aria-selected='true'] {
+        border-color: #d8a44c;
+        background: #d8a44c;
+        color: #1b1405;
+      }
+      .os-tabs .yours {
+        margin-left: 6px;
+        font:
+          500 10px/1 'Roboto Mono',
+          monospace;
+        letter-spacing: 0.06em;
+        opacity: 0.75;
+      }
+      /* With tabs, each tab already names its OS. */
+      .groups.tabbed .os-group h3 {
+        position: absolute;
+        width: 1px;
+        height: 1px;
+        overflow: hidden;
+        clip: rect(0 0 0 0);
+        white-space: nowrap;
+      }
+      .guides {
+        display: flex;
+        flex-direction: column;
+        gap: 16px;
+      }
+      .guide-list {
+        border-radius: 13px;
+        border: 1px solid #2b2f33;
+        background: #1b1e20;
+        overflow: hidden;
+      }
+      .guide-item + .guide-item {
+        border-top: 1px solid #23262a;
+      }
+      .guide-item > summary {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) auto;
+        column-gap: 16px;
+        row-gap: 3px;
+        padding: 16px 20px;
+        list-style: none;
+        cursor: pointer;
+      }
+      .guide-item > summary::-webkit-details-marker {
+        display: none;
+      }
+      .guide-item > summary::after {
+        content: '+';
+        grid-column: 2;
+        grid-row: 1 / span 2;
+        align-self: center;
+        font:
+          400 20px/1 Manrope,
+          sans-serif;
+        color: #8d9196;
+      }
+      .guide-item[open] > summary::after {
+        content: '−';
+      }
+      .guide-item > summary:hover {
+        background: #202428;
+      }
+      .g-title {
+        font:
+          600 15px/1.35 Manrope,
+          sans-serif;
+        color: #f5f2ed;
+      }
+      .g-sub {
+        font:
+          400 12.5px/1.45 Manrope,
+          sans-serif;
+        color: #8d9196;
+      }
+      .g-body {
+        display: flex;
+        flex-direction: column;
+        gap: 12px;
+        max-width: 760px;
+        padding: 0 20px 20px;
+      }
+      .g-body p {
+        margin: 0;
+        font:
+          400 14px/1.6 Manrope,
+          sans-serif;
+        color: #a9adb2;
+      }
+      .fl-details > summary:focus-visible,
+      .guide-item > summary:focus-visible,
+      .whats-new-head:focus-visible,
+      .os-tabs button:focus-visible {
+        outline: 2px solid #d8a44c;
+        outline-offset: 2px;
+      }
+      @media (prefers-reduced-motion: reduce) {
+        .fl-details {
+          transition: none;
+        }
+      }
       .guide {
         display: flex;
         flex-direction: column;
@@ -575,12 +774,6 @@
         flex-direction: column;
         padding: 20px 20px 18px;
         gap: 16px;
-      }
-      .whats-new-head {
-        display: flex;
-        align-items: center;
-        gap: 10px;
-        flex-wrap: wrap;
       }
       .whats-new-head .title {
         font:
@@ -732,27 +925,6 @@
         font:
           600 12.5px/1.4 Manrope,
           sans-serif;
-      }
-      .poll-nudge {
-        align-self: flex-start;
-        display: inline-flex;
-        align-items: center;
-        gap: 9px;
-        padding: 8px 14px;
-        border-radius: 999px;
-        border: 1px solid #2b2f33;
-        background: #1b1e20;
-        font:
-          500 12.5px/1.3 Manrope,
-          sans-serif;
-        color: #c7cace;
-      }
-      .poll-nudge:hover {
-        border-color: #4a3a22;
-        color: #f5f2ed;
-      }
-      .poll-nudge .arrow {
-        color: #d8a44c;
       }
       .poll-dialog {
         width: min(440px, calc(100% - 32px));
@@ -1123,11 +1295,10 @@
           <div class="eyebrow">DOWNLOAD MANAGER · MULTI-LINK</div>
           <h1>One download.<br />Every network.</h1>
           <p>Plexo combines all your available internet connections to download files faster.</p>
-          <ul class="use-cases">
-            <li>Wi-Fi + Ethernet.</li>
-            <li>Two tethered phones.</li>
-            <li>Wi-Fi, Ethernet, and a tethered phone.</li>
-            <li>Whatever your computer can connect to.</li>
+          <ul class="use-cases" aria-label="For example">
+            <li>Wi-Fi + Ethernet</li>
+            <li>Two tethered phones</li>
+            <li>Wi-Fi + Ethernet + phone</li>
           </ul>
 
           <div class="cta-row">
@@ -1154,23 +1325,27 @@
                 <span class="meta" id="primary-meta">Loading latest release…</span>
               </span>
             </a>
+          </div>
+          <div class="cta-meta">
+            <span id="release-line">Checking GitHub for the latest release…</span>
+            <span class="cta-alt" id="cta-alt"></span>
             <a href="#downloads">All downloads</a>
           </div>
-          <div class="cta-alt" id="cta-alt"></div>
           <div id="first-launch-slot"></div>
-          <div class="release-line" id="release-line">Checking GitHub for the latest release…</div>
-          <a class="poll-nudge" id="poll-nudge" href="#support">
-            <span class="live-dot"></span>
-            Quick poll: help decide how Plexo is funded
-            <span class="arrow">↓</span>
-          </a>
         </section>
 
         <aside class="card whats-new" id="whats-new" aria-labelledby="whats-new-title">
-          <div class="whats-new-head">
-            <div class="title" id="whats-new-title">What’s new</div>
-            <div class="ver" id="whats-new-ver"></div>
-          </div>
+          <button
+            type="button"
+            class="whats-new-head"
+            id="whats-new-toggle"
+            aria-expanded="false"
+            aria-controls="changes"
+          >
+            <span class="title" id="whats-new-title">What’s new</span>
+            <span class="ver" id="whats-new-ver"></span>
+            <span class="count" id="whats-new-count"></span>
+          </button>
           <ul class="changes" id="changes"></ul>
           <div class="older">
             <div class="label" id="older-label" hidden>EARLIER VERSIONS</div>
@@ -1237,79 +1412,99 @@
         </div>
       </section>
 
-      <section class="guide" id="multiple-connections">
-        <div class="downloads-head">
-          <div class="title">Use separate connections</div>
-        </div>
-        <p>
-          Plexo is faster only when each network has its own Internet line, like home Wi-Fi plus a
-          phone on USB tethering. Two connections to the same router share one line, so they won't
-          add speed.
-        </p>
-        <p>
-          <a href="https://github.com/anmolkapil/plexo#combining-multiple-network-connections"
-            >Full guide on GitHub →</a
-          >
-        </p>
-      </section>
-
       <section class="downloads" id="downloads">
         <div class="downloads-head">
           <div class="title">All downloads</div>
           <div class="source" id="asset-source">PUBLISHED ON GITHUB RELEASES</div>
         </div>
+        <div class="os-tabs" id="os-tabs" role="tablist" aria-label="Operating system" hidden></div>
         <div class="groups" id="asset-groups">
           <div class="asset-note">Loading releases…</div>
         </div>
       </section>
 
-      <section class="guide" id="mac-tethering">
+      <section class="guides" id="guides">
         <div class="downloads-head">
-          <div class="title">USB tethering on macOS</div>
+          <div class="title">Setup guides</div>
         </div>
-        <p>
-          Macs don't recognize an Android phone's USB tethering out of the box — you'll need a free
-          helper app called <a href="https://github.com/XiaoMiku01/TetherKit">TetherKit</a>
-          first.
-        </p>
-        <ol class="os-notes">
-          <li>
-            Install TetherKit: open Terminal and run
-            <code>brew install XiaoMiku01/tap/tetherkit</code>
-          </li>
-          <li>Connect your Android phone to your Mac with a USB cable.</li>
-          <li>
-            On your phone: Settings → Network & Internet → Hotspot & tethering → turn on USB
-            tethering.
-          </li>
-          <li>Open Plexo — it'll pick up the connection automatically.</li>
-        </ol>
-        <p>
-          <a href="https://github.com/anmolkapil/plexo#using-a-usb-tethered-android-phone"
-            >Full guide on GitHub →</a
-          >
-        </p>
-      </section>
+        <div class="guide-list">
+          <details class="guide-item" id="multiple-connections" open>
+            <summary>
+              <span class="g-title">Use separate connections</span>
+              <span class="g-sub">Why two networks on the same router won’t add speed</span>
+            </summary>
+            <div class="g-body">
+              <p>
+                Plexo is faster only when each network has its own Internet line, like home Wi-Fi
+                plus a phone on USB tethering. Two connections to the same router share one line, so
+                they won’t add speed.
+              </p>
+              <p>
+                Tethering an Android phone to a Mac? See
+                <a href="#mac-tethering">USB tethering on macOS</a> below.
+              </p>
+              <p>
+                <a href="https://github.com/anmolkapil/plexo#combining-multiple-network-connections"
+                  >Full guide on GitHub →</a
+                >
+              </p>
+            </div>
+          </details>
 
-      <section class="guide" id="windows-wifi">
-        <div class="downloads-head">
-          <div class="title">Wi-Fi keeps dropping?</div>
+          <details class="guide-item" id="mac-tethering">
+            <summary>
+              <span class="g-title">USB tethering on macOS</span>
+              <span class="g-sub">Android phones need a free helper app first</span>
+            </summary>
+            <div class="g-body">
+              <p>
+                Macs don’t recognize an Android phone’s USB tethering out of the box. Install the
+                free <a href="https://github.com/XiaoMiku01/TetherKit">TetherKit</a> first.
+              </p>
+              <ol class="os-notes">
+                <li>
+                  Install TetherKit: open Terminal and run
+                  <code>brew install XiaoMiku01/tap/tetherkit</code>
+                </li>
+                <li>Connect your Android phone to your Mac with a USB cable.</li>
+                <li>
+                  On your phone: Settings → Network & Internet → Hotspot & tethering → turn on USB
+                  tethering.
+                </li>
+                <li>Open Plexo. It picks up the connection automatically.</li>
+              </ol>
+              <p>
+                <a href="https://github.com/anmolkapil/plexo#using-a-usb-tethered-android-phone"
+                  >Full guide on GitHub →</a
+                >
+              </p>
+            </div>
+          </details>
+
+          <details class="guide-item" id="windows-wifi">
+            <summary>
+              <span class="g-title">Wi-Fi drops when Ethernet is plugged in</span>
+              <span class="g-sub">Windows 10 and 11</span>
+            </summary>
+            <div class="g-body">
+              <p>
+                Some Windows PCs switch off Wi-Fi as soon as an Ethernet cable is connected. To stop
+                that:
+              </p>
+              <ol class="os-notes">
+                <li>Press Win + R, type <code>gpedit.msc</code>, and press Enter.</li>
+                <li>
+                  Go to Computer Configuration → Administrative Templates → Network → Windows
+                  Connection Manager.
+                </li>
+                <li>
+                  Set “Minimize the number of simultaneous connections to the Internet or a Windows
+                  domain” to <strong>Disabled</strong>.
+                </li>
+              </ol>
+            </div>
+          </details>
         </div>
-        <p>
-          Some Windows 10/11 PCs switch off Wi-Fi as soon as an Ethernet cable is connected. To stop
-          that:
-        </p>
-        <ol class="os-notes">
-          <li>Press Win + R, type <code>gpedit.msc</code>, and press Enter.</li>
-          <li>
-            Go to Computer Configuration → Administrative Templates → Network → Windows Connection
-            Manager.
-          </li>
-          <li>
-            Set “Minimize the number of simultaneous connections to the Internet or a Windows
-            domain” to <strong>Disabled</strong>.
-          </li>
-        </ol>
       </section>
 
       <section class="support" id="support">
@@ -1449,6 +1644,23 @@
       })()
 
       ;(function () {
+        // On narrow screens What's new is one row until tapped.
+        var aside = document.getElementById('whats-new')
+        var toggle = document.getElementById('whats-new-toggle')
+        toggle.addEventListener('click', function () {
+          toggle.setAttribute('aria-expanded', String(aside.classList.toggle('open')))
+        })
+
+        // A link to a guide (#mac-tethering) opens it.
+        function openTarget() {
+          var target = location.hash && document.getElementById(location.hash.slice(1))
+          if (target && target.tagName === 'DETAILS') target.open = true
+        }
+        window.addEventListener('hashchange', openTarget)
+        openTarget()
+      })()
+
+      ;(function () {
         var REPO = 'anmolkapil/plexo'
         var repoUrl = 'https://github.com/' + REPO
         var D = window.PlexoDownloads
@@ -1498,6 +1710,32 @@
           if (fl.command) box.appendChild(commandRow(fl.command))
           if (fl.aside) box.appendChild(rich(el('p', 'fl-aside'), fl.aside))
           return box
+        }
+
+        // Folded to one line until the visitor downloads; the download button opens it.
+        function firstLaunchDisclosure(fl) {
+          var details = el('details', 'fl-details')
+          details.id = 'first-launch'
+          var summary = el('summary')
+          summary.innerHTML = WARNING_ICON // a fixed icon, not page data
+          var text = el(
+            'span',
+            'fl-summary',
+            'Plexo isn’t signed yet, so opening it the first time takes one extra step.'
+          )
+          summary.appendChild(text)
+          summary.appendChild(el('span', 'how', 'See how'))
+          details.appendChild(summary)
+          details.appendChild(firstLaunchBox(fl))
+          details.addEventListener('toggle', function () {
+            summary.lastChild.textContent = details.open ? 'Hide' : 'See how'
+          })
+          $('primary-btn').addEventListener('click', function () {
+            details.open = true
+            details.classList.add('downloading')
+            text.textContent = 'Downloading. Next, open Plexo the first time:'
+          })
+          return details
         }
 
         function commandRow(command) {
@@ -1568,6 +1806,7 @@
           $('asset-groups').textContent = ''
           $('cta-alt').textContent = ''
           $('first-launch-slot').textContent = ''
+          $('os-tabs').hidden = true
           $('asset-groups').appendChild(
             el(
               'div',
@@ -1614,11 +1853,7 @@
             : ''
           versionEl.textContent = 'PLEXO · ' + version
           sourceEl.textContent = REPO.toUpperCase() + ' · ' + version.toUpperCase()
-          releaseLine.textContent =
-            version +
-            ' · ' +
-            (release.prerelease ? 'pre-release' : 'stable') +
-            (date ? ' · ' + date : '')
+          releaseLine.textContent = version + (date ? ' · ' + date : '')
 
           if (model.primary) {
             primaryTitle.textContent = model.primary.title
@@ -1640,19 +1875,43 @@
             link.href = a.asset.url
             alt.appendChild(link)
           })
-          if (model.hint) alt.appendChild(el('div', 'hint', model.hint))
-          if (env.os === 'mac') {
-            var tetherAlt = el('a', '', 'Tethering an Android phone? See the USB tethering guide →')
-            tetherAlt.href = '#mac-tethering'
-            alt.appendChild(tetherAlt)
+          if (model.firstLaunch) {
+            $('first-launch-slot').appendChild(firstLaunchDisclosure(model.firstLaunch))
           }
 
-          if (model.firstLaunch) {
-            $('first-launch-slot').appendChild(firstLaunchBox(model.firstLaunch))
-          }
+          // One OS at a time, starting with the visitor's own.
+          var tabs = $('os-tabs')
+          var selected = model.groups.some(function (g) {
+            return g.os === env.os
+          })
+            ? env.os
+            : model.groups[0].os
+          var panels = []
+          tabs.textContent = ''
+          tabs.hidden = model.groups.length < 2
+          groupsEl.classList.toggle('tabbed', !tabs.hidden)
 
           model.groups.forEach(function (g) {
             var section = el('section', 'os-group')
+            section.id = 'os-' + g.os
+            section.setAttribute('role', 'tabpanel')
+            section.hidden = g.os !== selected
+            var tab = el('button', '', g.label)
+            tab.type = 'button'
+            tab.id = 'tab-' + g.os
+            tab.setAttribute('role', 'tab')
+            tab.setAttribute('aria-controls', section.id)
+            tab.setAttribute('aria-selected', String(g.os === selected))
+            if (g.os === env.os) tab.appendChild(el('span', 'yours', 'YOURS'))
+            tab.addEventListener('click', function () {
+              panels.forEach(function (p) {
+                p.section.hidden = p.os !== g.os
+                p.tab.setAttribute('aria-selected', String(p.os === g.os))
+              })
+            })
+            section.setAttribute('aria-labelledby', tab.id)
+            tabs.appendChild(tab)
+            panels.push({ os: g.os, tab: tab, section: section })
             section.appendChild(el('h3', '', g.label))
             var table = el('div', 'asset-table')
             g.rows.forEach(function (asset) {
@@ -1669,9 +1928,6 @@
             })
             section.appendChild(notes)
             groupsEl.appendChild(section)
-            // Slot each OS's static guide right under its group, not after every OS.
-            var guideSection = $({ mac: 'mac-tethering', win: 'windows-wifi' }[g.os])
-            if (guideSection) groupsEl.appendChild(guideSection)
           })
 
           if (release.prerelease) {
@@ -1749,6 +2005,8 @@
             older.appendChild(li)
           })
           $('older-label').hidden = list.length < 2
+          $('whats-new-count').textContent =
+            items.length + (items.length === 1 ? ' change' : ' changes') + ' ›'
         }
 
         if (!D) {
@@ -1862,7 +2120,6 @@
         }
 
         function showVoted(v) {
-          document.getElementById('poll-nudge').hidden = true
           poll.querySelector('#poll-choices').hidden = true
           results.hidden = false
           ways.hidden = false
