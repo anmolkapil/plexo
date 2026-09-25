@@ -416,7 +416,8 @@
       .os-notes li {
         margin: 5px 0;
       }
-      .os-notes code {
+      .os-notes code,
+      .g-body code {
         padding: 1px 6px;
         border-radius: 5px;
         background: #23262a;
@@ -1460,9 +1461,9 @@
                 they won’t add speed.
               </p>
               <p>
-                <a href="https://github.com/anmolkapil/plexo#combining-multiple-network-connections"
-                  >Full guide on GitHub →</a
-                >
+                If two connections have addresses on the same local network (both
+                <code>192.168.1.x</code>, say), your computer sends everything through one of them.
+                Plexo warns you when two selected connections look like that.
               </p>
             </div>
           </details>
@@ -1489,11 +1490,6 @@
                 </li>
                 <li>Open Plexo. It picks up the connection automatically.</li>
               </ol>
-              <p>
-                <a href="https://github.com/anmolkapil/plexo#using-a-usb-tethered-android-phone"
-                  >Full guide on GitHub →</a
-                >
-              </p>
             </div>
           </details>
 
