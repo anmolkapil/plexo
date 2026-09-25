@@ -1891,7 +1891,7 @@
           }
 
           model.alternates.forEach(function (a) {
-            var link = el('a', '', a.text + ' →')
+            var link = el('a', '', a.text)
             link.href = a.asset.url
             alt.appendChild(link)
           })
