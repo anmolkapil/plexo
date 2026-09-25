@@ -13,32 +13,25 @@
   var OS_ORDER = ['mac', 'win', 'linux']
   var OS_LABEL = { mac: 'macOS', win: 'Windows', linux: 'Linux' }
 
-  // What an unsigned build makes the OS say on first launch, and the way past it. Shown under the
-  // download button and above that OS's downloads. `code` in backticks, **button names** in stars.
+  // What an unsigned build makes the OS say on first launch, and the way past it: under the
+  // download button for the visitor's own OS, and with every other OS's downloads.
+  // `code` in backticks, **button names** in stars.
   var MAC_COMMAND = 'xattr -dr com.apple.quarantine /Applications/Plexo.app'
   var FIRST_LAUNCH = {
     mac: {
-      warning: '“Plexo” is damaged and can’t be opened. You should move it to the Trash.',
-      why: 'Plexo isn’t damaged. It isn’t signed with an Apple Developer certificate yet, so macOS blocks it until you allow it once.',
-      steps: [
-        { text: 'Open the .dmg and drag **Plexo** into **Applications**.' },
-        { text: 'Open **Terminal** and run this once:', command: MAC_COMMAND },
-        { text: 'Open Plexo again. It opens normally from now on.' }
-      ],
+      system: 'macOS',
+      warning: 'Plexo is damaged and can’t be opened',
+      fix: 'It isn’t damaged, just not signed by Apple yet. Drag Plexo into **Applications**, then run this once in **Terminal** and open it again:',
+      command: MAC_COMMAND,
       aside:
-        'If macOS says it can’t verify Plexo instead, open **System Settings → Privacy & Security** and choose **Open Anyway**.'
+        'Says it can’t verify Plexo instead? Choose **Open Anyway** in System Settings → Privacy & Security.'
     },
     win: {
+      system: 'Windows',
       warning: 'Windows protected your PC',
-      why: 'The installer isn’t code-signed yet, so Microsoft SmartScreen doesn’t recognise it. It’s safe to run.',
-      steps: [
-        { text: 'If your browser says the file isn’t commonly downloaded, choose **Keep**.' },
-        {
-          text: 'Open the installer. On the blue “Windows protected your PC” screen, click **More info**.'
-        },
-        { text: 'Click **Run anyway**.' }
-      ],
-      aside: null
+      fix: 'The installer just isn’t code-signed yet. Click **More info**, then **Run anyway**.',
+      command: null,
+      aside: 'If your browser warns that the file isn’t commonly downloaded, choose **Keep** first.'
     }
   }
 

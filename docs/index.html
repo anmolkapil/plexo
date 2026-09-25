@@ -451,44 +451,28 @@
       .first-launch {
         display: flex;
         flex-direction: column;
-        gap: 14px;
-        padding: 18px 20px 20px;
-        border-radius: 13px;
+        gap: 10px;
+        padding: 16px 18px;
+        border-radius: 12px;
         border: 1px solid #4a3a22;
         background: #1f1b15;
       }
-      .first-launch .fl-eyebrow {
-        font:
-          600 10.5px/1 'Roboto Mono',
-          monospace;
-        letter-spacing: 0.16em;
-        color: #e8bb6d;
-      }
-      .first-launch .fl-title {
-        margin: 0;
-        font:
-          700 16px/1.35 Manrope,
-          sans-serif;
-        color: #f5f2ed;
-        text-wrap: balance;
-      }
-      /* The OS's own message, so the visitor recognises it when it appears. */
       .first-launch .fl-warning {
         display: flex;
         align-items: flex-start;
-        gap: 11px;
-        padding: 12px 14px;
-        border-radius: 10px;
-        border: 1px solid #33383c;
-        background: #16181a;
+        gap: 10px;
+        margin: 0;
         font:
-          600 13.5px/1.45 Manrope,
+          600 14px/1.45 Manrope,
           sans-serif;
-        color: #eae7e2;
+        color: #f5f2ed;
       }
       .first-launch .fl-warning svg {
         flex-shrink: 0;
         margin-top: 1px;
+      }
+      .first-launch .fl-warning .quote {
+        color: #e8bb6d;
       }
       .first-launch p {
         margin: 0;
@@ -502,44 +486,14 @@
         font-weight: 700;
         color: #eae7e2;
       }
-      .fl-steps {
-        margin: 0;
-        padding: 0;
-        list-style: none;
-        counter-reset: step;
-        display: flex;
-        flex-direction: column;
-        gap: 12px;
-      }
-      .fl-steps li {
-        counter-increment: step;
-        display: grid;
-        grid-template-columns: 24px minmax(0, 1fr);
-        column-gap: 11px;
-        row-gap: 8px;
+      .first-launch code {
+        padding: 1px 6px;
+        border-radius: 5px;
+        background: #23262a;
+        color: #c9ccd0;
         font:
-          400 13.5px/1.55 Manrope,
-          sans-serif;
-        color: #c7cace;
-      }
-      .fl-steps li::before {
-        content: counter(step);
-        width: 24px;
-        height: 24px;
-        border-radius: 50%;
-        background: #33291a;
-        color: #e8bb6d;
-        font:
-          600 11.5px/24px 'Roboto Mono',
+          400 12px/1.5 'Roboto Mono',
           monospace;
-        text-align: center;
-      }
-      .fl-steps li > * {
-        grid-column: 2;
-      }
-      .fl-steps li > .fl-text {
-        grid-row: 1;
-        padding-top: 2px;
       }
       .fl-command {
         display: flex;
@@ -549,10 +503,12 @@
         background: #121416;
         overflow: hidden;
       }
-      .fl-command code {
+      .first-launch .fl-command code {
         flex: 1;
         min-width: 0;
         padding: 10px 12px;
+        border-radius: 0;
+        background: none;
         font:
           500 12.5px/1.5 'Roboto Mono',
           monospace;
@@ -579,7 +535,7 @@
         color: #6cc2b4;
       }
       .first-launch .fl-aside {
-        font-size: 12.5px;
+        font-size: 12px;
         color: #8d9196;
       }
       .os-group .first-launch {
@@ -1530,29 +1486,16 @@
           '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="#e8bb6d" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/><path d="M12 9v4"/><path d="M12 17h.01"/></svg>'
 
         // How to get past the unsigned-app warning the first time Plexo opens.
-        function firstLaunchBox(fl, os) {
+        function firstLaunchBox(fl) {
           var box = el('div', 'first-launch')
-          box.appendChild(el('div', 'fl-eyebrow', 'OPENING PLEXO THE FIRST TIME'))
-          box.appendChild(
-            el(
-              'p',
-              'fl-title',
-              os === 'mac' ? 'macOS will probably say this:' : 'Windows will probably say this:'
-            )
-          )
-          var warning = el('div', 'fl-warning')
+          var warning = el('p', 'fl-warning')
           warning.innerHTML = WARNING_ICON // a fixed icon, not page data
-          warning.appendChild(el('span', '', fl.warning))
+          var line = el('span', '', fl.system + ' may say ')
+          line.appendChild(el('span', 'quote', '“' + fl.warning + '”'))
+          warning.appendChild(line)
           box.appendChild(warning)
-          box.appendChild(rich(el('p'), fl.why))
-          var steps = el('ol', 'fl-steps')
-          fl.steps.forEach(function (step) {
-            var li = el('li')
-            li.appendChild(rich(el('span', 'fl-text'), step.text))
-            if (step.command) li.appendChild(commandRow(step.command))
-            steps.appendChild(li)
-          })
-          box.appendChild(steps)
+          box.appendChild(rich(el('p'), fl.fix))
+          if (fl.command) box.appendChild(commandRow(fl.command))
           if (fl.aside) box.appendChild(rich(el('p', 'fl-aside'), fl.aside))
           return box
         }
@@ -1705,7 +1648,7 @@
           }
 
           if (model.firstLaunch) {
-            $('first-launch-slot').appendChild(firstLaunchBox(model.firstLaunch, env.os))
+            $('first-launch-slot').appendChild(firstLaunchBox(model.firstLaunch))
           }
 
           model.groups.forEach(function (g) {
@@ -1716,7 +1659,10 @@
               table.appendChild(row(asset))
             })
             section.appendChild(table)
-            if (g.firstLaunch) section.appendChild(firstLaunchBox(g.firstLaunch, g.os))
+            // The visitor's own OS already has this under the download button.
+            if (g.firstLaunch && !(model.firstLaunch && g.os === env.os)) {
+              section.appendChild(firstLaunchBox(g.firstLaunch))
+            }
             var notes = el('ul', 'os-notes')
             g.notes.forEach(function (text) {
               notes.appendChild(withCode(el('li'), text))
