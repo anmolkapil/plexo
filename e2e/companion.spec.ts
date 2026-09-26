@@ -17,6 +17,7 @@ test.describe('Companion Server POST /download', () => {
     restore: () => {},
     show: () => {},
     focus: () => {},
+    setAlwaysOnTop: () => {},
     webContents: {
       send: (_channel: string, payload: CompanionDownloadPayload) => {
         deliveredPayloads.push(payload)
@@ -194,6 +195,7 @@ test.describe('Companion Server POST /download', () => {
   })
 
   test('validates extension origin pattern', () => {
+    // When explicit trustedOrigins are configured, only those origins are allowed
     expect(isAllowedOrigin(extensionOrigin, [extensionOrigin])).toBe(true)
     expect(
       isAllowedOrigin('moz-extension://12345678-1234-1234-1234-123456789abc', [extensionOrigin])
@@ -203,5 +205,15 @@ test.describe('Companion Server POST /download', () => {
     expect(isAllowedOrigin('null', [extensionOrigin])).toBe(false)
     expect(isAllowedOrigin('', [extensionOrigin])).toBe(false)
     expect(isAllowedOrigin(undefined, [extensionOrigin])).toBe(false)
+
+    // When running with default trustedOrigins (empty), all valid extension schemes are allowed
+    // while web origins and invalid strings are rejected
+    expect(isAllowedOrigin('chrome-extension://abcdefghijklmnopabcdefghijklmnop', [])).toBe(true)
+    expect(isAllowedOrigin('moz-extension://12345678-1234-1234-1234-123456789abc', [])).toBe(true)
+    expect(isAllowedOrigin('https://google.com', [])).toBe(false)
+    expect(isAllowedOrigin('http://localhost:3000', [])).toBe(false)
+    expect(isAllowedOrigin('null', [])).toBe(false)
+    expect(isAllowedOrigin('', [])).toBe(false)
+    expect(isAllowedOrigin(undefined, [])).toBe(false)
   })
 })

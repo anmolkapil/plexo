@@ -10,11 +10,18 @@ const configuredTrustedOrigins = (process.env['PLEXO_COMPANION_ORIGINS'] || '')
   .map((origin) => origin.trim())
   .filter(Boolean)
 
+export const EXTENSION_ORIGIN_REGEX =
+  /^(chrome-extension|moz-extension|safari-web-extension|extension):\/\/[a-z0-9-]+$/i
+
 export function isAllowedOrigin(
   origin?: string,
   trustedOrigins: readonly string[] = configuredTrustedOrigins
 ): boolean {
-  return Boolean(origin && trustedOrigins.includes(origin))
+  if (!origin) return false
+  if (trustedOrigins.length > 0) {
+    return trustedOrigins.includes(origin)
+  }
+  return EXTENSION_ORIGIN_REGEX.test(origin)
 }
 
 function setCorsHeaders(
@@ -252,7 +259,13 @@ export class CompanionServer {
 
     if (window.isMinimized()) window.restore()
     if (!window.isVisible()) window.show()
-    window.focus()
+    if (typeof window.setAlwaysOnTop === 'function') {
+      window.setAlwaysOnTop(true)
+      window.focus()
+      window.setAlwaysOnTop(false)
+    } else {
+      window.focus()
+    }
 
     window.webContents.send(IpcChannels.companionDownload, payload)
   }

@@ -1,5 +1,5 @@
 import { checkPlexoHealth, formatCookies, sendDownloadToPlexo } from './client.js'
-import { DEFAULT_SETTINGS, shouldCaptureDownload } from './rules.js'
+import { DEFAULT_SETTINGS, extractFilename, shouldCaptureDownload } from './rules.js'
 
 let currentSettings = { ...DEFAULT_SETTINGS }
 let settingsPromise = null
@@ -45,10 +45,7 @@ async function updateBadge() {
   }
 }
 
-// Initial setup
-chrome.runtime.onInstalled.addListener(() => {
-  void loadSettings().catch(() => {})
-
+function setupContextMenus() {
   chrome.contextMenus.removeAll(() => {
     chrome.contextMenus.create({
       id: 'plexo-download-link',
@@ -68,10 +65,17 @@ chrome.runtime.onInstalled.addListener(() => {
       contexts: ['image']
     })
   })
+}
+
+// Initial setup
+chrome.runtime.onInstalled.addListener(() => {
+  void loadSettings().catch(() => {})
+  setupContextMenus()
 })
 
 chrome.runtime.onStartup.addListener(() => {
   void loadSettings().catch(() => {})
+  setupContextMenus()
 })
 
 // Handle Context Menu clicks
@@ -88,8 +92,10 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
     // Best-effort cookie retrieval
   }
 
+  const urlFilename = extractFilename(targetUrl)
   const payload = {
     url: targetUrl,
+    suggestedFileName: urlFilename || undefined,
     referer: tab?.url || info.pageUrl || undefined,
     cookies: cookieHeader || undefined,
     userAgent: navigator.userAgent
@@ -101,21 +107,43 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
   }
 })
 
-// Intercept browser downloads
-chrome.downloads.onCreated.addListener(async (downloadItem) => {
-  if (processedDownloadIds.has(downloadItem.id)) return
+// Process a browser download event (onCreated or onDeterminingFilename)
+async function processDownloadItem(downloadItem, suggest = null) {
+  if (processedDownloadIds.has(downloadItem.id)) {
+    if (suggest) suggest()
+    return
+  }
 
   const settings = await loadSettings()
-  if (!settings.enabled) return
+  if (!settings.enabled) {
+    if (suggest) suggest()
+    return
+  }
 
-  if (!shouldCaptureDownload(downloadItem, settings)) return
+  if (!shouldCaptureDownload(downloadItem, settings)) {
+    if (suggest) suggest()
+    return
+  }
 
-  // Prevent recursive interception loops
+  // Prevent duplicate capture across multiple events
   processedDownloadIds.add(downloadItem.id)
-  setTimeout(() => processedDownloadIds.delete(downloadItem.id), 30000)
+  setTimeout(() => processedDownloadIds.delete(downloadItem.id), 60000)
+
+  // Pause the native browser download immediately to avoid wasted network traffic
+  try {
+    await chrome.downloads.pause(downloadItem.id)
+  } catch {
+    // Ignore if download cannot be paused immediately
+  }
 
   const downloadUrl = downloadItem.finalUrl || downloadItem.url
-  if (!downloadUrl) return
+  if (!downloadUrl) {
+    try {
+      await chrome.downloads.resume(downloadItem.id)
+    } catch {}
+    if (suggest) suggest()
+    return
+  }
 
   let cookieHeader = ''
   try {
@@ -125,10 +153,13 @@ chrome.downloads.onCreated.addListener(async (downloadItem) => {
     // Best-effort cookie retrieval
   }
 
-  const rawFilename = downloadItem.filename ? downloadItem.filename.split(/[/\\]/).pop() : undefined
+  const rawFilename = downloadItem.filename
+    ? downloadItem.filename.split(/[/\\]/).filter(Boolean).pop()
+    : extractFilename(downloadUrl)
+
   const payload = {
     url: downloadUrl,
-    suggestedFileName: rawFilename,
+    suggestedFileName: rawFilename || undefined,
     referer: downloadItem.referrer || undefined,
     cookies: cookieHeader || undefined,
     userAgent: navigator.userAgent
@@ -137,18 +168,42 @@ chrome.downloads.onCreated.addListener(async (downloadItem) => {
   const result = await sendDownloadToPlexo(payload, settings.port)
 
   if (result.success) {
-    // Successfully transferred to Plexo: cancel the native browser download
-    chrome.downloads.cancel(downloadItem.id, () => {
-      chrome.downloads.search({ id: downloadItem.id }, (items) => {
-        if (chrome.runtime.lastError || items.length === 0 || items[0].state === 'complete') return
-        chrome.downloads.erase({ id: downloadItem.id }, () => {})
-      })
-    })
+    // Successfully transferred to Plexo: cancel and clean up the native browser download
+    try {
+      await chrome.downloads.cancel(downloadItem.id)
+      await chrome.downloads.erase({ id: downloadItem.id })
+    } catch {
+      // Ignore cleanup error if already cancelled
+    }
   } else {
-    // Plexo is offline or unavailable: let the browser download proceed normally!
+    // Plexo is offline or unavailable: resume the native browser download
+    try {
+      await chrome.downloads.resume(downloadItem.id)
+    } catch {
+      // Ignore
+    }
     updateBadge()
   }
+
+  if (suggest) {
+    suggest()
+  }
+}
+
+// Intercept browser downloads on creation
+chrome.downloads.onCreated.addListener((downloadItem) => {
+  void processDownloadItem(downloadItem).catch(() => {})
 })
+
+// Also listen when filename is determined (for dynamic download URLs / Content-Disposition headers)
+if (chrome.downloads.onDeterminingFilename) {
+  chrome.downloads.onDeterminingFilename.addListener((downloadItem, suggest) => {
+    void processDownloadItem(downloadItem, suggest).catch(() => {
+      suggest()
+    })
+    return true
+  })
+}
 
 // Handle messages from popup / options
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
