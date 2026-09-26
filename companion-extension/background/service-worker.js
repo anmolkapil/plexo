@@ -151,8 +151,8 @@ async function processDownloadItem(downloadItem, suggest = null) {
     return
   }
 
+  // Already processed and captured: do not call suggest() on a cancelled download
   if (processedDownloadIds.has(downloadItem.id)) {
-    if (suggest) suggest()
     return
   }
 
@@ -200,15 +200,15 @@ async function processDownloadItem(downloadItem, suggest = null) {
   const result = await sendDownloadToPlexo(payload, settings.port)
 
   if (result.success) {
-    // Successfully transferred to Plexo: cancel and clean up the native browser download
+    // Successfully transferred to Plexo: cancel and clean up the native browser download.
+    // Do NOT call suggest() because the download is cancelled.
     cancelAndErase(downloadItem.id)
   } else {
     // Plexo is offline or unavailable: let the browser download proceed normally
     updateBadge()
-  }
-
-  if (suggest) {
-    suggest()
+    if (suggest) {
+      suggest()
+    }
   }
 }
 
