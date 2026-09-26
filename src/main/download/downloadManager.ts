@@ -178,6 +178,12 @@ interface DownloadRuntime {
   sentUpdates: number
   /** Each block as the window was last sent it, by index — what tells a changed block apart. */
   sentBlocks: Pick<BlockState, 'status' | 'interfaceId' | 'bytesDownloaded'>[]
+  /** The network most recently switched off: what a resume switches back on if it finds none on.
+   * Not persisted: after a restart, the first network present is used instead. */
+  lastSwitchedOff?: string
+  /** Paused by switching off its last network, rather than by Pause: switching one back on
+   * resumes it. */
+  pausedForNoNetwork?: boolean
 }
 
 interface PersistedDownloadBase {
@@ -767,6 +773,17 @@ export class DownloadManager {
     runtime.state.status = 'downloading'
     runtime.state.error = undefined
     runtime.state.resumable = undefined
+    runtime.pausedForNoNetwork = undefined
+    // Paused by switching off every network: resuming switches back on the one switched off
+    // last, or, after a restart, the first one present.
+    const { networks } = runtime.state
+    if (!networks.some((network) => network.enabled)) {
+      const again =
+        networks.find((network) => network.id === runtime.lastSwitchedOff) ??
+        networks.find((network) => this.networks.find(network.id)) ??
+        networks[0]
+      if (again) again.enabled = true
+    }
     // A network that had failed, or couldn't get through, gets another go.
     for (const network of runtime.state.networks) {
       if (network.status === 'failed' || network.status === 'unreachable') {
@@ -797,23 +814,30 @@ export class DownloadManager {
     runtime.runPromise = this.run(runtime)
   }
 
-  /** Switches one of a download's networks on or off, running or paused. The last network in
-   * use can't be switched off: pausing is how a download stops. */
-  setNetworkEnabled(id: string, networkId: string, enabled: boolean): void {
+  /** Switches one of a download's networks on or off, running or paused. Switching off the last
+   * network in use pauses the download; switching one back on then resumes it. */
+  async setNetworkEnabled(id: string, networkId: string, enabled: boolean): Promise<void> {
     const runtime = this.runtimes.get(id)
     const status = runtime?.state.status
     if (!runtime || (status !== 'downloading' && status !== 'paused')) return
     const { networks } = runtime.state
     const network = networks.find((entry) => entry.id === networkId)
     if (!network || network.enabled === enabled) return
-    if (!enabled && !networks.some((other) => other !== network && other.enabled)) return
+    const wasLast = !enabled && !networks.some((other) => other !== network && other.enabled)
     // A download that can't be split runs over one network: switching one on switches it over.
     if (enabled && !splittable(runtime.requestPayload)) {
       for (const other of networks) other.enabled = false
     }
     network.enabled = enabled
+    if (!enabled) runtime.lastSwitchedOff = network.id
+    if (wasLast && status === 'downloading') {
+      runtime.pausedForNoNetwork = true
+      await this.pause(id)
+      return
+    }
     this.reconcile(runtime)
     this.pushUpdate(runtime)
+    if (enabled && status === 'paused' && runtime.pausedForNoNetwork) this.resume(id)
   }
 
   /** The computer's networks changed (see NetworkMonitor). A network whose addresses changed

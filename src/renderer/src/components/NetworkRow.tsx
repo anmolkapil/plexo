@@ -16,8 +16,6 @@ interface NetworkRowProps {
   sharePercent: number
   totalBytes?: number | null
   blocks?: BlockState[]
-  /** False for the last network in use, which can't be switched off. */
-  canSwitch: boolean
   onSwitch: (enabled: boolean) => void
 }
 
@@ -93,7 +91,6 @@ export function NetworkRow({
   sharePercent,
   totalBytes,
   blocks,
-  canSwitch,
   onSwitch
 }: NetworkRowProps): React.JSX.Element {
   const [expanded, setExpanded] = useState(false)
@@ -120,31 +117,14 @@ export function NetworkRow({
           }}
         />
         <div role="cell" className="flex min-w-0 items-center gap-[6px]">
-          {/* The wrapper is the trigger: a disabled checkbox gets no hover or focus of its own. */}
-          <Tooltip disabled={canSwitch}>
-            <TooltipTrigger
-              render={
-                <span
-                  tabIndex={canSwitch ? undefined : 0}
-                  className="flex shrink-0 rounded-sm outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
-                >
-                  <Checkbox
-                    checked={group.enabled}
-                    disabled={!canSwitch}
-                    onCheckedChange={(checked) => onSwitch(checked)}
-                    aria-label={`Use ${visual.name}`}
-                    className="data-checked:border-transparent"
-                    style={
-                      group.enabled
-                        ? { background: visual.solid, color: visual.onSolid }
-                        : undefined
-                    }
-                  />
-                </span>
-              }
-            />
-            <TooltipContent>The last network in use stays on. Pause to stop.</TooltipContent>
-          </Tooltip>
+          {/* Switching off the last network in use pauses the download. */}
+          <Checkbox
+            checked={group.enabled}
+            onCheckedChange={(checked) => onSwitch(checked)}
+            aria-label={`Use ${visual.name}`}
+            className="shrink-0 data-checked:border-transparent"
+            style={group.enabled ? { background: visual.solid, color: visual.onSolid } : undefined}
+          />
           <TruncatedText
             text={visual.name}
             className={`font-sans text-[12.5px] leading-[1.2] font-semibold ${

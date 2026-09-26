@@ -165,7 +165,7 @@ export function registerIpcHandlers(getWindow: () => BrowserWindow | null): Down
   })
 
   handle('setDownloadNetwork', async (_event, id, networkId, enabled) => {
-    manager.setNetworkEnabled(id, networkId, enabled)
+    await manager.setNetworkEnabled(id, networkId, enabled)
   })
 
   handle('cancelDownload', async (_event, id) => manager.cancel(id))
