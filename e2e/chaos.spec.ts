@@ -149,12 +149,8 @@ test('any sequence of pauses, crashes and faults still ends in the exact file @c
           seed: fileSeed,
           bytesPerSecond: 512 * 1024
         }).start()
-        // Short measuring windows, so streams come and go within the run; kept automatic across
-        // the relaunches a crash or a quit brings.
-        const app = new PlexoApp(
-          dirs,
-          connections === 'auto' ? { PLEXO_E2E_STREAMS: '', PLEXO_E2E_PROBE_MS: '500' } : {}
-        )
+        // Kept automatic across the relaunches a crash or a quit brings.
+        const app = new PlexoApp(dirs, connections === 'auto' ? { PLEXO_E2E_STREAMS: '' } : {})
         const real: Real = { app, origin, id: '', faults: [] }
         origin.setRule(({ range }) =>
           range && !(range.start === 0 && range.end === 0) ? real.faults.shift() : undefined

@@ -16,13 +16,13 @@ export const DEFAULT_MAX_BLOCK_BYTES = 8 * MIB
  * megabyte the round trips cost more than splitting the file saves. */
 export const MIN_BLOCK_BYTES = MIB
 
-/** Streams each network starts with. Servers are built for browsers, which open about six
- * connections to a host, so four troubles none of them. */
-export const START_STREAMS_PER_NETWORK = 4
+/** Streams each network starts with, as download managers do (IDM, XDM: 8). From there it
+ * doubles once they are all receiving (see concurrency.ts). */
+export const START_STREAMS_PER_NETWORK = 8
 
-/** The most streams a network can grow to. A safety net for noisy speed readings rather than
- * the real limit, which is whether another stream still helps (see concurrency.ts). */
-export const MAX_STREAMS_PER_NETWORK = 16
+/** The most streams a network can grow to (IDM's limit). Enough for a far server, where TCP holds
+ * each connection to a megabyte or so a second; a server that wants fewer says so by refusing. */
+export const MAX_STREAMS_PER_NETWORK = 32
 
 /** Blocks planned per stream a network could grow to. Streams pull blocks as they free up, so a
  * fast network takes more of them — but only if there are more blocks than streams. With one

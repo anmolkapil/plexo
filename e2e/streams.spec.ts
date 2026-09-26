@@ -4,9 +4,6 @@ import { BLOCK, expect, test } from './fixtures'
 // server that limits it in each of the ways that matter.
 
 test.describe('automatic stream count', () => {
-  // Two ticks to a measuring window, so no one tick decides anything.
-  test.use({ appEnv: { PLEXO_E2E_PROBE_MS: '1000' } })
-
   const peakStreams = (plexo: { sessions: { chunks: unknown[] }[][] }): number =>
     Math.max(...plexo.sessions.at(-1)!.map((state) => state.chunks.length))
 

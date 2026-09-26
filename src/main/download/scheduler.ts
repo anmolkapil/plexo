@@ -10,7 +10,8 @@ import type { BlockState, ChunkState } from '../../shared/types'
 //            no block is left waiting, so it can never take bandwidth from work that still needs
 //            doing: what a hedge costs is bytes fetched twice at the very end, and what it buys is
 //            that one slow connection can no longer hold the whole download back. Whichever attempt
-//            finishes first wins; the other is dropped.
+//            finishes first wins; the others are dropped. It is handed out as soon as it would
+//            clearly finish first, and a block whose hedge is stuck too can be raced again.
 
 export interface AttemptView {
   kind: 'primary' | 'hedge'
@@ -32,16 +33,22 @@ export interface SchedulerState {
 }
 
 export interface SchedulerPolicy {
-  /** A block is hedged once its holder has been at it this long and still needs at least as long
-   * again. Long enough to have measured a real speed, and far more than a new connection costs. */
+  /** A block is only raced once every attempt at it has been going this long: long enough to
+   * have measured a real speed. */
   hedgeAfterMs: number
   /** Bounds the duplicate work on a block whose hedges keep failing. */
   maxHedgesPerBlock: number
+  /** What a new request costs before its first byte arrives (connecting, the server answering),
+   * counted into how long a hedge would take. */
+  startupMs: number
 }
 
 export interface Requester {
   id: number
   networkId: string
+  /** How fast this stream fetched its last block, if it has finished one. Without it, a block is
+   * only raced once its attempts need hedgeAfterMs more. */
+  speedBytesPerSec?: number
 }
 
 export interface Work {
@@ -66,7 +73,8 @@ function nextWaitingBlock(state: SchedulerState, networkId: string): BlockState 
   )
 }
 
-/** The block most worth a second attempt: the one whose holder will be longest yet. */
+/** The block most worth another attempt: the one that will be longest yet, if the requester
+ * would clearly beat it. A block is as slow as its fastest attempt. */
 function nextHedgeTarget(
   state: SchedulerState,
   who: Requester,
@@ -76,38 +84,49 @@ function nextHedgeTarget(
   // Only when everything left is already being fetched.
   if (state.blocks.some((block) => block.status === 'pending')) return undefined
 
+  const speedOf = (streamId: number): number =>
+    state.streams.find((stream) => stream.id === streamId)?.speedBytesPerSec ?? 0
+
   let target: BlockState | undefined
   let latest = 0
   for (const [index, attempts] of state.attempts) {
     const block = state.blocks[index]
     if (block?.index !== index || block.rangeEnd === null || block.status !== 'downloading')
       continue
-    // Lone primary only: one hedge at a time, and nothing to race if the holder let go.
-    if (attempts.length !== 1 || attempts[0].kind !== 'primary') continue
-    const holder = attempts[0]
-
-    if (holder.streamId === who.id) continue
+    // Nothing to race if every attempt let go: the block goes back to the queue instead.
+    if (attempts.length === 0 || !attempts.some((attempt) => attempt.kind === 'primary')) continue
+    if (attempts.some((attempt) => attempt.streamId === who.id)) continue
     if ((state.hedgesUsed.get(index) ?? 0) >= policy.maxHedgesPerBlock) continue
     // A network that got nothing from this block won't do better on a second try.
     if (state.avoid.get(index) === who.networkId) continue
-    if (now - holder.startedAt < policy.hedgeAfterMs) continue
+    // Speeds only mean something once every attempt has been going a while.
+    if (attempts.some((attempt) => now - attempt.startedAt < policy.hedgeAfterMs)) continue
 
     const remaining = block.rangeEnd - block.rangeStart + 1 - block.bytesDownloaded
     if (remaining <= 0) continue
-    const speed = state.streams.find((stream) => stream.id === holder.streamId)?.speedBytesPerSec
     // A holder that has gone quiet has no finish time at all.
-    const eta = speed ? (remaining / speed) * 1000 : Infinity
-    if (eta < policy.hedgeAfterMs) continue
+    const eta = Math.min(
+      ...attempts.map((attempt) => {
+        const speed = speedOf(attempt.streamId)
+        return speed ? (remaining / speed) * 1000 : Infinity
+      })
+    )
+    // Worth it only if the requester would finish in under half that time.
+    const mine = who.speedBytesPerSec
+      ? policy.startupMs + (remaining / who.speedBytesPerSec) * 1000
+      : policy.hedgeAfterMs
+    if (eta < 2 * mine) continue
 
-    // The holder's network may be what is slow, so a stream on another network gets the first
+    // The holders' network may be what is slow, so a stream on another network gets the first
     // go — unless none of those would take it either.
+    const holders = new Set(attempts.map((attempt) => attempt.networkId))
     const otherNetworkFree = state.streams.some(
       (stream) =>
-        stream.interfaceId !== holder.networkId &&
+        !holders.has(stream.interfaceId) &&
         stream.status === 'pending' &&
         state.avoid.get(index) !== stream.interfaceId
     )
-    if (holder.networkId === who.networkId && otherNetworkFree) continue
+    if (holders.has(who.networkId) && otherNetworkFree) continue
 
     if (eta > latest) {
       target = block

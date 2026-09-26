@@ -11,7 +11,7 @@ import type { BlockState, BlockStatus, ChunkStatus } from '../src/shared/types'
 // J. Who fetches what. Pure, so the races that decide it (which stream asked first, how far
 // along the holder is) are pinned down as inputs instead of left to timing.
 
-const POLICY: SchedulerPolicy = { hedgeAfterMs: 5000, maxHedgesPerBlock: 2 }
+const POLICY: SchedulerPolicy = { hedgeAfterMs: 5000, maxHedgesPerBlock: 2, startupMs: 1000 }
 const NOW = 100_000
 const LENGTH = 1000
 
@@ -54,8 +54,13 @@ function state(parts: {
   }
 }
 
-const pick = (s: SchedulerState, id: number, networkId: string): string | undefined => {
-  const work = pickWork(s, { id, networkId }, NOW, POLICY)
+const pick = (
+  s: SchedulerState,
+  id: number,
+  networkId: string,
+  speedBytesPerSec?: number
+): string | undefined => {
+  const work = pickWork(s, { id, networkId, speedBytesPerSec }, NOW, POLICY)
   return work && `${work.kind}:${work.block.index}`
 }
 
@@ -193,11 +198,42 @@ test.describe('scheduler: racing a slow block', () => {
     expect(pick(avoided, 2, 'a')).toBe('primary:1')
   })
 
-  test('one hedge at a time, and at most a few over a block’s life', () => {
-    const hedged = laggard(0, { attempts: [[0, [attempt(0, 'a'), attempt(1, 'a', 'hedge')]]] })
-    expect(pick(hedged, 2, 'a')).toBeUndefined()
+  test('a block whose hedge is stuck too is raced again, up to a few over its life', () => {
+    const streams = [
+      stream(0, 'a', 'downloading', 0),
+      stream(1, 'a', 'downloading', 0),
+      stream(2, 'a', 'pending')
+    ]
+    const hedged = laggard(0, {
+      streams,
+      attempts: [[0, [attempt(0, 'a'), attempt(1, 'a', 'hedge')]]],
+      hedgesUsed: [[0, 1]]
+    })
+    expect(pick(hedged, 2, 'a')).toBe('hedge:0')
     expect(pick(laggard(0, { hedgesUsed: [[0, 2]] }), 1, 'a')).toBeUndefined()
-    expect(pick(laggard(0, { hedgesUsed: [[0, 1]] }), 1, 'a')).toBe('hedge:0')
+  })
+
+  test('…but not while its hedge is doing fine', () => {
+    // The hedge will be done in 0.8 s: nobody could beat that.
+    const hedged = laggard(0, {
+      streams: [
+        stream(0, 'a', 'downloading', 0),
+        stream(1, 'a', 'downloading', 1000),
+        stream(2, 'a', 'pending')
+      ],
+      attempts: [[0, [attempt(0, 'a'), attempt(1, 'a', 'hedge')]]],
+      hedgesUsed: [[0, 1]]
+    })
+    expect(pick(hedged, 2, 'a')).toBeUndefined()
+  })
+
+  test('a free stream that has shown its speed races as soon as it would clearly finish first', () => {
+    // 800 bytes left at 100 B/s: 8 s. Too soon for the fixed wait, but a stream that fetched its
+    // last block at 800 B/s would be done in 1 s + 1 s startup.
+    expect(pick(laggard(100), 1, 'a')).toBeUndefined()
+    expect(pick(laggard(100), 1, 'a', 800)).toBe('hedge:0')
+    // Not when it would only finish a little sooner: at 200 B/s it needs 5 s, over half of 8 s.
+    expect(pick(laggard(100), 1, 'a', 200)).toBeUndefined()
   })
 
   test('a stream never races its own block', () => {
@@ -263,7 +299,7 @@ test.describe('scheduler: racing a slow block', () => {
     expect(pick(s, 1, 'a')).toBeUndefined()
   })
 
-  test('whatever is chosen is real work: a waiting block, or a lone primary’s block', () => {
+  test('whatever is chosen is real work: a waiting block, or a block still being fetched', () => {
     const networks = ['a', 'b']
     fc.assert(
       fc.property(
@@ -301,7 +337,9 @@ test.describe('scheduler: racing a slow block', () => {
           } else {
             expect(blocks.some((b) => b.status === 'pending')).toBe(false)
             expect(work.block.status).toBe('downloading')
-            expect(s.attempts.get(work.block.index)).toHaveLength(1)
+            const attempts = s.attempts.get(work.block.index) ?? []
+            expect(attempts.some((a) => a.kind === 'primary')).toBe(true)
+            expect(attempts.some((a) => a.streamId === 99)).toBe(false)
           }
         }
       )

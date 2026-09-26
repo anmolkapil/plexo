@@ -25,9 +25,7 @@ export const testKnobs = {
   slowWarmupMs: positiveNumber('PLEXO_E2E_SLOW_WARMUP_MS', 5_000),
   slowForMs: positiveNumber('PLEXO_E2E_SLOW_FOR_MS', 10_000),
   silentAfterMs: positiveNumber('PLEXO_E2E_SILENT_MS', 5_000),
-  hedgeAfterMs: positiveNumber('PLEXO_E2E_HEDGE_MS', 5_000),
-  /** How long each measurement of the stream-count controller runs (see concurrency.ts). */
-  probeWindowMs: positiveNumber('PLEXO_E2E_PROBE_MS', 2_000),
+  hedgeAfterMs: positiveNumber('PLEXO_E2E_HEDGE_MS', 2_000),
   /** Skips the real GitHub check and pretends this version is available, for exercising the
    * update banner without needing an actual newer release published. */
   forceUpdateVersion: env['PLEXO_FORCE_UPDATE_VERSION']

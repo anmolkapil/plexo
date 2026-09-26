@@ -312,7 +312,7 @@ export function checkEvents(sessions: DownloadState[][]): void {
       }
       if (state.status === 'downloading') {
         // A stream holds a block exactly while it is fetching it. A block has at most one stream
-        // fetching it for real and one racing it as a hedge, and is in flight whenever the first
+        // fetching it for real and two racing it as hedges, and is in flight whenever the first
         // is there. What the stream rows show is only as true as this.
         const primaries = new Map<number, number>()
         const hedges = new Map<number, number>()
@@ -328,8 +328,11 @@ export function checkEvents(sessions: DownloadState[][]): void {
           const tally = chunk.hedge ? hedges : primaries
           tally.set(chunk.currentBlockIndex, (tally.get(chunk.currentBlockIndex) ?? 0) + 1)
         }
-        for (const [index, count] of [...primaries, ...hedges]) {
-          expect(count, `${label}: block ${index} has one stream of each kind`).toBe(1)
+        for (const [index, count] of primaries) {
+          expect(count, `${label}: block ${index} has one stream fetching it`).toBe(1)
+        }
+        for (const [index, count] of hedges) {
+          expect(count, `${label}: block ${index} has at most two hedges`).toBeLessThanOrEqual(2)
         }
         for (const index of primaries.keys()) {
           expect(state.blocks?.[index]?.status, `${label}: held block ${index} is in flight`).toBe(
