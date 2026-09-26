@@ -24,6 +24,10 @@ nsis:
   # No ${arch} on purpose: one installer holds both x64 and ARM64, and docs/downloads.js reads an
   # installer with no architecture in its name as exactly that. Add one here and update it there.
   artifactName: ${name}-${version}-setup.${ext}
+  # Assisted installer instead of one-click, so users can choose the install folder (and drive).
+  # One-click always installs to %LOCALAPPDATA%\Programs with no way to change it.
+  oneClick: false
+  allowToChangeInstallationDirectory: true
   shortcutName: ${productName}
   uninstallDisplayName: ${productName}
   createDesktopShortcut: always

@@ -1,7 +1,5 @@
-import type { ClientRequestArgs } from 'node:http'
-import { connect, isIP, Socket, type SocketConstructorOpts } from 'node:net'
-import { networkInterfaces } from 'node:os'
-import { connect as tlsConnect } from 'node:tls'
+import { connect, Socket, type SocketConstructorOpts } from 'node:net'
+import type { NetworkRoute } from './routes'
 
 // Linux picks a socket's outgoing interface from the routing table alone: binding to an
 // interface's IP (Node's `localAddress`) still sends the packets out the default route, where the
@@ -10,6 +8,7 @@ import { connect as tlsConnect } from 'node:tls'
 // Unprivileged since Linux 5.7. macOS and Windows already route by source address.
 
 const AF_INET = 2
+const AF_INET6 = 10
 const SOCK_STREAM = 1
 const SOCK_CLOEXEC = 0o2000000
 const SOL_SOCKET = 1
@@ -26,8 +25,8 @@ interface Libc {
 let libc: Libc | null = null
 let support: Promise<boolean> | null = null
 
-function openOnDevice(lib: Libc, device: string): number {
-  const fd = lib.socket(AF_INET, SOCK_STREAM | SOCK_CLOEXEC, 0)
+function openOnDevice(lib: Libc, device: string, family: 4 | 6): number {
+  const fd = lib.socket(family === 6 ? AF_INET6 : AF_INET, SOCK_STREAM | SOCK_CLOEXEC, 0)
   if (fd < 0) throw new Error(`socket() failed (errno ${lib.errno()})`)
   if (
     lib.setsockopt(fd, SOL_SOCKET, SO_BINDTODEVICE, device, Buffer.byteLength(device) + 1) !== 0
@@ -53,7 +52,7 @@ export function deviceBindingSupported(): Promise<boolean> {
         errno: () => koffi.errno()
       }
       // Loopback always exists, so this only fails when the kernel refuses (EPERM before 5.7).
-      candidate.close(openOnDevice(candidate, 'lo'))
+      candidate.close(openOnDevice(candidate, 'lo', 4))
       libc = candidate
       return true
     } catch (error) {
@@ -64,24 +63,17 @@ export function deviceBindingSupported(): Promise<boolean> {
   return support
 }
 
-/** The interface to pin a connection to `host` to, if any. Loopback traffic never touches a
- * network, and a socket pinned to one can't reach it. */
-function deviceFor(localAddress: string, host: string): string | undefined {
-  if (host === 'localhost' || host.startsWith('127.')) return undefined
-  for (const [device, addresses] of Object.entries(networkInterfaces())) {
-    if (addresses?.some((addr) => addr.address === localAddress)) return device
+/** A TCP connection through the already chosen device, to a numeric remote address. */
+export function connectRoute(route: NetworkRoute, port: number): Socket {
+  const { device, localAddress, remoteAddress, family } = route
+  const loopback = remoteAddress === '::1' || remoteAddress.startsWith('127.')
+  if (!libc || loopback) {
+    return connect({ host: remoteAddress, port, localAddress, family })
   }
-  return undefined
-}
-
-/** A TCP connection to host:port that leaves through the interface owning `localAddress`. */
-export function connectFrom(localAddress: string, host: string, port: number): Socket {
-  const device = libc && deviceFor(localAddress, host)
-  if (!libc || !device) return connect({ host, port, localAddress, family: 4 })
 
   let fd: number
   try {
-    fd = openOnDevice(libc, device)
+    fd = openOnDevice(libc, device, family)
   } catch (error) {
     // The interface vanished since it was listed — surface it like any other connect error.
     const socket = new Socket()
@@ -89,38 +81,11 @@ export function connectFrom(localAddress: string, host: string, port: number): S
     return socket
   }
   // manualStart: a socket wrapped around an fd starts reading at once, before it's connected.
-  // No localAddress: the device already picks the source IP, and a second bind would fail.
+  // Bind both the device and source address: an interface may have several IPv6 addresses.
   return new Socket({ fd, manualStart: true } as SocketConstructorOpts).connect({
-    host,
+    host: remoteAddress,
     port,
-    family: 4
+    localAddress,
+    family
   })
-}
-
-/** Options that route an http(s) request for `target` through the interface owning
- * `localAddress`. Spread them after `port`. */
-export function routeFrom(
-  localAddress: string,
-  target: URL
-): Pick<
-  ClientRequestArgs,
-  'localAddress' | 'family' | 'createConnection' | 'port' | 'defaultPort'
-> {
-  // localAddress is always an IPv4 interface address, so the remote host has to resolve to
-  // IPv4 too, or binding fails with EINVAL when DNS hands back an IPv6 address instead.
-  if (!libc || !deviceFor(localAddress, target.hostname)) return { localAddress, family: 4 }
-
-  const secure = target.protocol === 'https:'
-  const defaultPort = secure ? 443 : 80
-  const port = Number(target.port) || defaultPort
-  const host = target.hostname
-  return {
-    // Without an agent, Node can't infer the scheme's port and would write it into Host.
-    port,
-    defaultPort,
-    createConnection: () => {
-      const socket = connectFrom(localAddress, host, port)
-      return secure ? tlsConnect({ socket, servername: isIP(host) ? undefined : host }) : socket
-    }
-  }
 }

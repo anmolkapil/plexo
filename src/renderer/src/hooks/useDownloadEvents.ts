@@ -3,16 +3,18 @@ import { useAppStore } from '../store/useAppStore'
 
 /** Subscribes once to main-process download progress pushes for the lifetime of the app. */
 export function useDownloadEvents(): void {
-  const setCurrentDownload = useAppStore((store) => store.setCurrentDownload)
+  const receiveDownloadUpdate = useAppStore((store) => store.receiveDownloadUpdate)
 
   useEffect(() => {
     let disposed = false
-    const unsubscribe = window.plexo.onDownloadUpdated(setCurrentDownload)
+    // Subscribed before the snapshot is asked for, so nothing sent in between is missed; each
+    // update carries a count, so whichever arrives late can't undo the other.
+    const unsubscribe = window.plexo.onDownloadUpdated(receiveDownloadUpdate)
 
     void window.plexo
       .getCurrentDownload()
-      .then((download) => {
-        if (!disposed && download) setCurrentDownload(download)
+      .then((snapshot) => {
+        if (!disposed && snapshot) receiveDownloadUpdate(snapshot)
       })
       .catch(() => {})
 
@@ -20,5 +22,5 @@ export function useDownloadEvents(): void {
       disposed = true
       unsubscribe()
     }
-  }, [setCurrentDownload])
+  }, [receiveDownloadUpdate])
 }

@@ -22,7 +22,6 @@ import {
 } from '../components/ui/alert-dialog'
 import { Button, buttonVariants } from '../components/ui/button'
 import { Tooltip, TooltipContent, TooltipTrigger } from '../components/ui/tooltip'
-import { useNetworkPolling } from '../hooks/useNetworkPolling'
 import { useNetworkVisuals } from '../hooks/useNetworkVisuals'
 import { useAppStore } from '../store/useAppStore'
 import { KIND_PALETTE, NETWORK_ROW_GRID_COLUMNS } from '../theme'
@@ -33,7 +32,8 @@ import {
   formatEta,
   formatPercent,
   formatSpeed,
-  groupChunksByInterface,
+  groupByNetwork,
+  networksInPlay,
   splitFormattedBytes,
   toDisplayPath
 } from '../utils/format'
@@ -52,8 +52,7 @@ function InlineStat({ label, value }: { label: string; value: string }): React.J
   )
 }
 
-/** The hero band's headline figure: a tracked-out label over one big tabular number and its unit.
- * Both states of the band (total speed, assembly progress) are this same shape. */
+/** The hero band's headline figure: a tracked-out label over one big tabular number and its unit. */
 function BigStat({
   label,
   value,
@@ -86,38 +85,24 @@ function BigStat({
   )
 }
 
-/** Says why a footer action is unavailable, and only while it is — a tooltip on a button you can
- * actually press has nothing to explain. */
-function WhileAssembling({
-  active,
-  text,
-  children
-}: {
-  active: boolean
-  text: string
-  children: React.ReactElement
-}): React.JSX.Element {
-  return (
-    <Tooltip open={active ? undefined : false}>
-      <TooltipTrigger render={children} />
-      <TooltipContent>{text}</TooltipContent>
-    </Tooltip>
-  )
+/** What the download is waiting on, when no network is carrying it. */
+function waitingFor(download: DownloadState): string | null {
+  if (download.status !== 'downloading') return null
+  const enabled = download.networks.filter((network) => network.enabled)
+  if (enabled.some((network) => network.status === 'on')) return null
+  return enabled.some((network) => network.status === 'unreachable')
+    ? 'Can’t reach the server. Retrying…'
+    : 'Waiting for a network. Reconnect one or switch one on.'
 }
 
 export function DownloadingScreen({ download }: { download: DownloadState }): React.JSX.Element {
-  useNetworkPolling(true)
-
   const homeDir = useAppStore((store) => store.homeDir)
   const speedHistory = useAppStore((store) => store.speedHistory)
   const speedHistoryByInterface = useAppStore((store) => store.speedHistoryByInterface)
   const peakSpeedBytesPerSec = useAppStore((store) => store.peakSpeedBytesPerSec)
   const networkVisual = useNetworkVisuals()
   const isPaused = download.status === 'paused'
-  const isAssembling = download.status === 'assembling'
   const percent = formatPercent(download.bytesDownloaded, download.totalBytes)
-  const assembledBytes = download.assembledBytes ?? 0
-  const assemblePercent = formatPercent(assembledBytes, download.totalBytes)
   const knownSize = download.totalBytes > 0
   const [now, setNow] = useState(() => Date.now())
 
@@ -139,9 +124,7 @@ export function DownloadingScreen({ download }: { download: DownloadState }): Re
   }, [isPaused, download.error])
 
   useEffect(() => {
-    if (isAssembling) {
-      document.title = `Plexo — Assembling (${assemblePercent}%)`
-    } else if (isPaused) {
+    if (isPaused) {
       document.title = knownSize ? `Plexo — Paused (${percent}%)` : 'Plexo — Paused'
     } else {
       document.title = knownSize ? `Plexo — ${percent}%` : 'Plexo — downloading'
@@ -149,7 +132,7 @@ export function DownloadingScreen({ download }: { download: DownloadState }): Re
     return () => {
       document.title = 'Plexo'
     }
-  }, [percent, assemblePercent, knownSize, isPaused, isAssembling])
+  }, [percent, knownSize, isPaused])
 
   const totalPausedMs =
     (download.totalPausedMs || 0) +
@@ -170,14 +153,17 @@ export function DownloadingScreen({ download }: { download: DownloadState }): Re
 
   const effectiveSpeed = isPaused ? 0 : download.speedBytesPerSec
   const speed = splitFormattedBytes(effectiveSpeed)
-  const groups = groupChunksByInterface(download.chunks)
-  const totalDownloadedByNetworks = groups.reduce((sum, g) => sum + g.bytesDownloaded, 0)
-  const visuals = groups.map((group) =>
-    networkVisual(group.interfaceId, group.interfaceKind, group.interfaceLabel)
-  )
+  // Every network is a row, for switching it on or off; the charts draw only those in play.
+  const rows = groupByNetwork(download)
+  const rowVisuals = rows.map((row) => networkVisual(row.id, row.kind, row.label))
+  const enabledCount = rows.filter((row) => row.enabled).length
+  const groups = networksInPlay(rows)
+  const visuals = groups.map((group) => networkVisual(group.id, group.kind, group.label))
+  const totalDownloadedByNetworks = rows.reduce((sum, row) => sum + row.bytesDownloaded, 0)
   const [chipModeIndex, setChipModeIndex] = useState(0)
+  const waiting = waitingFor(download)
 
-  const totalRetries = download.chunks.reduce((sum, chunk) => sum + chunk.retryCount, 0)
+  const totalRetries = rows.reduce((sum, row) => sum + row.retries, 0)
   const remainingBytes = knownSize ? Math.max(0, download.totalBytes - download.bytesDownloaded) : 0
 
   const avgSpeedBytesPerSec = elapsedSeconds > 0 ? download.bytesDownloaded / elapsedSeconds : 0
@@ -209,81 +195,64 @@ export function DownloadingScreen({ download }: { download: DownloadState }): Re
   const activeChipOption =
     chipOptions.length > 0 ? chipOptions[chipModeIndex % chipOptions.length] : null
 
-  const statusBadge = isAssembling
-    ? { label: 'ASSEMBLING', palette: KIND_PALETTE.ethernet }
-    : isPaused
-      ? { label: 'PAUSED', palette: KIND_PALETTE.usb }
-      : null
+  const statusBadge = isPaused ? { label: 'PAUSED', palette: KIND_PALETTE.usb } : null
 
-  const throughputStatusLabel = isAssembling
-    ? 'ASSEMBLING'
-    : isPaused
-      ? null
-      : `LAST ${speedHistory.length}S`
+  const throughputStatusLabel = isPaused ? null : `LAST ${speedHistory.length}S`
   const pauseResumeLabel = resuming ? 'Resuming…' : isPaused ? 'Resume' : 'Pause'
 
   return (
     <div className="flex h-full flex-col bg-background">
+      {/* Hero band — always visible at top */}
       <HeroBand>
         <div className="flex items-center gap-[14px]">
           <CombineDiagram
             networks={groups.map((group, index) => ({
               solid: visuals[index].solid,
               label: visuals[index].name,
-              speedBytesPerSec: isPaused || isAssembling ? 0 : group.speedBytesPerSec
+              speedBytesPerSec: isPaused ? 0 : group.speedBytesPerSec
             }))}
             paused={isPaused}
-            assembling={isAssembling}
           />
 
           <div className="flex min-w-[130px] shrink-0 flex-col gap-[7px]">
-            {isAssembling ? (
+            <>
               <BigStat
-                label="ASSEMBLING"
-                value={assemblePercent}
-                unit="%"
-                valueClass="text-[var(--color-ethernet)]"
+                label="TOTAL SPEED"
+                value={isPaused ? '—' : speed.value}
+                unit={isPaused ? undefined : `${speed.unit}/s`}
+                valueClass={isPaused ? 'text-muted-foreground' : 'text-foreground'}
               />
-            ) : (
-              <>
-                <BigStat
-                  label="TOTAL SPEED"
-                  value={isPaused ? '—' : speed.value}
-                  unit={isPaused ? undefined : `${speed.unit}/s`}
-                  valueClass={isPaused ? 'text-muted-foreground' : 'text-foreground'}
-                />
-                <div className="flex items-center gap-2 font-mono text-[10px] leading-none font-medium tabular-nums text-muted-foreground">
-                  <InlineStat label="AVG" value={formatSpeed(avgSpeedBytesPerSec)} />
-                  <Dot />
-                  <InlineStat label="PEAK" value={formatSpeed(peakSpeedBytesPerSec)} />
-                </div>
-                {isPaused
-                  ? download.error && (
-                      <div
-                        role="alert"
-                        className="mt-0.5 font-sans text-[11px] leading-[1.2] font-medium text-destructive"
-                      >
-                        {download.error}
-                      </div>
-                    )
-                  : activeChipOption && (
-                      <CyclableChip
-                        label={activeChipOption.label}
-                        tooltip={`${activeChipOption.tooltip}${chipOptions.length > 1 ? ' (click to toggle)' : ''}`}
-                        bg={activeChipOption.visual.bg}
-                        border={activeChipOption.visual.border}
-                        color={activeChipOption.visual.text}
-                        cyclable={chipOptions.length > 1}
-                        onClick={() => setChipModeIndex((i) => (i + 1) % chipOptions.length)}
-                      />
-                    )}
-              </>
-            )}
+              <div className="flex items-center gap-2 font-mono text-[10px] leading-none font-medium tabular-nums text-muted-foreground">
+                <InlineStat label="AVG" value={formatSpeed(avgSpeedBytesPerSec)} />
+                <Dot />
+                <InlineStat label="PEAK" value={formatSpeed(peakSpeedBytesPerSec)} />
+              </div>
+              {isPaused || waiting
+                ? (download.error || waiting) && (
+                    <div
+                      role="alert"
+                      className="mt-0.5 font-sans text-[11px] leading-[1.2] font-medium text-destructive"
+                    >
+                      {download.error ?? waiting}
+                    </div>
+                  )
+                : activeChipOption && (
+                    <CyclableChip
+                      label={activeChipOption.label}
+                      tooltip={`${activeChipOption.tooltip}${chipOptions.length > 1 ? ' (click to toggle)' : ''}`}
+                      bg={activeChipOption.visual.bg}
+                      border={activeChipOption.visual.border}
+                      color={activeChipOption.visual.text}
+                      cyclable={chipOptions.length > 1}
+                      onClick={() => setChipModeIndex((i) => (i + 1) % chipOptions.length)}
+                    />
+                  )}
+            </>
           </div>
 
           <div
             className={`min-w-0 flex-1 transition-opacity duration-200 ${
-              isPaused || isAssembling ? 'opacity-45' : 'opacity-100'
+              isPaused ? 'opacity-45' : 'opacity-100'
             }`}
           >
             <div className="font-mono text-[9.5px] leading-none font-medium tracking-[0.12em] text-muted-foreground">
@@ -291,7 +260,7 @@ export function DownloadingScreen({ download }: { download: DownloadState }): Re
             </div>
             <ThroughputChart
               order={groups.map((g, i) => ({
-                interfaceId: g.interfaceId,
+                interfaceId: g.id,
                 solid: visuals[i].solid
               }))}
               historyByInterface={speedHistoryByInterface}
@@ -300,7 +269,8 @@ export function DownloadingScreen({ download }: { download: DownloadState }): Re
         </div>
       </HeroBand>
 
-      <div className="flex flex-col gap-3 p-[16px_20px_18px]">
+      {/* File info — always visible, never shrinks */}
+      <div className="shrink-0 p-[16px_20px_0px]">
         <div className="flex items-center gap-[14px]">
           <div className="flex size-11 shrink-0 items-center justify-center rounded-[10px] border-[0.5px] border-[var(--border-strong)] bg-card font-mono text-[10.5px] leading-none font-bold tracking-[0.04em] text-[var(--text-secondary)]">
             {fileExtensionBadge(download.fileName)}
@@ -312,18 +282,16 @@ export function DownloadingScreen({ download }: { download: DownloadState }): Re
             />
             <div className="mt-1 flex items-center gap-[7px] font-mono text-[12.5px] leading-[1.2] tabular-nums text-[var(--text-secondary)]">
               <span>
-                {formatBytes(isAssembling ? assembledBytes : download.bytesDownloaded)}
+                {formatBytes(download.bytesDownloaded)}
                 {knownSize ? ` of ${formatBytes(download.totalBytes)}` : ''}
               </span>
               {knownSize && (
                 <>
                   <Dot />
-                  <span className="font-semibold text-foreground">
-                    {isAssembling ? assemblePercent : percent}%
-                  </span>
+                  <span className="font-semibold text-foreground">{percent}%</span>
                 </>
               )}
-              {!isPaused && !isAssembling && knownSize && effectiveSpeed > 0 && (
+              {!isPaused && knownSize && effectiveSpeed > 0 && (
                 <>
                   <Dot />
                   <span className="text-[var(--text-secondary)]">
@@ -348,7 +316,10 @@ export function DownloadingScreen({ download }: { download: DownloadState }): Re
             </div>
           </div>
         </div>
+      </div>
 
+      {/* Block grid + network table — share remaining flexible space, scroll internally */}
+      <div className="flex min-h-0 flex-1 flex-col overflow-y-auto px-5 pt-3 pb-2">
         <BlockGrid
           blocks={download.blocks}
           groups={groups}
@@ -356,52 +327,56 @@ export function DownloadingScreen({ download }: { download: DownloadState }): Re
           knownSize={knownSize}
           remainingBytes={remainingBytes}
           isPaused={isPaused}
-          assembling={isAssembling}
-          assembledBytes={assembledBytes}
         />
-      </div>
 
-      <div className="flex-1 overflow-x-hidden overflow-y-auto">
-        <div
-          role="table"
-          aria-label="Networks"
-          className="grid gap-x-3"
-          style={{ gridTemplateColumns: NETWORK_ROW_GRID_COLUMNS }}
-        >
+        <div className="mt-3">
           <div
-            role="row"
-            className="col-span-full grid grid-cols-subgrid gap-x-3 border-b border-border pt-2.5 pb-[7px] font-mono text-[9.5px] leading-none tracking-[0.12em] text-muted-foreground uppercase"
+            role="table"
+            aria-label="Networks"
+            className="grid gap-x-3"
+            style={{ gridTemplateColumns: NETWORK_ROW_GRID_COLUMNS }}
           >
-            <div role="columnheader" aria-label="Status" />
-            <div role="columnheader">Network</div>
-            <div role="columnheader">Progress</div>
-            <div role="columnheader" className="text-right">
-              Share
+            <div
+              role="row"
+              className="col-span-full grid grid-cols-subgrid gap-x-3 border-b border-border pt-2.5 pb-[7px] font-mono text-[9.5px] leading-none tracking-[0.12em] text-muted-foreground uppercase"
+            >
+              <div role="columnheader" aria-label="Status" />
+              <div role="columnheader">Network</div>
+              <div role="columnheader">Progress</div>
+              <div role="columnheader" className="text-right">
+                Share
+              </div>
+              <div role="columnheader" className="text-right">
+                Speed
+              </div>
+              <div role="columnheader" className="pr-5 text-right">
+                Downloaded
+              </div>
             </div>
-            <div role="columnheader" className="text-right">
-              Speed
-            </div>
-            <div role="columnheader" className="pr-5 text-right">
-              Downloaded
-            </div>
+            {rows.map((row, index) => (
+              <NetworkRow
+                key={row.id}
+                group={row}
+                visual={rowVisuals[index]}
+                sharePercent={
+                  totalDownloadedByNetworks > 0
+                    ? (row.bytesDownloaded / totalDownloadedByNetworks) * 100
+                    : 0
+                }
+                totalBytes={download.totalBytes}
+                blocks={download.blocks}
+                // The last network in use stays on: Pause is how a download stops.
+                canSwitch={!(row.enabled && enabledCount === 1)}
+                onSwitch={(enabled) =>
+                  void window.plexo.setDownloadNetwork(download.id, row.id, enabled)
+                }
+              />
+            ))}
           </div>
-          {groups.map((group, index) => (
-            <NetworkRow
-              key={group.interfaceId}
-              group={group}
-              visual={visuals[index]}
-              sharePercent={
-                totalDownloadedByNetworks > 0
-                  ? (group.bytesDownloaded / totalDownloadedByNetworks) * 100
-                  : 0
-              }
-              totalBytes={download.totalBytes}
-              blocks={download.blocks}
-            />
-          ))}
         </div>
       </div>
 
+      {/* Footer is always pinned at the bottom, never scrolled off-screen */}
       <ScreenFooter>
         <div className="flex min-w-0 flex-1 items-center gap-[7px] overflow-hidden font-mono text-[11px] leading-[1.4] text-muted-foreground">
           <Tooltip>
@@ -425,34 +400,22 @@ export function DownloadingScreen({ download }: { download: DownloadState }): Re
             </>
           )}
         </div>
-        <WhileAssembling active={isAssembling} text="Can’t pause while assembling the file">
-          <Button
-            type="button"
-            variant={isPaused ? 'default' : 'secondary'}
-            onClick={handlePauseResume}
-            disabled={isAssembling || resuming}
-            // Disabled natively means unhoverable/unfocusable, which would silence this button's
-            // own explanatory tooltip exactly when it's needed — keep it reachable instead.
-            focusableWhenDisabled
-          >
-            {pauseResumeLabel}
-          </Button>
-        </WhileAssembling>
+        <Button
+          type="button"
+          variant={isPaused ? 'default' : 'secondary'}
+          onClick={handlePauseResume}
+          disabled={resuming}
+        >
+          {pauseResumeLabel}
+        </Button>
         <AlertDialog>
-          <WhileAssembling active={isAssembling} text="Can’t cancel while assembling the file">
-            <AlertDialogTrigger
-              render={
-                <Button
-                  type="button"
-                  variant="destructive"
-                  disabled={isAssembling}
-                  focusableWhenDisabled
-                >
-                  Cancel
-                </Button>
-              }
-            />
-          </WhileAssembling>
+          <AlertDialogTrigger
+            render={
+              <Button type="button" variant="destructive">
+                Cancel
+              </Button>
+            }
+          />
           <AlertDialogContent>
             <AlertDialogHeader>
               <AlertDialogTitle>Cancel this download?</AlertDialogTitle>

@@ -1,7 +1,7 @@
 import { execFile } from 'node:child_process'
 import { networkInterfaces } from 'node:os'
 import { promisify } from 'node:util'
-import type { NetworkInterfaceInfo, NetworkInterfaceKind } from '../../shared/types'
+import type { NetworkAddress, NetworkInterfaceInfo, NetworkInterfaceKind } from '../../shared/types'
 import { testInterfaces } from '../testKnobs'
 
 const execFileAsync = promisify(execFile)
@@ -78,26 +78,68 @@ async function getWindowsAdapters(): Promise<Map<string, WindowsAdapter>> {
   }
 }
 
+/** Computes the CIDR subnet (e.g. "192.168.1.0/24") from an IPv4 address and netmask. */
+export function ipv4Subnet(address: string, netmask: string): string | null {
+  const ipParts = address.split('.').map(Number)
+  const maskParts = netmask.split('.').map(Number)
+  if (ipParts.length !== 4 || maskParts.length !== 4) return null
+  if (
+    ipParts.some((p) => isNaN(p) || p < 0 || p > 255) ||
+    maskParts.some((p) => isNaN(p) || p < 0 || p > 255)
+  ) {
+    return null
+  }
+  const subnetParts = ipParts.map((part, i) => part & maskParts[i])
+  const maskBits =
+    maskParts
+      .map((b) => b.toString(2).padStart(8, '0'))
+      .join('')
+      .split('1').length - 1
+  return `${subnetParts.join('.')}/${maskBits}`
+}
+
+/** What the OS calls each device, looked up again only when the set of devices changes: it
+ * takes a child process, while the addresses themselves are one cheap system call. */
+let labels: {
+  devices: string
+  lookup: Promise<[Map<string, string>, Map<string, WindowsAdapter>]>
+} | null = null
+
 /**
- * Active non-loopback IPv4 interfaces. Each one has its
- * own local IP, which is what lets us bind a download's outgoing connection
- * to a specific interface (see deviceBinding's `routeFrom`).
+ * Active non-loopback interfaces, with every usable local address on each device.
  */
 export async function listActiveInterfaces(): Promise<NetworkInterfaceInfo[]> {
   const overridden = testInterfaces()
   if (overridden) return overridden
 
-  const hardwarePorts = await getMacHardwarePortNames()
-  const windowsAdapters = await getWindowsAdapters()
   const all = networkInterfaces()
+  const devices = Object.keys(all).sort().join('\n')
+  if (labels?.devices !== devices) {
+    labels = { devices, lookup: Promise.all([getMacHardwarePortNames(), getWindowsAdapters()]) }
+  }
+  const [hardwarePorts, windowsAdapters] = await labels.lookup
   const result: NetworkInterfaceInfo[] = []
 
   for (const [device, addresses] of Object.entries(all)) {
     if (!addresses) continue
-    const ipv4 = addresses.find(
-      (addr) => addr.family === 'IPv4' && !addr.internal && !addr.address.startsWith('169.254.')
-    )
-    if (!ipv4) continue
+    const usable: NetworkAddress[] = addresses
+      .filter(
+        (addr) =>
+          !addr.internal &&
+          (addr.family === 'IPv4' || addr.family === 'IPv6') &&
+          !addr.address.startsWith('169.254.') &&
+          !addr.address.toLowerCase().startsWith('fe80:')
+      )
+      .map((addr) => ({
+        address: addr.address,
+        family: addr.family === 'IPv6' ? 6 : 4,
+        netmask: addr.netmask,
+        subnet:
+          addr.family === 'IPv4' && addr.netmask
+            ? (ipv4Subnet(addr.address, addr.netmask) ?? undefined)
+            : undefined
+      }))
+    if (usable.length === 0) continue
 
     const hardwareName = hardwarePorts.get(device)
     const adapter = windowsAdapters.get(device)
@@ -109,11 +151,52 @@ export async function listActiveInterfaces(): Promise<NetworkInterfaceInfo[]> {
       id: device,
       device,
       displayName: hardwareName ?? adapter?.InterfaceDescription ?? device,
-      address: ipv4.address,
+      addresses: usable,
       kind,
-      mac: ipv4.mac && ipv4.mac !== '00:00:00:00:00:00' ? ipv4.mac : undefined
+      mac: addresses.find((addr) => addr.mac && addr.mac !== '00:00:00:00:00:00')?.mac
     })
   }
 
   return result
+}
+
+const POLL_MS = 1000
+
+/**
+ * The computer's networks, kept current: nothing tells a process when a network appears, drops
+ * or gets a new address, so it looks every second. `onChange` hears of every change.
+ */
+export class NetworkMonitor {
+  private list: NetworkInterfaceInfo[] | null = null
+  private polling: Promise<NetworkInterfaceInfo[]> = Promise.resolve([])
+
+  constructor(private readonly onChange: (networks: NetworkInterfaceInfo[]) => void) {
+    void this.refresh()
+    setInterval(() => void this.refresh(), POLL_MS).unref()
+  }
+
+  /** Null until the first look has finished. */
+  get current(): NetworkInterfaceInfo[] | null {
+    return this.list
+  }
+
+  find(id: string): NetworkInterfaceInfo | undefined {
+    return this.list?.find((iface) => iface.id === id)
+  }
+
+  /** Looks now, rather than at the next poll. Looks run one at a time, so the last word is
+   * always the newest. */
+  refresh(): Promise<NetworkInterfaceInfo[]> {
+    this.polling = this.polling
+      .catch(() => [])
+      .then(async () => {
+        const next = await listActiveInterfaces().catch(() => this.list ?? [])
+        if (JSON.stringify(next) !== JSON.stringify(this.list)) {
+          this.list = next
+          this.onChange(next)
+        }
+        return next
+      })
+    return this.polling
+  }
 }

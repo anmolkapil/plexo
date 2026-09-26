@@ -1,4 +1,13 @@
 export type NetworkInterfaceKind = 'wifi' | 'usb' | 'ethernet' | 'bridge' | 'other'
+export type IpFamily = 4 | 6
+
+export interface NetworkAddress {
+  address: string
+  family: IpFamily
+  netmask?: string
+  /** Used by the existing IPv4 same-subnet warning. */
+  subnet?: string
+}
 
 export type ThemeSource = 'light' | 'dark'
 
@@ -7,7 +16,7 @@ export interface NetworkInterfaceInfo {
   id: string
   device: string
   displayName: string
-  address: string
+  addresses: NetworkAddress[]
   kind: NetworkInterfaceKind
   mac?: string
 }
@@ -26,29 +35,28 @@ export interface ProbeResult {
   lastModified: string | null
 }
 
-export type DownloadStatus =
-  'downloading' | 'assembling' | 'paused' | 'completed' | 'error' | 'cancelled'
+export type DownloadStatus = 'downloading' | 'paused' | 'completed' | 'error' | 'cancelled'
 
 /** A stream's state. `pending` means it is waiting for work: it holds no block, either because
  * none is free for it right now or because it hasn't started. `downloading` always means it is
- * fetching one (`currentBlockIndex` says which). */
+ * fetching one (`currentBlockIndex` says which). A stream that fails for good leaves the list;
+ * what went wrong is its network's to report (see DownloadNetwork). */
 export type ChunkStatus =
-  'pending' | 'downloading' | 'retrying' | 'paused' | 'completed' | 'error' | 'cancelled'
+  'pending' | 'downloading' | 'retrying' | 'paused' | 'completed' | 'cancelled'
 
+/** One connection to the server, through one network. Streams come and go as the download
+ * runs; what a network has done is kept on its DownloadNetwork. */
 export interface ChunkState {
   id: number
+  /** The network it runs on: a DownloadNetwork's id. */
   interfaceId: string
-  interfaceLabel: string
-  interfaceKind: NetworkInterfaceKind
   rangeStart: number
   /** null means an open-ended range (download to end of file). */
   rangeEnd: number | null
+  /** New bytes it has delivered. */
   bytesDownloaded: number
   speedBytesPerSec: number
   status: ChunkStatus
-  error?: string
-  /** Number of times this chunk's connection has been retried after a dropped/failed attempt. */
-  retryCount: number
   /** The block this stream is fetching. Unset whenever it holds none (idle, retrying, paused, done). */
   currentBlockIndex?: number
   /** True while this stream is racing another stream for `currentBlockIndex`, because that one
@@ -56,7 +64,7 @@ export interface ChunkState {
   hedge?: boolean
 }
 
-export type BlockStatus = 'pending' | 'downloading' | 'completed' | 'error'
+export type BlockStatus = 'pending' | 'downloading' | 'completed'
 
 export interface BlockState {
   index: number
@@ -75,6 +83,35 @@ export interface BlockState {
   bytesByInterface: Record<string, number>
 }
 
+/**
+ * - on: in use.
+ * - off: the user switched it off. A network that turns up mid-download starts off.
+ * - offline: not connected to this computer. It's used again as soon as it is.
+ * - unreachable: connected, but the server can't be reached through it. One connection keeps
+ *   trying, and the rest follow once it gets through.
+ * - failed: the server kept refusing requests over it (`error` says how). Switching it off and
+ *   on, reconnecting it, or resuming tries again.
+ */
+export type NetworkStatus = 'on' | 'off' | 'offline' | 'unreachable' | 'failed'
+
+/** A network as one download sees it: whether the user has it on, and how it is doing. */
+export interface DownloadNetwork {
+  /** A NetworkInterfaceInfo id. */
+  id: string
+  /** Its name and kind as the OS last reported them. */
+  label: string
+  kind: NetworkInterfaceKind
+  /** The user's choice; `status` is what came of it. */
+  enabled: boolean
+  status: NetworkStatus
+  error?: string
+  /** Bytes of the file it delivered. */
+  bytesDownloaded: number
+  speedBytesPerSec: number
+  /** Requests over it that failed and were tried again. */
+  retries: number
+}
+
 export interface DownloadState {
   id: string
   url: string
@@ -85,19 +122,37 @@ export interface DownloadState {
   bytesDownloaded: number
   speedBytesPerSec: number
   status: DownloadStatus
+  /** Every network on this computer, and any the download used that has since gone, in the
+   * order it first saw them. */
+  networks: DownloadNetwork[]
   chunks: ChunkState[]
+  /** The most streams it has run at once. */
+  peakStreams?: number
   blocks?: BlockState[]
   totalBlocks?: number
   blockSizeBytes?: number
   error?: string
+  /** For an error: whether resuming can pick up where it stopped. False when the progress was
+   * thrown away, e.g. the file changed on the server. */
+  resumable?: boolean
   startedAt: number
   pausedAt?: number
   totalPausedMs?: number
   completedAt?: number
-  /** Bytes written to the destination file so far while `status` is 'assembling' — the part
-   * files are already all complete at that point, so this tracks the sequential reassembly step
-   * rather than the network transfer. */
-  assembledBytes?: number
+  /** The update this state is as of (see DownloadUpdate). */
+  seq?: number
+}
+
+/** What the main process sends as a download changes: everything but its blocks, and only the
+ * blocks that changed since it last sent. A download can have tens of thousands of blocks, and
+ * copying every one several times a second would cost the process that carries every byte. A
+ * snapshot is the same with every block in it. */
+export interface DownloadUpdate {
+  /** Counts what the main process has sent for the download. A snapshot has the count it was
+   * taken at. */
+  seq: number
+  state: Omit<DownloadState, 'blocks'>
+  blocks: BlockState[]
 }
 
 /** User customization for one physical network, keyed by NetworkInterfaceInfo.id — lets a
@@ -112,34 +167,6 @@ export interface NetworkPreference {
 
 export type NetworkPreferences = Record<string, NetworkPreference>
 
-/** One fake network in a dev-tool "virtual download" — see SimulatedNetworkConfig callers in
- * main/download/simDownload.ts. Lets a developer exercise the multi-network UI (the block grid,
- * per-network speed/throughput, retries, errors, assembling) against a file already on disk,
- * without needing a real flaky connection or a slow remote server to test against. */
-export interface SimulatedNetworkConfig {
-  kind: NetworkInterfaceKind
-  label: string
-  /** Target sustained throughput for this simulated network, in bytes/sec. */
-  speedBytesPerSec: number
-  /** 0-100 chance a chunk attempt on this network fails outright, simulating a dropped
-   * connection — set above 0 to exercise the retry/error UI on demand. */
-  faultRatePercent: number
-}
-
-export interface StartSimulatedDownloadRequest {
-  /** Absolute path to a file already on disk — this is what gets "downloaded". */
-  sourceFilePath: string
-  destinationDir: string
-  networks: SimulatedNetworkConfig[]
-  chunkCount: number
-  connectionsPerNetwork?: number
-  /** Throttles the reassembly step to this many bytes/sec, so the 'assembling' phase's UI (the
-   * block grid sweep, the combine diagram) stays visible long enough to watch even on a small
-   * file that would otherwise reassemble in a single tick. Omitted or 0 assembles at full disk
-   * speed, same as a real download. */
-  assembleSpeedBytesPerSec?: number
-}
-
 export interface UpdateInfo {
   version: string
   /** Where clicking the notification should take the user — the landing page's downloads. */
@@ -149,11 +176,26 @@ export interface UpdateInfo {
   dismissed: boolean
 }
 
-export interface InitialPaths {
+/** What app-settings.json holds, and what the renderer sends to change it (merged over the saved
+ * values, `undefined` clearing one). A missing field was never set. */
+export interface AppSettings {
+  themeSource?: ThemeSource
+  dismissedUpdateVersion?: string
+  /** The last destination folder picked. */
+  destinationDir?: string
+  /** User customizations (name/color) per network interface id. */
+  networkPreferences?: NetworkPreferences
+}
+
+/** Everything the renderer needs for its first paint, read synchronously by the preload so no
+ * saved value flashes in over a default a moment after launch. */
+export interface InitialState {
   homeDir: string
   downloadsDir: string
-  /** True in electron-vite's dev server, false in a packaged build — gates the dev tools panel. */
-  isDev: boolean
+  themeSource: ThemeSource
+  networkPreferences: NetworkPreferences
+  /** The last folder picked, if it still exists — otherwise the renderer uses downloadsDir. */
+  destinationDir?: string
 }
 
 export interface StartDownloadRequest {
@@ -163,11 +205,8 @@ export interface StartDownloadRequest {
   /** 0 means unknown. */
   totalBytes: number
   supportsRanges: boolean
+  /** The networks to start on. Every other one starts switched off. */
   interfaceIds: string[]
-  /** Total chunks to split the download into across interfaceIds. */
-  chunkCount: number
-  /** Number of parallel connections allocated per physical network. */
-  connectionsPerNetwork?: number
   etag: string | null
   lastModified: string | null
   /** Optional custom headers (e.g. Cookie, Referer, User-Agent) forwarded to all chunk requests. */

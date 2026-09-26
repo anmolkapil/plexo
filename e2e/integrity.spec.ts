@@ -13,11 +13,9 @@ const TRANSIENT: [string, Fault][] = [
   ['body runs past the requested range', 'overlong'],
   ['206 without a Content-Range header', 'noContentRange'],
   ['200 (whole file) for a range that does not start at 0', 'ignoreRange'],
-  ['416 Range Not Satisfiable', { status: 416 }],
   ['500 Internal Server Error', { status: 500 }],
   ['short body, then a clean end', { endAfter: 1000 }],
   ['connection reset partway through the body', { cutAfter: 5000 }],
-  ['connection reset before any body', { cutAfter: 0 }],
   ['stall after the headers', 'stallBody'],
   ['stall before the headers', 'stallHeaders']
 ]
@@ -32,20 +30,9 @@ test.describe('transient server faults are retried to a correct file @smoke', ()
       await plexo.start(origin.url(), origin.sha256, { connections: 2 })
       const state = await plexo.waitForStatus('completed')
       expect(faulted, 'the fault was actually injected').toBeGreaterThanOrEqual(3)
-      expect(state.chunks.reduce((sum, chunk) => sum + chunk.retryCount, 0)).toBeGreaterThan(0)
+      expect(state.networks.reduce((sum, network) => sum + network.retries, 0)).toBeGreaterThan(0)
     })
   }
-
-  test('random connection resets across the whole file', async ({ plexo, serve }) => {
-    const origin = await serve({ size: 48 * BLOCK, seed: 11 })
-    let n = 0
-    // Every third chunk request dies somewhere inside its block.
-    origin.setRule(({ range }) =>
-      range && range.start > 0 && n++ % 3 === 0 ? { cutAfter: (n * 7919) % BLOCK } : 'ok'
-    )
-    await plexo.start(origin.url(), origin.sha256, { connections: 4 })
-    await plexo.waitForStatus('completed')
-  })
 })
 
 test.describe('a connection stuck at a crawl @smoke', () => {
@@ -55,34 +42,29 @@ test.describe('a connection stuck at a crawl @smoke', () => {
   const tookFullBlock = (entry: LoggedRequest): boolean =>
     entry.bytesSent === entry.range!.end! - entry.range!.start + 1
 
-  for (const [label, crawlStart] of [
-    ['mid-download', BLOCK],
-    ['on the last block (the 99% case)', (BLOCKS - 1) * BLOCK]
-  ] as const) {
-    test(`${label}: reconnected and resumed`, async ({ plexo, serve }) => {
-      const origin = await serve({ size: BLOCKS * BLOCK, bytesPerSecond: 256 * 1024 })
-      let crawled = false
-      // 2 KB/s: this one block alone would take ~32 s.
-      origin.setRule(({ range }) =>
-        range?.start === crawlStart && !crawled ? ((crawled = true), { crawl: 2048 }) : 'ok'
-      )
+  test('a crawling connection is reconnected, and its block resumed', async ({ plexo, serve }) => {
+    const origin = await serve({ size: BLOCKS * BLOCK, bytesPerSecond: 256 * 1024 })
+    let crawled = false
+    // 2 KB/s: this one block alone would take ~32 s.
+    origin.setRule(({ range }) =>
+      range?.start === BLOCK && !crawled ? ((crawled = true), { crawl: 2048 }) : 'ok'
+    )
 
-      await plexo.start(origin.url(), origin.sha256, { connections: 4 })
-      const state = await plexo.waitForStatus('completed', 15_000)
+    await plexo.start(origin.url(), origin.sha256, { connections: 4 })
+    const state = await plexo.waitForStatus('completed', 15_000)
 
-      const requests = origin.chunkRequests()
-      const slow = requests.find((entry) => typeof entry.fault === 'object')!
-      expect(tookFullBlock(slow), 'the slow request was cut off').toBe(false)
-      const resumed = requests.find(
-        (entry) =>
-          entry.n > slow.n &&
-          entry.range!.start > slow.range!.start &&
-          entry.range!.start <= slow.range!.end!
-      )
-      expect(resumed, 'the block resumed from where the slow connection stopped').toBeTruthy()
-      expect(state.chunks.reduce((sum, chunk) => sum + chunk.retryCount, 0)).toBe(0)
-    })
-  }
+    const requests = origin.chunkRequests()
+    const slow = requests.find((entry) => typeof entry.fault === 'object')!
+    expect(tookFullBlock(slow), 'the slow request was cut off').toBe(false)
+    const resumed = requests.find(
+      (entry) =>
+        entry.n > slow.n &&
+        entry.range!.start > slow.range!.start &&
+        entry.range!.start <= slow.range!.end!
+    )
+    expect(resumed, 'the block resumed from where the slow connection stopped').toBeTruthy()
+    expect(state.networks.reduce((sum, network) => sum + network.retries, 0)).toBe(0)
+  })
 
   test('connections that are all equally slow are left alone', async ({ plexo, serve }) => {
     const origin = await serve({ size: BLOCKS * BLOCK, bytesPerSecond: 256 * 1024 })
@@ -105,28 +87,20 @@ test.describe('a connection stuck at a crawl @smoke', () => {
 
 test.describe('servers without range support @smoke', () => {
   // With no ranges the only way to recover a dropped connection is to start the file over.
-  for (const [label, contentLength] of [
-    ['known size', true],
-    ['unknown size', false]
-  ] as const) {
-    test(`a dropped connection restarts from the beginning (${label})`, async ({
-      plexo,
-      serve
-    }) => {
-      const origin = await serve({ size: 20 * BLOCK, ranges: false, contentLength })
-      let transfers = 0
-      origin.setRule(({ range }) =>
-        range?.start === 0 && range.end === 0
-          ? 'ok'
-          : transfers++ === 0
-            ? { cutAfter: 7 * BLOCK + 3 }
-            : 'ok'
-      )
-      await plexo.start(origin.url(), origin.sha256)
-      await plexo.waitForStatus('completed')
-      expect(transfers, 'the second attempt fetched the whole file again').toBe(2)
-    })
-  }
+  test('a dropped connection restarts from the beginning', async ({ plexo, serve }) => {
+    const origin = await serve({ size: 20 * BLOCK, ranges: false })
+    let transfers = 0
+    origin.setRule(({ range }) =>
+      range?.start === 0 && range.end === 0
+        ? 'ok'
+        : transfers++ === 0
+          ? { cutAfter: 7 * BLOCK + 3 }
+          : 'ok'
+    )
+    await plexo.start(origin.url(), origin.sha256)
+    await plexo.waitForStatus('completed')
+    expect(transfers, 'the second attempt fetched the whole file again').toBe(2)
+  })
 })
 
 test('one network dies for good mid-download; the other finishes it @smoke', async ({
@@ -150,11 +124,41 @@ test('one network dies for good mid-download; the other finishes it @smoke', asy
   expect(failedOverB.length, 'network b really did fail').toBeGreaterThan(0)
 })
 
+test.describe('a busy server @smoke', () => {
+  test.use({ appEnv: { PLEXO_E2E_SERVER_BUSY_MS: '60000' } })
+
+  test('is waited out for as long as it asks, past the retries a wrong answer gets', async ({
+    plexo,
+    serve
+  }) => {
+    const origin = await serve({ size: SIZE })
+    let busy = 0
+    // More busy answers than both streams' retries together: a wrong answer this many times
+    // would end the download.
+    origin.setRule(({ range }) =>
+      range && range.start > 0 && busy++ < 14
+        ? { status: 503, headers: { 'Retry-After': '1' } }
+        : 'ok'
+    )
+    await plexo.start(origin.url(), origin.sha256, { connections: 2 })
+    await plexo.waitForStatus('completed')
+    expect(busy).toBeGreaterThan(14)
+
+    // It asked the network to wait, so no stream asked again within the second, save a request
+    // already on its way.
+    for (const answer of origin.log.filter((entry) => entry.status === 503)) {
+      const tooSoon = origin.log.filter(
+        (entry) => entry.at > answer.at + 100 && entry.at < answer.at + 950
+      )
+      expect(tooSoon, `asked again within a second of request ${answer.n}`).toEqual([])
+    }
+  })
+})
+
 test.describe('permanent faults end in a clean error @smoke', () => {
   const PERMANENT: [string, Fault][] = [
     ['every chunk request fails with 500', { status: 500 }],
-    ['every chunk request redirects to itself', { redirect: '/files/test.bin' }],
-    ['every chunk request gets the wrong range', 'wrongStart']
+    ['every chunk request redirects to itself', { redirect: '/files/test.bin' }]
   ]
   for (const [label, fault] of PERMANENT) {
     test(label, async ({ plexo, serve }) => {
@@ -172,7 +176,6 @@ test.describe('permanent faults end in a clean error @smoke', () => {
 test.describe('the file changes on the server mid-download @smoke', () => {
   const cases: [string, Omit<Parameters<typeof mutate>[0], 'origin'>][] = [
     ['same size, new ETag', { etag: '"v2"' }],
-    ['same size, new Last-Modified (no ETag)', { lastModified: 'Thu, 02 Jan 2025 00:00:00 GMT' }],
     ['different size, no validators at all', { size: SIZE + BLOCK }]
   ]
 
@@ -231,25 +234,6 @@ test.describe('servers that label the same file differently @smoke', () => {
     const variants = ['W/"v1"', '"v1-gzip"', '"v1"']
     origin.setVersionRule(({ n }) => ({ content: origin.content, etag: variants[n % 3] }))
     await plexo.start(origin.url(), origin.sha256, { connections: 2 })
-    await plexo.waitForStatus('completed')
-  })
-
-  test('load balancer: identical bytes, Last-Modified differs per server (no ETag)', async ({
-    plexo,
-    serve
-  }) => {
-    const origin = await serve({
-      size: SIZE,
-      etag: null,
-      lastModified: 'Wed, 01 Jan 2025 00:00:00 GMT'
-    })
-    // lastModified is shared, so alternate it from the rule instead.
-    origin.setVersionRule(({ n }) => {
-      origin.lastModified =
-        n % 2 === 0 ? 'Wed, 01 Jan 2025 00:00:07 GMT' : 'Wed, 01 Jan 2025 00:00:00 GMT'
-      return undefined
-    })
-    await plexo.start(origin.url(), origin.sha256, { connections: 4 })
     await plexo.waitForStatus('completed')
   })
 

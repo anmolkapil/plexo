@@ -24,8 +24,9 @@ jobs:
           node-version: 22
           cache: npm
 
-      # --ignore-scripts skips Electron's binary download and
-      # electron-builder's native rebuild. Both are needed to *run* the app;
+      # --ignore-scripts skips our postinstall: Electron's binary download
+      # (install-electron) and electron-builder's native rebuild. Both are
+      # needed to *run* the app;
       # linting, typechecking and format-checking need only the packages
       # themselves, and that download would otherwise dominate every run.
       - name: Install dependencies

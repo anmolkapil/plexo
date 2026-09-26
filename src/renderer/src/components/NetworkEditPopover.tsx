@@ -40,7 +40,7 @@ export function NetworkEditPopover({
     // Re-picking the color it already had keeps it automatic instead of pinning it.
     const colorId = draftColorId === visual.colorId ? preference?.colorId : draftColorId
     if (customName !== preference?.customName || colorId !== preference?.colorId) {
-      void setNetworkPreference(interfaceId, { customName, colorId })
+      setNetworkPreference(interfaceId, { customName, colorId })
     }
   }
 

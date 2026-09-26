@@ -1,4 +1,4 @@
-import type { ChunkState, NetworkInterfaceKind } from '@shared/types'
+import type { ChunkState, DownloadNetwork, DownloadState } from '@shared/types'
 
 const UNITS = ['B', 'KB', 'MB', 'GB', 'TB']
 
@@ -71,43 +71,24 @@ export function dirnameOf(path: string): string {
   return path.slice(0, index)
 }
 
-export interface NetworkGroup {
-  interfaceId: string
-  interfaceLabel: string
-  interfaceKind: NetworkInterfaceKind
+/** A download's network with the streams it runs: what one row on screen shows. */
+export interface NetworkGroup extends DownloadNetwork {
   chunks: ChunkState[]
-  bytesDownloaded: number
-  speedBytesPerSec: number
 }
 
-/** Chunks are the unit of transfer, but a physical network is the unit the user thinks and
- * decides in — a network can carry several chunks (via "chunks per network", or ones split
- * off by dynamic rebalancing). Groups chunks by their interface, in order of first appearance,
- * with per-network totals so the UI can show one row per physical network. */
-export function groupChunksByInterface(chunks: ChunkState[]): NetworkGroup[] {
-  const order: string[] = []
-  const groups = new Map<string, NetworkGroup>()
+export function groupByNetwork(
+  download: Pick<DownloadState, 'networks' | 'chunks'>
+): NetworkGroup[] {
+  return download.networks.map((network) => ({
+    ...network,
+    chunks: download.chunks.filter((chunk) => chunk.interfaceId === network.id)
+  }))
+}
 
-  for (const chunk of chunks) {
-    let group = groups.get(chunk.interfaceId)
-    if (!group) {
-      group = {
-        interfaceId: chunk.interfaceId,
-        interfaceLabel: chunk.interfaceLabel,
-        interfaceKind: chunk.interfaceKind,
-        chunks: [],
-        bytesDownloaded: 0,
-        speedBytesPerSec: 0
-      }
-      groups.set(chunk.interfaceId, group)
-      order.push(chunk.interfaceId)
-    }
-    group.chunks.push(chunk)
-    group.bytesDownloaded += chunk.bytesDownloaded
-    group.speedBytesPerSec += chunk.speedBytesPerSec
-  }
-
-  return order.map((interfaceId) => groups.get(interfaceId)!)
+/** The networks worth drawing in a download's charts and legends: the ones in use, and any that
+ * carried part of the file. */
+export function networksInPlay<T extends DownloadNetwork>(networks: T[]): T[] {
+  return networks.filter((network) => network.enabled || network.bytesDownloaded > 0)
 }
 
 /** Shortens an absolute path under the user's home directory to a "~/..." form for display. */
@@ -131,19 +112,12 @@ const NESTED_ERROR_PREFIX = /^Error:\s*/
 
 const ERROR_HINTS: Array<{ pattern: RegExp; message: string }> = [
   {
-    pattern: /parts never finished/,
-    message:
-      'The download never fully finished, so Plexo couldn’t assemble it. Try downloading again.'
+    pattern: /Download is incomplete/,
+    message: 'The download did not finish every range. Try downloading again.'
   },
   {
-    pattern: /refusing to write a corrupt file/,
-    message:
-      'One of the downloaded pieces didn’t match its expected size, so Plexo stopped rather than save a corrupted file. Try downloading again.'
-  },
-  {
-    pattern: /refusing to keep a corrupt file/,
-    message:
-      'The assembled file didn’t match its expected size, so Plexo removed it rather than keep a corrupted file. Try downloading again.'
+    pattern: /Download file size does not match/,
+    message: 'The downloaded file did not match its expected size, so Plexo did not publish it.'
   },
   {
     pattern: /ENOTFOUND|EAI_AGAIN/,

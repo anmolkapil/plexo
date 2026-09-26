@@ -15,7 +15,10 @@ export function ErrorScreen({
   onDownloadAgain: () => void
 }): React.JSX.Element {
   const [copied, setCopied] = useState(false)
+  const [resuming, setResuming] = useState(false)
   const cancelled = download.status === 'cancelled'
+  // What it downloaded is still there to pick up from.
+  const resumable = !cancelled && download.resumable !== false && download.bytesDownloaded > 0
   const knownSize = download.totalBytes > 0
   const percent = knownSize
     ? Math.min(100, Math.round((download.bytesDownloaded / download.totalBytes) * 100))
@@ -130,7 +133,23 @@ export function ErrorScreen({
 
           {/* Action Buttons in Center */}
           <div className="mt-1 flex w-full justify-center gap-2.5">
-            <Button type="button" onClick={onDownloadAgain}>
+            {resumable && (
+              <Button
+                type="button"
+                disabled={resuming}
+                onClick={() => {
+                  setResuming(true)
+                  void window.plexo.resumeDownload(download.id).finally(() => setResuming(false))
+                }}
+              >
+                {resuming ? 'Resuming…' : 'Resume'}
+              </Button>
+            )}
+            <Button
+              type="button"
+              variant={resumable ? 'secondary' : 'default'}
+              onClick={onDownloadAgain}
+            >
               Download Again
             </Button>
             <Button type="button" variant="secondary" onClick={onNewDownload}>

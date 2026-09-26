@@ -12,7 +12,7 @@ export function ScreenFooter({
   return (
     <div
       className={cn(
-        'flex items-center gap-3 border-t-[0.5px] border-t-[var(--footer-border)] bg-secondary px-5 py-[11px]',
+        'flex shrink-0 items-center gap-3 border-t-[0.5px] border-t-[var(--footer-border)] bg-secondary px-5 py-[11px]',
         className
       )}
     >

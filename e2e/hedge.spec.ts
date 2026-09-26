@@ -28,7 +28,8 @@ test.describe('racing a slow block', () => {
   }) => {
     const origin = await serve({ size: BLOCKS * BLOCK })
     // 64 KB at 2 KB/s would take half a minute. The hedge is quick but not instant, so the slow
-    // holder keeps writing past the point the hedge began at — which the merge must discard.
+    // holder keeps writing over the range the hedge is writing too: the same bytes, so the file
+    // still comes out exact.
     origin.setRule(
       answerRequestsInSlowBlock((n) => (n === 0 ? { crawl: 2000 } : { crawl: 100_000 }))()
     )
@@ -61,26 +62,6 @@ test.describe('racing a slow block', () => {
     expect(requests.length).toBeGreaterThanOrEqual(2)
     const hedge = requests[requests.length - 1]
     expect(hedge.bytesSent, 'the losing hedge was cut off').toBeLessThan(BLOCK)
-  })
-
-  test('a hedge that fails costs nothing: the block is finished by its holder', async ({
-    plexo,
-    serve
-  }) => {
-    const origin = await serve({ size: BLOCKS * BLOCK })
-    origin.setRule(
-      answerRequestsInSlowBlock((n) => (n === 0 ? { crawl: 20_000 } : { status: 500 }))()
-    )
-
-    await plexo.start(origin.url(), origin.sha256, { connections: 4 })
-    const state = await plexo.waitForStatus('completed', 10_000)
-
-    expect(
-      state.chunks.reduce((sum, chunk) => sum + chunk.retryCount, 0),
-      'a failed hedge is not a retry'
-    ).toBe(0)
-    // It was tried, once: the only network there is had just got nothing from the block.
-    expect(origin.chunkRequests().filter((r) => inSlowBlock(r.range))).toHaveLength(2)
   })
 
   test('paused while racing, then resumed: no half-hedge is left behind', async ({

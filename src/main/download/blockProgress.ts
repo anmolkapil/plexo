@@ -46,8 +46,8 @@ export function advanceBlock(block: BlockState, networkId: string, position: num
   return gained
 }
 
-/** Pulls the frontier back to `position`, for bytes that turned out not to be there — a part file
- * shorter than counted, a racing attempt that lost. `blamed` is the network they came from.
+/** Pulls the frontier back to `position`, for bytes that turned out not to be there or a racing
+ * attempt that lost. `blamed` is the network they came from.
  * Returns how much it removed. */
 export function retractBlock(block: BlockState, position: number, blamed?: string): number {
   const removed = block.bytesDownloaded - position

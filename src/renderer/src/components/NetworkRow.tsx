@@ -1,4 +1,4 @@
-import type { BlockState, ChunkState } from '@shared/types'
+import type { BlockState, ChunkState, NetworkStatus } from '@shared/types'
 import { useState } from 'react'
 import { DANGER, type NetworkVisual } from '../theme'
 import type { NetworkGroup } from '../utils/format'
@@ -7,6 +7,8 @@ import { ColorBadge } from './ColorBadge'
 import { NetworkEditPopover } from './NetworkEditPopover'
 import { TruncatedText } from './TruncatedText'
 import { Button } from './ui/button'
+import { Checkbox } from './ui/checkbox'
+import { Tooltip, TooltipContent, TooltipTrigger } from './ui/tooltip'
 
 interface NetworkRowProps {
   group: NetworkGroup
@@ -14,6 +16,17 @@ interface NetworkRowProps {
   sharePercent: number
   totalBytes?: number | null
   blocks?: BlockState[]
+  /** False for the last network in use, which can't be switched off. */
+  canSwitch: boolean
+  onSwitch: (enabled: boolean) => void
+}
+
+/** What a network not in use is doing instead. One in use shows its streams. */
+const STATUS_TEXT: Record<Exclude<NetworkStatus, 'on'>, string> = {
+  off: 'Off',
+  offline: 'Not connected',
+  unreachable: 'Can’t reach server',
+  failed: 'Failed'
 }
 
 // Every row — this one and each expanded stream row — is a direct col-span-full subgrid child of
@@ -79,10 +92,12 @@ export function NetworkRow({
   visual,
   sharePercent,
   totalBytes,
-  blocks
+  blocks,
+  canSwitch,
+  onSwitch
 }: NetworkRowProps): React.JSX.Element {
   const [expanded, setExpanded] = useState(false)
-  const hasError = group.chunks.some((chunk) => chunk.status === 'error')
+  const hasError = group.status === 'failed'
   const isActive = group.chunks.some((chunk) => chunk.status === 'downloading')
 
   const rounded = Math.round(sharePercent)
@@ -105,28 +120,74 @@ export function NetworkRow({
           }}
         />
         <div role="cell" className="flex min-w-0 items-center gap-[6px]">
+          {/* The wrapper is the trigger: a disabled checkbox gets no hover or focus of its own. */}
+          <Tooltip disabled={canSwitch}>
+            <TooltipTrigger
+              render={
+                <span
+                  tabIndex={canSwitch ? undefined : 0}
+                  className="flex shrink-0 rounded-sm outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
+                >
+                  <Checkbox
+                    checked={group.enabled}
+                    disabled={!canSwitch}
+                    onCheckedChange={(checked) => onSwitch(checked)}
+                    aria-label={`Use ${visual.name}`}
+                    className="data-checked:border-transparent"
+                    style={
+                      group.enabled
+                        ? { background: visual.solid, color: visual.onSolid }
+                        : undefined
+                    }
+                  />
+                </span>
+              }
+            />
+            <TooltipContent>The last network in use stays on. Pause to stop.</TooltipContent>
+          </Tooltip>
           <TruncatedText
             text={visual.name}
-            className="font-sans text-[12.5px] leading-[1.2] font-semibold text-foreground"
+            className={`font-sans text-[12.5px] leading-[1.2] font-semibold ${
+              group.enabled ? 'text-foreground' : 'text-[var(--text-secondary)]'
+            }`}
           />
           <NetworkEditPopover
-            interfaceId={group.interfaceId}
-            interfaceKind={group.interfaceKind}
-            osName={group.interfaceLabel}
+            interfaceId={group.id}
+            interfaceKind={group.kind}
+            osName={group.label}
           />
-          <Button
-            type="button"
-            variant="outline"
-            size="xs"
-            onClick={() => setExpanded((v) => !v)}
-            aria-expanded={expanded}
-            className="h-auto cursor-pointer rounded-[4px] border-[0.5px] bg-card px-[7px] py-[3px] font-mono text-[10.5px] leading-none font-medium text-[var(--text-secondary)] aria-expanded:bg-secondary dark:bg-card"
-          >
-            {group.chunks.length} {group.chunks.length === 1 ? 'stream' : 'streams'}
-            <span aria-hidden className="text-[7.5px] opacity-75">
-              {expanded ? '▲' : '▼'}
-            </span>
-          </Button>
+          {group.chunks.length > 0 && (
+            <Button
+              type="button"
+              variant="outline"
+              size="xs"
+              onClick={() => setExpanded((v) => !v)}
+              aria-expanded={expanded}
+              className="h-auto cursor-pointer rounded-[4px] border-[0.5px] bg-card px-[7px] py-[3px] font-mono text-[10.5px] leading-none font-medium text-[var(--text-secondary)] aria-expanded:bg-secondary dark:bg-card"
+            >
+              {group.chunks.length} {group.chunks.length === 1 ? 'stream' : 'streams'}
+              <span aria-hidden className="text-[7.5px] opacity-75">
+                {expanded ? '▲' : '▼'}
+              </span>
+            </Button>
+          )}
+          {group.status !== 'on' && (
+            <Tooltip disabled={!group.error}>
+              <TooltipTrigger
+                render={
+                  <span
+                    tabIndex={group.error ? 0 : undefined}
+                    className={`rounded-sm font-mono text-[10px] whitespace-nowrap outline-none focus-visible:ring-2 focus-visible:ring-ring/50 ${
+                      hasError ? 'text-destructive' : 'text-muted-foreground'
+                    }`}
+                  >
+                    {STATUS_TEXT[group.status]}
+                  </span>
+                }
+              />
+              <TooltipContent>{group.error}</TooltipContent>
+            </Tooltip>
+          )}
         </div>
         <ProgressBar
           className="h-1.5"
@@ -165,7 +226,6 @@ export function NetworkRow({
           const isFirst = index === 0
           const isLast = index === group.chunks.length - 1
           const isChunkActive = chunk.status === 'downloading'
-          const isChunkError = chunk.status === 'error'
           const stream = describeStream(chunk, blocks)
           const statusText = stream.done
             ? 'Done'
@@ -173,9 +233,7 @@ export function NetworkRow({
               ? 'Paused'
               : chunk.status === 'retrying'
                 ? 'Retrying…'
-                : chunk.status === 'error'
-                  ? 'Failed'
-                  : 'Idle'
+                : 'Idle'
 
           return (
             <div
@@ -189,11 +247,7 @@ export function NetworkRow({
                 <div
                   className="size-[5px] rounded-full"
                   style={{
-                    background: isChunkError
-                      ? DANGER
-                      : isChunkActive || stream.done
-                        ? visual.solid
-                        : 'var(--icon-muted)',
+                    background: isChunkActive || stream.done ? visual.solid : 'var(--icon-muted)',
                     opacity: isChunkActive || stream.done ? 1 : 0.4
                   }}
                 />
@@ -208,27 +262,30 @@ export function NetworkRow({
                     Chunk #{stream.block.index + 1}
                   </span>
                 )}
-                {chunk.hedge && (
-                  <span
-                    title="Racing another stream for this chunk, which was running slowly"
-                    className="rounded-[3px] border-[0.5px] border-border px-[4.5px] py-[1.5px] font-mono text-[9px] leading-none whitespace-nowrap text-muted-foreground"
-                  >
-                    BACKUP
-                  </span>
-                )}
                 {isChunkActive ? (
-                  <ColorBadge
-                    bg={visual.bg}
-                    border={visual.border}
-                    text={visual.text}
-                    // Height is pinned, not `h-auto`: this badge swaps in and out as a stream
-                    // goes active, and the cell is only as tall as "Stream #N" (13.2px). Left to
-                    // size itself the badge came out taller than that and grew the row on every
-                    // swap. 13px keeps it under, whatever line-height it ends up inheriting.
-                    className="h-[13px] rounded-[3px] px-[5px] py-px text-[9px] font-semibold tracking-[0.04em]"
-                  >
-                    ACTIVE
-                  </ColorBadge>
+                  <Tooltip disabled={!chunk.hedge}>
+                    <TooltipTrigger
+                      render={
+                        <ColorBadge
+                          bg={visual.bg}
+                          border={visual.border}
+                          text={visual.text}
+                          tabIndex={chunk.hedge ? 0 : undefined}
+                          // Height is pinned, not `h-auto`: this badge swaps in and out as a
+                          // stream goes active, and the cell is only as tall as "Stream #N"
+                          // (13.2px). Left to size itself the badge came out taller than that and
+                          // grew the row on every swap. 13px keeps it under, whatever line-height
+                          // it ends up inheriting.
+                          className="h-[13px] rounded-[3px] px-[5px] py-px text-[9px] font-semibold tracking-[0.04em] outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
+                        >
+                          {chunk.hedge ? 'BACKUP' : 'ACTIVE'}
+                        </ColorBadge>
+                      }
+                    />
+                    <TooltipContent>
+                      Racing another stream for this chunk, which was running slowly
+                    </TooltipContent>
+                  </Tooltip>
                 ) : (
                   <span
                     className={`text-[9.5px] ${
@@ -244,7 +301,7 @@ export function NetworkRow({
                 className="h-[5px]"
                 label={`Stream #${index + 1} progress`}
                 percent={stream.percent}
-                color={isChunkError ? DANGER : visual.solid}
+                color={visual.solid}
               />
 
               <div

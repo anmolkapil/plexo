@@ -45,7 +45,7 @@ async function status(real: Real): Promise<DownloadStatus | undefined> {
 /** Re-reads the app, since a running download may have finished on its own since last looked. */
 async function sync(model: Model, real: Real): Promise<void> {
   const current = await status(real)
-  if (current === 'completed' || current === 'assembling') model.phase = 'done'
+  if (current === 'completed') model.phase = 'done'
   if (current === 'error' || current === 'cancelled') {
     throw new Error(`download ended ${current}: ${(await real.app.current())?.error}`)
   }
@@ -66,7 +66,7 @@ class Pause implements fc.AsyncCommand<Model, Real> {
   async run(model: Model, real: Real): Promise<void> {
     await real.app.api.pauseDownload(real.id)
     // Either it paused, or it had already finished downloading before the pause arrived.
-    const state = await real.app.waitForStatus(['paused', 'assembling', 'completed'], 15_000)
+    const state = await real.app.waitForStatus(['paused', 'completed'], 15_000)
     model.phase = state.status === 'paused' ? 'paused' : 'done'
   }
   toString = (): string => 'Pause'
@@ -76,7 +76,7 @@ class Resume implements fc.AsyncCommand<Model, Real> {
   check = (model: Readonly<Model>): boolean => model.phase === 'paused'
   async run(model: Model, real: Real): Promise<void> {
     await real.app.api.resumeDownload(real.id)
-    await real.app.waitForStatus(['downloading', 'assembling', 'completed'], 15_000)
+    await real.app.waitForStatus(['downloading', 'completed'], 15_000)
     model.phase = 'running'
     await sync(model, real)
   }
@@ -138,7 +138,9 @@ test('any sequence of pauses, crashes and faults still ends in the exact file @c
   await fc.assert(
     fc.asyncProperty(
       fc.integer({ min: 1, max: 2 ** 31 - 1 }),
-      fc.integer({ min: 1, max: 4 }),
+      // A fixed count per network, or the app's own choice, which adds and retires streams as it
+      // goes — through every pause, crash and fault the sequence throws at it.
+      fc.oneof(fc.integer({ min: 1, max: 4 }), fc.constant('auto' as const)),
       commands,
       async (fileSeed, connections, cmds) => {
         const { dirs, dispose } = await makeDirs()
@@ -147,7 +149,12 @@ test('any sequence of pauses, crashes and faults still ends in the exact file @c
           seed: fileSeed,
           bytesPerSecond: 512 * 1024
         }).start()
-        const app = new PlexoApp(dirs)
+        // Short measuring windows, so streams come and go within the run; kept automatic across
+        // the relaunches a crash or a quit brings.
+        const app = new PlexoApp(
+          dirs,
+          connections === 'auto' ? { PLEXO_E2E_STREAMS: '', PLEXO_E2E_PROBE_MS: '500' } : {}
+        )
         const real: Real = { app, origin, id: '', faults: [] }
         origin.setRule(({ range }) =>
           range && !(range.start === 0 && range.end === 0) ? real.faults.shift() : undefined

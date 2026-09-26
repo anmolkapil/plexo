@@ -2,10 +2,11 @@ import { contextBridge, ipcRenderer, type IpcRendererEvent } from 'electron'
 import { IpcChannels } from '../shared/ipc-channels'
 import type { IpcContract } from '../shared/ipc-contract'
 import type {
+  AppSettings,
   CompanionDownloadPayload,
-  DownloadState,
-  NetworkPreference,
-  ThemeSource
+  DownloadUpdate,
+  InitialState,
+  NetworkInterfaceInfo
 } from '../shared/types'
 
 /** Typed wrapper around ipcRenderer.invoke — the channel name picks its args/result shape out of
@@ -20,36 +21,31 @@ function invoke<K extends keyof IpcContract>(
 
 const plexoApi = {
   platform: process.platform,
+  // Sync on purpose — see InitialState. One small read, once, before the renderer's first paint.
+  initialState: ipcRenderer.sendSync(IpcChannels.getInitialState) as InitialState,
 
   listInterfaces: () => invoke('listInterfaces'),
   pingInterfaces: () => invoke('pingInterfaces'),
   deviceBindingSupported: () => invoke('deviceBindingSupported'),
   openNetworkSettings: () => invoke('openNetworkSettings'),
-  getNetworkPreferences: () => invoke('getNetworkPreferences'),
-  setNetworkPreference: (id: string, patch: NetworkPreference) =>
-    invoke('setNetworkPreference', id, patch),
-  getThemeSource: () => invoke('getThemeSource'),
-  setThemeSource: (source: ThemeSource) => invoke('setThemeSource', source),
+  updateSettings: (patch: AppSettings) => invoke('updateSettings', patch),
   probeUrl: (url: string, headers?: Record<string, string>) => invoke('probeUrl', url, headers),
-  getInitialPaths: () => invoke('getInitialPaths'),
   chooseDestinationFolder: (defaultPath: string) => invoke('chooseDestinationFolder', defaultPath),
-  chooseSourceFile: () => invoke('chooseSourceFile'),
   readClipboardText: () => invoke('readClipboardText'),
   revealInFolder: (filePath: string) => invoke('revealInFolder', filePath),
   startDownload: (request: IpcContract['startDownload']['args'][0]) =>
     invoke('startDownload', request),
-  startSimulatedDownload: (request: IpcContract['startSimulatedDownload']['args'][0]) =>
-    invoke('startSimulatedDownload', request),
   getCurrentDownload: () => invoke('getCurrentDownload'),
   pauseDownload: (downloadId: string) => invoke('pauseDownload', downloadId),
   resumeDownload: (downloadId: string) => invoke('resumeDownload', downloadId),
+  setDownloadNetwork: (downloadId: string, networkId: string, enabled: boolean) =>
+    invoke('setDownloadNetwork', downloadId, networkId, enabled),
   cancelDownload: (downloadId: string) => invoke('cancelDownload', downloadId),
   removeDownload: (downloadId: string) => invoke('removeDownload', downloadId),
   checkForUpdate: () => invoke('checkForUpdate'),
-  dismissUpdate: (version: string) => invoke('dismissUpdate', version),
 
-  onDownloadUpdated: (callback: (state: DownloadState) => void): (() => void) => {
-    const listener = (_event: IpcRendererEvent, state: DownloadState): void => callback(state)
+  onDownloadUpdated: (callback: (update: DownloadUpdate) => void): (() => void) => {
+    const listener = (_event: IpcRendererEvent, update: DownloadUpdate): void => callback(update)
     ipcRenderer.on(IpcChannels.downloadUpdated, listener)
     return () => ipcRenderer.removeListener(IpcChannels.downloadUpdated, listener)
   },
@@ -61,10 +57,11 @@ const plexoApi = {
     return () => ipcRenderer.removeListener(IpcChannels.companionDownload, listener)
   },
 
-  onToggleDevToolsPanel: (callback: () => void): (() => void) => {
-    const listener = (): void => callback()
-    ipcRenderer.on(IpcChannels.toggleDevToolsPanel, listener)
-    return () => ipcRenderer.removeListener(IpcChannels.toggleDevToolsPanel, listener)
+  onNetworksChanged: (callback: (networks: NetworkInterfaceInfo[]) => void): (() => void) => {
+    const listener = (_event: IpcRendererEvent, networks: NetworkInterfaceInfo[]): void =>
+      callback(networks)
+    ipcRenderer.on(IpcChannels.networksChanged, listener)
+    return () => ipcRenderer.removeListener(IpcChannels.networksChanged, listener)
   }
 }
 

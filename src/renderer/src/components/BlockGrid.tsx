@@ -35,12 +35,6 @@ const GRID_INSET_PX = 3
 const UNATTRIBUTED_SOLID = 'var(--text-tertiary)'
 const UNATTRIBUTED_BG = 'var(--track-bg)'
 
-// Assembled bytes are deliberately not painted in any network's color: once a chunk is stitched
-// onto disk it isn't "that network's work" anymore so much as "already part of the file", and a
-// dedicated neutral tone is what makes the sweep across the grid read as progress rather than as
-// chunks quietly losing their color for no reason.
-const ASSEMBLED_SOLID = 'var(--text)'
-
 /** One network's share of a cell's downloaded bytes. */
 interface CellSegment {
   interfaceId: string
@@ -150,14 +144,6 @@ interface BlockGridProps {
   knownSize: boolean
   remainingBytes: number
   isPaused?: boolean
-  /** All blocks are 'completed' by the time this is true — the grid switches from showing which
-   * network fetched each chunk to showing reassembly progress instead: a wipe, in the same
-   * part-file order `reassemble()` actually writes in, that fades a square once its bytes are
-   * safely on disk and pulses whichever one is being appended right now. Without this the grid
-   * would freeze solid the moment the last byte downloads, and assembling a large file can take
-   * long enough that a frozen grid reads as hung rather than finishing up. */
-  assembling?: boolean
-  assembledBytes?: number
 }
 
 export function BlockGrid({
@@ -166,9 +152,7 @@ export function BlockGrid({
   visuals,
   knownSize,
   remainingBytes,
-  isPaused = false,
-  assembling = false,
-  assembledBytes = 0
+  isPaused = false
 }: BlockGridProps): React.JSX.Element {
   const [gridWidth, setGridWidth] = useState(0)
   const [hoveredIndex, setHoveredIndex] = useState<number | null>(null)
@@ -190,7 +174,7 @@ export function BlockGrid({
     const visualByInterfaceId = new Map<string, NetworkVisual>()
     groups.forEach((g, idx) => {
       if (visuals[idx]) {
-        visualByInterfaceId.set(g.interfaceId, visuals[idx])
+        visualByInterfaceId.set(g.id, visuals[idx])
       }
     })
 
@@ -198,7 +182,7 @@ export function BlockGrid({
     // Squares keep their size and the grid wraps; how many rows that takes is the file's business,
     // not the window's. Only the width decides the wrap, exactly like a paragraph reflowing.
     const cols = Math.min(blocks.length, Math.max(MIN_COLS, fittedCols))
-    const orderedInterfaceIds = groups.map((g) => g.interfaceId)
+    const orderedInterfaceIds = groups.map((g) => g.id)
     const cells = gridWidth > 0 ? describeBlocks(blocks, orderedInterfaceIds) : []
     const chunkBytes =
       blocks[0].rangeEnd !== null ? blocks[0].rangeEnd - blocks[0].rangeStart + 1 : 0
@@ -214,10 +198,7 @@ export function BlockGrid({
     // appears on an active block — and a tooltip advertises nothing to hover in the first place.
     const hoveredCell = hoveredIndex !== null ? cells[hoveredIndex] : undefined
     let readout: string
-    if (assembling) {
-      const totalBytes = cells.reduce((sum, cell) => sum + cell.totalBytes, 0)
-      readout = `Assembling into file · ${formatBytes(assembledBytes)} / ${formatBytes(totalBytes)}`
-    } else if (hoveredCell) {
+    if (hoveredCell) {
       const where =
         describeContributors(hoveredCell, visualByInterfaceId) ??
         (hoveredCell.status === 'pending' ? 'queued' : '—')
@@ -226,18 +207,6 @@ export function BlockGrid({
       readout = `${blocks.length} chunks · ${formatBytes(chunkBytes)} each`
     }
 
-    // Cumulative byte offset per cell, in the exact order reassemble() appends part files —
-    // computed once here rather than per-cell so each square's assembly state is a simple
-    // range comparison against `assembledBytes` below.
-    const assembleOffsets = cells.reduce<{ offsets: number[]; total: number }>(
-      (acc, cell) => {
-        acc.offsets.push(acc.total)
-        acc.total += cell.totalBytes
-        return acc
-      },
-      { offsets: [], total: 0 }
-    ).offsets
-
     return (
       <div className="flex flex-col gap-[9px] rounded-[9px] border-[0.5px] border-border bg-card px-[14px] pt-[10px] pb-[11px]">
         <div className="flex flex-wrap items-center gap-[14px]">
@@ -245,7 +214,7 @@ export function BlockGrid({
             const visual = visuals[idx]
             return (
               <div
-                key={group.interfaceId}
+                key={group.id}
                 className="flex items-center gap-[5.5px] font-mono text-[10.5px] leading-none font-medium text-[var(--text-secondary)]"
               >
                 <span
@@ -256,12 +225,6 @@ export function BlockGrid({
               </div>
             )
           })}
-          {assembling && (
-            <div className="flex items-center gap-[5.5px] font-mono text-[10.5px] leading-none font-medium text-[var(--text-secondary)]">
-              <span className="size-[7px] shrink-0 rounded-full bg-[var(--text)]" />
-              <span className="font-semibold text-foreground">Assembled</span>
-            </div>
-          )}
           {cells.length > 0 && chunkBytes > 0 && (
             <div className="ml-auto font-mono text-[10px] leading-none font-medium tabular-nums text-muted-foreground">
               {readout}
@@ -304,48 +267,16 @@ export function BlockGrid({
               let border = '0.5px solid var(--border-strong)'
               let boxShadow = 'none'
               let opacity = 1
-              let fillColor = visual?.solid || UNATTRIBUTED_SOLID
+              const fillColor = visual?.solid || UNATTRIBUTED_SOLID
 
               if (cell.status === 'downloading') {
                 background = visual?.bg || UNATTRIBUTED_BG
                 border = `1px solid ${visual?.solid || UNATTRIBUTED_SOLID}`
                 boxShadow = isPaused ? 'none' : `0 0 7px ${visual?.solid || UNATTRIBUTED_SOLID}`
                 opacity = isPaused ? 0.6 : 1
-              } else if (cell.status === 'error') {
-                fillColor = 'var(--color-danger)'
-                border = 'none'
               } else if (cell.status === 'completed') {
                 border = 'none'
                 opacity = 0.92
-              }
-
-              let animation: string | undefined
-              if (assembling) {
-                const start = assembleOffsets[index]
-                const end = start + cell.totalBytes
-                if (end <= assembledBytes) {
-                  // Already appended to the destination file — turns neutral rather than just
-                  // fading, so "assembled" is a distinct state you can read at a glance, not a
-                  // guess at how dim is dim enough.
-                  fillColor = ASSEMBLED_SOLID
-                  border = 'none'
-                  boxShadow = 'none'
-                  opacity = 0.85
-                } else if (start < assembledBytes) {
-                  // The one part file being streamed onto disk right now — turning neutral too,
-                  // with a pulse so the "write head" position is obvious.
-                  fillColor = ASSEMBLED_SOLID
-                  border = `1px solid ${ASSEMBLED_SOLID}`
-                  boxShadow = `0 0 7px ${ASSEMBLED_SOLID}`
-                  opacity = 1
-                  animation = 'plexo-glow 0.9s ease-in-out infinite'
-                } else {
-                  // Completed but not yet its turn to be appended — stays in its network's color
-                  // a little dimmed, to signal "waiting its turn" rather than "already assembled".
-                  border = 'none'
-                  boxShadow = 'none'
-                  opacity = 0.75
-                }
               }
 
               const rawFillPercent = Math.min(1, Math.max(0, cell.fillRatio)) * 100
@@ -365,7 +296,6 @@ export function BlockGrid({
                     border,
                     boxShadow,
                     opacity,
-                    animation,
                     outline: hoveredIndex === index ? '1.5px solid var(--text-secondary)' : 'none',
                     outlineOffset: 1,
                     overflow: 'hidden',
@@ -408,7 +338,7 @@ export function BlockGrid({
         <>
           {groups.map((group, index) => (
             <div
-              key={group.interfaceId}
+              key={group.id}
               style={{
                 flex: group.bytesDownloaded || 0.0001,
                 background: visuals[index].solid

@@ -1,4 +1,5 @@
 import { app } from 'electron'
+import { isIP } from 'node:net'
 import type { NetworkInterfaceInfo } from '../shared/types'
 
 // Overrides for the end-to-end suite (e2e/), read from the environment. A packaged build ignores
@@ -17,13 +18,28 @@ export const testKnobs = {
   blockBytes: positiveNumber('PLEXO_E2E_BLOCK_BYTES', 8 * 1024 * 1024),
   retryBaseDelayMs: positiveNumber('PLEXO_E2E_RETRY_BASE_MS', 1000),
   stallTimeoutMs: positiveNumber('PLEXO_E2E_STALL_MS', 20_000),
+  connectTimeoutMs: positiveNumber('PLEXO_E2E_CONNECT_MS', 10_000),
+  /** How long a server that keeps answering busy (429, 503, …) is waited out; see
+   * downloadManager.ts. */
+  serverBusyForMs: positiveNumber('PLEXO_E2E_SERVER_BUSY_MS', 5 * 60_000),
   slowWarmupMs: positiveNumber('PLEXO_E2E_SLOW_WARMUP_MS', 5_000),
   slowForMs: positiveNumber('PLEXO_E2E_SLOW_FOR_MS', 10_000),
   silentAfterMs: positiveNumber('PLEXO_E2E_SILENT_MS', 5_000),
   hedgeAfterMs: positiveNumber('PLEXO_E2E_HEDGE_MS', 5_000),
+  /** How long each measurement of the stream-count controller runs (see concurrency.ts). */
+  probeWindowMs: positiveNumber('PLEXO_E2E_PROBE_MS', 2_000),
   /** Skips the real GitHub check and pretends this version is available, for exercising the
    * update banner without needing an actual newer release published. */
   forceUpdateVersion: env['PLEXO_FORCE_UPDATE_VERSION']
+}
+
+/** `PLEXO_E2E_STREAMS=2` fixes how many streams each network runs and turns the automatic
+ * sizing off, so a test can count requests. Read on every call rather than once, so a test can
+ * change it between downloads. */
+export function testStreamsPerNetwork(): number | null {
+  if (app.isPackaged) return null
+  const value = Number(process.env['PLEXO_E2E_STREAMS'])
+  return value > 0 ? value : null
 }
 
 /** `PLEXO_E2E_INTERFACES=a=127.0.0.1,b=192.168.1.5` replaces the real interface list. Read on
@@ -37,7 +53,17 @@ export function testInterfaces(): NetworkInterfaceInfo[] | null {
     .split(',')
     .filter(Boolean)
     .map((entry) => {
-      const [id, address] = entry.split('=')
-      return { id, device: id, displayName: id, address, kind: 'ethernet' as const }
+      const [id, address, subnet, kind] = entry.split('=')
+      const inferredKind =
+        kind === 'wifi' || id.toLowerCase().includes('wi-fi') || id.toLowerCase().includes('wifi')
+          ? ('wifi' as const)
+          : ('ethernet' as const)
+      return {
+        id,
+        device: id,
+        displayName: id,
+        addresses: [{ address, family: isIP(address) === 6 ? 6 : 4, subnet: subnet || undefined }],
+        kind: inferredKind
+      }
     })
 }

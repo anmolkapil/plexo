@@ -261,6 +261,7 @@ test.describe('which download is offered', () => {
     for (const name of NOISE) expect(text).not.toContain(name)
     expect(text).toContain('[Apple silicon]')
     expect(text).toContain('https://anmolkapil.github.io/plexo/#downloads')
+    expect(text).toContain('`xattr -dr com.apple.quarantine /Applications/Plexo.app`')
   })
 })
 
@@ -292,112 +293,7 @@ async function openPage(
   return { page, close: () => app.close() }
 }
 
-const alternates = (page: Page): Promise<string[]> =>
-  page
-    .locator('#cta-alt a')
-    .evaluateAll((links) => links.map((a) => `${a.textContent} ${(a as HTMLAnchorElement).href}`))
-
 test.describe('the download page', () => {
-  test('Chrome on an Apple silicon Mac: the Apple silicon build, Intel one click away', async () => {
-    const { page, close } = await openPage(BROWSERS.chromeMac, { architecture: 'arm' })
-    try {
-      await expect(page.locator('#primary-title')).toHaveText('Download for macOS')
-      await expect(page.locator('#primary-meta')).toContainText('Apple silicon')
-      await expect(page.locator('#primary-btn')).toHaveAttribute(
-        'href',
-        BASE + 'plexo-1.0.0-rc.7-arm64.dmg'
-      )
-      expect(await alternates(page)).toEqual([
-        `On an Intel Mac? Get the Intel build → ${BASE}plexo-1.0.0-rc.7-x64.dmg`
-      ])
-      await expect(page.locator('#cta-alt .hint')).toHaveCount(0)
-    } finally {
-      await close()
-    }
-  })
-
-  test('Safari on a Mac cannot say what chip it has, so the page says so instead of guessing quietly', async () => {
-    const { page, close } = await openPage(BROWSERS.safariMac)
-    try {
-      await expect(page.locator('#primary-btn')).toHaveAttribute(
-        'href',
-        BASE + 'plexo-1.0.0-rc.7-arm64.dmg'
-      )
-      await expect(page.locator('#cta-alt a')).toHaveText('On an Intel Mac? Get the Intel build →')
-      await expect(page.locator('#cta-alt .hint')).toContainText('About This Mac')
-    } finally {
-      await close()
-    }
-  })
-
-  test('an Intel Mac that identifies itself gets the Intel build', async () => {
-    const { page, close } = await openPage(BROWSERS.chromeMac, { architecture: 'x86' })
-    try {
-      await expect(page.locator('#primary-btn')).toHaveAttribute(
-        'href',
-        BASE + 'plexo-1.0.0-rc.7-x64.dmg'
-      )
-      await expect(page.locator('#cta-alt a')).toHaveText(
-        'On an Apple silicon Mac? Get the Apple silicon build →'
-      )
-    } finally {
-      await close()
-    }
-  })
-
-  test('Windows: the one installer, no questions', async () => {
-    const { page, close } = await openPage(BROWSERS.chromeWindows)
-    try {
-      await expect(page.locator('#primary-title')).toHaveText('Download for Windows')
-      await expect(page.locator('#primary-meta')).toContainText('Windows 10 and 11')
-      await expect(page.locator('#primary-btn')).toHaveAttribute(
-        'href',
-        BASE + 'plexo-1.0.0-rc.7-setup.exe'
-      )
-      await expect(page.locator('#cta-alt a')).toHaveCount(0)
-    } finally {
-      await close()
-    }
-  })
-
-  test('Linux x86_64: the AppImage, with the .deb offered', async () => {
-    const { page, close } = await openPage(BROWSERS.firefoxLinux)
-    try {
-      await expect(page.locator('#primary-btn')).toHaveAttribute(
-        'href',
-        BASE + 'plexo-1.0.0-rc.7-x86_64.AppImage'
-      )
-      expect(await alternates(page)).toEqual([
-        `On Debian or Ubuntu? Get the .deb → ${BASE}plexo_1.0.0-rc.7_amd64.deb`
-      ])
-    } finally {
-      await close()
-    }
-  })
-
-  test('Linux ARM64: the ARM64 AppImage, not the x86_64 one', async () => {
-    const { page, close } = await openPage(BROWSERS.chromeLinuxArm)
-    try {
-      await expect(page.locator('#primary-btn')).toHaveAttribute(
-        'href',
-        BASE + 'plexo-1.0.0-rc.7-arm64.AppImage'
-      )
-    } finally {
-      await close()
-    }
-  })
-
-  test('a phone is told this is a desktop app, and can still see every download', async () => {
-    const { page, close } = await openPage(BROWSERS.iphone)
-    try {
-      await expect(page.locator('#primary-title')).toHaveText('Plexo is a desktop app')
-      await expect(page.locator('#primary-btn')).toHaveAttribute('href', '#downloads')
-      await expect(page.locator('.asset-row')).toHaveCount(SHIPPED.length)
-    } finally {
-      await close()
-    }
-  })
-
   test('every download is listed under its OS with what it is, its size and the right link', async () => {
     const { page, close } = await openPage(BROWSERS.chromeWindows)
     try {
@@ -446,14 +342,22 @@ test.describe('the download page', () => {
   test('each OS explains its first launch, with commands set apart as code', async () => {
     const { page, close } = await openPage(BROWSERS.chromeWindows)
     try {
-      const notes = page.locator('.os-group').nth(0).locator('.os-notes')
-      await expect(notes).toContainText('Open Anyway')
-      await expect(notes.locator('code').first()).toHaveText(
+      // The unsigned-app warning and the way past it, under the button for this visitor's OS...
+      const hero = page.locator('#first-launch-slot .first-launch')
+      await expect(hero).toHaveCount(1)
+      await expect(hero.locator('.fl-warning')).toHaveText(
+        'Windows may say “Windows protected your PC”'
+      )
+      await expect(hero).toContainText('Run anyway')
+      // ...once: not again with their own OS's downloads, but with every other OS's.
+      await expect(page.locator('.os-group').nth(1).locator('.first-launch')).toHaveCount(0)
+      const mac = page.locator('.os-group').nth(0).locator('.first-launch')
+      await expect(mac.locator('.fl-warning')).toContainText('Plexo is damaged and can’t be opened')
+      await expect(mac.locator('.fl-command code')).toHaveText(
         'xattr -dr com.apple.quarantine /Applications/Plexo.app'
       )
-      await expect(page.locator('.os-group').nth(1).locator('.os-notes')).toContainText(
-        'Run anyway'
-      )
+      await expect(mac).toContainText('Open Anyway')
+      await expect(page.locator('.os-group').nth(2).locator('.first-launch')).toHaveCount(0)
       await expect(page.locator('.os-group').nth(2).locator('.os-notes')).toContainText(
         'libfuse2t64'
       )

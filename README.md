@@ -9,6 +9,7 @@ For example, if your computer has:
 - Wi-Fi
 - Ethernet
 - USB-tethered phone (iPhone or Android)
+- Cellular
 
 Plexo can utilize all of them simultaneously to download the **same file**.
 
@@ -17,6 +18,20 @@ https://github.com/user-attachments/assets/e57728f4-fb63-441f-839c-174eef954b17
 ---
 
 ## ⚠️ Before you start
+
+### Combining multiple network connections?
+
+To successfully combine bandwidth across multiple network adapters (on Windows, macOS, or Linux):
+
+- **Use distinct internet connections:**
+  - Each connection must have its own gateway / subnet (e.g., **Wi-Fi** via home router + **USB Tethering** via mobile phone, or two distinct WAN networks).
+  - Connecting both Wi-Fi and Ethernet to the **same router** (same local subnet like `192.168.1.0/24`) will not increase speeds: both share the same upstream broadband connection, and operating system routing will send all packets through whichever interface has the lower metric or higher priority (usually Ethernet).
+
+### Wi-Fi disconnecting when Ethernet is plugged in on Windows?
+
+Some Windows 10/11 installations automatically disconnect or sleep Wi-Fi when an active Ethernet cable is detected.
+
+If Wi-Fi turns off when Ethernet is plugged in: open **Group Policy Editor** (`gpedit.msc`) → _Computer Configuration_ → _Administrative Templates_ → _Network_ → _Windows Connection Manager_ → set **"Minimize the number of simultaneous connections to the Internet or a Windows domain"** to **Disabled**.
 
 ### Using Android USB tethering on macOS?
 
@@ -37,11 +52,13 @@ A single TCP connection rarely saturates your actual bandwidth. Even when your c
 Plexo changes that: it splits the file into independent byte ranges and downloads them simultaneously through distinct physical network interfaces.
 
 ```text
-                    ┌── Wi-Fi (IP: 192.168.1.40) ────┐
-                    │                                │
-File ──→ Split ─────┼── Ethernet (IP: 10.0.0.12) ────┼──→ Assembled File
-                    │                                │
-                    └── USB Tether (IP: 172.20.10.3) ┘
+                    ┌── Wi-Fi (IP: 192.168.1.40) ──────┐
+                    │                                  │
+                    ├── Ethernet (IP: 10.0.0.12) ──────┤
+File ──→ Split ─────┤                                  ├──→ Assembled File
+                    ├── USB Tether (IP: 172.20.10.3) ──┤
+                    │                                  │
+                    └── Cellular (IP: 21.169.64.78) ───┘
 ```
 
 **Multiple networks → concurrent HTTP range requests → aggregated bandwidth**
@@ -50,16 +67,17 @@ File ──→ Split ─────┼── Ethernet (IP: 10.0.0.12) ───
 
 ## Features
 
-- 🚀 **Multi-interface, multi-connection downloads** — splits files into chunks of up to 8 MB and fans them out across worker connections bound to specific network interfaces (up to 8 parallel connections per interface, 32 total).
+- 🚀 **Multi-interface, multi-connection downloads** — splits files into chunks of up to 8 MB and fans them out across worker connections bound to specific network interfaces, each kept open from one chunk to the next. How many connections each interface gets is worked out while downloading: as many as keep making it faster, up to 16.
 - 🔌 **Hardware interface detection** — queries Windows adapters via PowerShell `Get-NetAdapter` and macOS hardware ports via `networksetup` so Wi-Fi, Ethernet, tethered iPhones, and Thunderbolt bridges are labeled by real device names instead of bare BSD names (`en0`, `en6`).
 - ⚖️ **Dynamic work-stealing queue** — chunks are leased from a shared pending queue; faster networks pull more chunks instead of waiting for slower connections to finish.
-- ⏸️ **Resumable downloads** — cleanly pause or retry failed downloads without losing progress, preserving completed `part-N` chunk files on disk.
-- 💾 **Relaunch recovery** — interrupted downloads are restored as paused after Plexo restarts, with progress and part files preserved in application data.
+- ⏸️ **Resumable downloads** — cleanly pause and resume downloads with progress saved in a destination-side staging file.
+- 💾 **Relaunch recovery** — interrupted downloads are restored as paused after Plexo restarts, with a small manifest in application data.
 - 🛡️ **Safe, integrity-checked resume** — re-verifies remote `ETag` and `Last-Modified` validators before resuming, refusing to resume (rather than corrupting the file) if the server-side file has changed.
-- 🔁 **Automatic retry with backoff** — failed chunks are automatically returned to the queue and retried with exponential backoff (up to 5 retries, 1s–15s backoff).
-- 💤 **Stall detection & watchdog** — automatically drops and re-queues connections that remain open but silent (>20s without incoming data).
+- 🔁 **Automatic retry with backoff** — failed chunks go back to the queue and are retried with jittered exponential backoff (1s–15s). A dropped connection is retried for as long as its network is there; a busy server (429, 503, …) is waited out, honouring `Retry-After`; a server that answers wrongly gets 5 retries.
+- 🔄 **Network changes and sleep** — a network that gets a new address, or a computer that wakes from sleep, gets its connections going again at once instead of waiting out a backoff; the computer is kept awake while a download runs.
+- 💤 **Stall detection & watchdog** — automatically drops and re-queues connections that remain open but silent (>20s without incoming data, not counting time spent waiting on the disk).
 - 🔔 **Desktop notifications** — native desktop alerts when downloads complete or encounter errors.
-- 💾 **Upfront disk-space verification** — verifies free disk space before writing any temporary part files.
+- 💾 **Upfront disk-space verification** — checks the destination volume before writing the staging file.
 - 🔀 **Mid-download redirect handling** — transparently follows 3xx HTTP redirects (up to 5 hops) during probing and individual chunk downloads.
 - 📊 **Real-time telemetry** — live throughput graphs, rolling-window ETA calculation, and per-connection transfer stats.
 - 🗺️ **Interactive progress grid** — 1:1 visual map of individual chunks, color-coded by the network interface that fetched each chunk with accurate per-network byte attribution.
@@ -93,29 +111,28 @@ Before starting a multi-connection download, Plexo sends a **1-byte ranged GET**
 - The probe response provides the total file size (`Content-Range` / `Content-Length`), suggested filename (`Content-Disposition`), and cache validators (`ETag` and `Last-Modified`).
 - If the server answers with `200 OK` (ignoring the `Range` header), Plexo falls back to a standard single-connection stream instead of failing.
 
-### 2. Multi-interface socket binding via `localAddress`
+### 2. Multi-interface socket binding
 
-Every active network interface on your computer has its own local IP address — Wi-Fi might be `192.168.1.40`, while a USB-tethered phone is `172.20.10.3`.
+Every active network interface on your computer has local IP addresses — Wi-Fi might have both IPv4 and IPv6, while a USB-tethered phone has its own addresses.
 
-A standard TCP socket leaves interface selection to the operating system's routing table. However, Node.js allows outbound HTTP/HTTPS requests to explicitly bind to a specific local IP using the `localAddress` option:
+A standard TCP socket leaves interface selection to the operating system's routing table. Plexo resolves the server, chooses an address of the same IP family on each selected interface, then binds that address for its HTTP/HTTPS connections. On Linux it also pins the socket to the device.
 
 ```js
 https.request({
   hostname: 'releases.ubuntu.com',
   path: '/ubuntu-26.04.1-desktop-amd64.iso',
-  localAddress: '172.20.10.3', // Forces this connection through the USB tether
+  localAddress: '172.20.10.3', // Source address on the USB tether
   headers: {
     Range: 'bytes=8388608-16777215'
   }
 })
 ```
 
-This single option is Plexo's entire multi-network routing engine:
+The interface binding keeps each worker on its selected network:
 
 - **No virtual network adapters or VPN tunnels**
 - **No packet bonding or link aggregation**
 - **No kernel extensions (`kext`) or root privileges**
-- **Zero native C/C++ dependencies**
 
 ### 3. Dynamic work-stealing queue
 
@@ -125,28 +142,25 @@ Instead, Plexo uses a **dynamic work-stealing queue**:
 
 1. The file is split into **chunks of up to 8 MB** (smaller for small files, so every network gets a share).
 2. All chunks enter a centralized pending queue.
-3. A pool of worker connections (up to 8 per interface, 32 total, never more than there are chunks to work on) continuously lease the next chunk from the queue as soon as they become free. Connections start interleaved across networks, so each network is served before any is served twice.
+3. A pool of worker connections continuously lease the next chunk from the queue as soon as they become free. Each keeps its one connection to the server from chunk to chunk, so it pays for the handshake and TCP's slow start once, not per chunk. Connections start interleaved across networks, so each network is served before any is served twice.
+   - **How many.** Each network starts with 4. More help only when something limits each connection on its own (a server capping per-connection speed, or a long, lossy route), not once the network itself is full, so Plexo measures instead of guessing. Once speeds have settled, it doubles one network's connections, waits for them to settle again, and keeps them only if that network got at least 15% faster, net of anything the other networks lost beyond their usual ups and downs (two networks behind one router share its uplink). Otherwise the new connections close, and their chunks go back to the queue to carry on from where they got to. So do extra connections the server turns away. Up to 16 per network, and never more than there are chunks for.
 4. Faster interfaces finish chunks quicker and immediately pick up new ones; slower interfaces pull fewer chunks.
 5. **Racing the tail.** Once no chunk is left waiting, a free connection can start a second attempt at a chunk another connection is fetching too slowly (one that still needs as long again as it has already taken, at least 5 seconds), picking up from where the first had got to. Whichever finishes first wins and the other is dropped. It costs a few bytes fetched twice at the very end, and it means one slow connection — or one slow network — can no longer hold the whole download back. A stream doing this is marked **BACKUP** in the streams table.
 
 ```text
-Shared Pending Queue: [Chunk #4] [Chunk #5] [Chunk #6] [Chunk #7] [Chunk #8] ...
-                            ↑           ↑           ↑
-                         Worker 1    Worker 2    Worker 3
-                         (Wi-Fi)     (Ethernet)  (USB Tether)
+Shared Pending Queue: [Chunk #4]  [Chunk #5]  [Chunk #6]  [Chunk #7]  [Chunk #8]  ...
+                          ↑           ↑           ↑           ↑
+                       Worker 1    Worker 2    Worker 3    Worker 4
+                       (Wi-Fi)    (Ethernet) (USB Tether) (Cellular)
 ```
 
 Work distribution is dynamically proportional to each interface's real-time throughput. If one network slows down or disconnects, remaining workers continue draining the queue without stalled shares.
 
-### 4. File reassembly & stream pipeline
+### 4. Direct-to-destination storage
 
-Each worker writes its assigned byte range directly to an isolated temporary file on disk (`part-0`, `part-1`, ... `part-N`).
+Each worker writes its assigned byte range at its final offset in one staging file beside the chosen destination. Workers use separate file handles and explicit byte positions, so non-overlapping ranges can be written in parallel.
 
-Once the queue is drained and all chunk promises resolve:
-
-- Plexo streams each `part-N` file sequentially into the final destination file using Node.js streams (`createReadStream` piped into `createWriteStream` with `{ flags: 'a' }`).
-- The temporary chunk directory is cleaned up.
-- The assembled file is verified against the expected byte length.
+While downloading, the folder contains `<filename>.plexo` and no empty file under the final name. Once every range is complete, Plexo flushes the partial file, checks for a filename collision, and renames it into place in the same folder. If the final name is taken, Plexo chooses a numbered name. This works on drives such as exFAT without a full-file assembly copy, so the destination needs approximately one file's worth of space.
 
 ---
 
@@ -155,17 +169,15 @@ Once the queue is drained and all chunk promises resolve:
 When you pause a download:
 
 - Plexo aborts all active HTTP socket connections via `AbortController`.
-- All completed `part-N` files remain cached on disk in a temporary directory.
+- The staging file remains beside the chosen destination, and progress is saved in a small manifest.
 
 When you resume:
 
 1. **Validator check**: Plexo sends a probe request to compare the server's current `ETag` and `Last-Modified` headers against the values recorded when the download started.
-2. **Safe resume**: If the validators match, Plexo checks which `part-N` files are already complete on disk, skips them, and queues only the remaining chunks.
+2. **Safe resume**: If the validators match, Plexo resumes each range from the last saved byte offset in the staging file.
 3. **Guard against corruption**: If the file on the server has changed, Plexo refuses to resume to prevent combining incompatible slices into a corrupt file.
 
-Download manifests and partial data are stored under Plexo's application-data directory. If Plexo
-quits or crashes during a transfer, it restores that transfer as paused on the next launch. Explicitly
-cancelling or removing a download still deletes its partial data.
+Download manifests are stored under Plexo's application-data directory; large partial data stays beside the destination. If Plexo quits or crashes during a transfer, it restores that transfer as paused on the next launch. Cancelling or removing a download deletes its staging file.
 
 ---
 
@@ -175,13 +187,14 @@ A **chunk** is the atomic unit of work in Plexo:
 
 - **Size**: Up to 8 MB, with the final chunk sized to the remaining bytes. A file that is small next to its connection count gets smaller chunks (never under 1 MB) — at least two per connection — so a fast network can out-pull a slow one instead of being stuck behind it.
 - **Transport**: One independent HTTP range request (`Range: bytes=START-END`).
-- **Storage**: Written directly to an isolated `part-N` file in the download's temp directory.
+- **Storage**: Written at its final byte offset in the destination-side staging file.
 - **Assignment**: Leased to an individual worker socket bound to a specific network interface.
 
 ```text
-Chunk #0 → Range: bytes=0-8388607         → part-0 (Wi-Fi)
-Chunk #1 → Range: bytes=8388608-16777215  → part-1 (Ethernet)
-Chunk #2 → Range: bytes=16777216-25165823 → part-2 (USB Tether)
+Chunk #0 → Range: bytes=0-8388607         → staging offset 0 (Wi-Fi)
+Chunk #1 → Range: bytes=8388608-16777215  → staging offset 8388608 (Ethernet)
+Chunk #2 → Range: bytes=16777216-25165823 → staging offset 16777216 (USB Tether)
+Chunk #3 → Range: bytes=25165824-33554431 → staging offset 25165824 (Cellular)
 ```
 
 ### Why up to 8 MB?
@@ -201,6 +214,7 @@ Active Streams:
 [Wi-Fi]      → Chunk #4
 [Ethernet]   → Chunk #5
 [USB Tether] → Chunk #6
+[Cellular]   → Chunk #7
 
 Progress Grid:
 [#1][#2][#3][#4][#5][#6][#7][#8]...

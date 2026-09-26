@@ -1,11 +1,11 @@
 import type { DownloadState } from '@shared/types'
 import { useEffect } from 'react'
-import { DevToolsPanel } from './components/DevToolsPanel'
 import { TitleBar, type TitleBarStatus } from './components/TitleBar'
 import { NetworkBindingDialog } from './components/NetworkBindingDialog'
 import { UpdateDialog } from './components/UpdateDialog'
 import { TooltipProvider } from './components/ui/tooltip'
 import { useDownloadEvents } from './hooks/useDownloadEvents'
+import { useNetworkEvents } from './hooks/useNetworks'
 import { CompleteScreen } from './screens/CompleteScreen'
 import { DownloadingScreen } from './screens/DownloadingScreen'
 import { ErrorScreen } from './screens/ErrorScreen'
@@ -31,7 +31,7 @@ function renderDownload(
         screen: <DownloadingScreen download={download} />,
         titleBarStatus: {
           kind: 'combined',
-          networkCount: new Set(download.chunks.map((chunk) => chunk.interfaceId)).size
+          networkCount: download.networks.filter((network) => network.status === 'on').length
         }
       }
     case 'paused':
@@ -39,13 +39,8 @@ function renderDownload(
         screen: <DownloadingScreen download={download} />,
         titleBarStatus: {
           kind: 'paused',
-          networkCount: new Set(download.chunks.map((chunk) => chunk.interfaceId)).size
+          networkCount: download.networks.filter((network) => network.enabled).length
         }
-      }
-    case 'assembling':
-      return {
-        screen: <DownloadingScreen download={download} />,
-        titleBarStatus: { kind: 'assembling' }
       }
     case 'completed':
       return {
@@ -71,14 +66,12 @@ function renderDownload(
 
 function App(): React.JSX.Element {
   useDownloadEvents()
+  useNetworkEvents()
 
   const interfaces = useAppStore((store) => store.interfaces)
   const interfacesStatus = useAppStore((store) => store.interfacesStatus)
   const currentDownload = useAppStore((store) => store.currentDownload)
   const clearCurrentDownload = useAppStore((store) => store.clearCurrentDownload)
-  const loadNetworkPreferences = useAppStore((store) => store.loadNetworkPreferences)
-  const loadThemeSource = useAppStore((store) => store.loadThemeSource)
-  const loadInitialPaths = useAppStore((store) => store.loadInitialPaths)
   const checkForUpdate = useAppStore((store) => store.checkForUpdate)
   const ingestCompanionDownload = useAppStore((store) => store.ingestCompanionDownload)
   const incomingCompanionAlert = useAppStore((store) => store.incomingCompanionAlert)
@@ -87,11 +80,8 @@ function App(): React.JSX.Element {
   const setDraftFileName = useAppStore((store) => store.setDraftFileName)
 
   useEffect(() => {
-    loadNetworkPreferences()
-    loadThemeSource()
-    loadInitialPaths()
     checkForUpdate()
-  }, [loadNetworkPreferences, loadThemeSource, loadInitialPaths, checkForUpdate])
+  }, [checkForUpdate])
 
   useEffect(() => {
     return window.plexo.onCompanionDownload((payload) => {
@@ -162,7 +152,6 @@ function App(): React.JSX.Element {
           </div>
         )}
         <div className="min-h-0 flex-1">{screen}</div>
-        <DevToolsPanel />
         <UpdateDialog />
         <NetworkBindingDialog />
       </div>

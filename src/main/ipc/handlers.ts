@@ -1,29 +1,25 @@
-import { is } from '@electron-toolkit/utils'
+import { stat } from 'node:fs/promises'
 import {
   app,
   clipboard,
   dialog,
   ipcMain,
   nativeTheme,
+  powerMonitor,
   shell,
   type BrowserWindow,
   type IpcMainInvokeEvent
 } from 'electron'
 import { IpcChannels } from '../../shared/ipc-channels'
 import type { IpcContract } from '../../shared/ipc-contract'
-import type { NetworkInterfaceInfo, ThemeSource } from '../../shared/types'
+import type { InitialState, ThemeSource } from '../../shared/types'
 import { DownloadManager } from '../download/downloadManager'
 import { getDefaultDownloadsDir, getHomeDir } from '../download/paths'
 import { probeUrl } from '../download/probe'
 import { deviceBindingSupported } from '../network/deviceBinding'
 import { measureLatencies } from '../network/latency'
-import { listActiveInterfaces } from '../network/interfaces'
-import { loadNetworkPreferences, saveNetworkPreference } from '../network/preferences'
-import {
-  loadDismissedUpdateVersion,
-  saveDismissedUpdateVersion,
-  saveThemeSource
-} from '../settings'
+import { NetworkMonitor } from '../network/interfaces'
+import { loadSettings, saveSettings } from '../settings'
 import { testKnobs } from '../testKnobs'
 import { checkForUpdate, UPDATE_PAGE_URL } from '../updateCheck'
 
@@ -58,31 +54,29 @@ function handle<K extends keyof IpcContract>(
   )
 }
 
+const DESTINATION_CHECK_MS = 300
+
 export function registerIpcHandlers(getWindow: () => BrowserWindow | null): DownloadManager {
-  let cachedInterfaces: NetworkInterfaceInfo[] = []
+  // The main process keeps the network list, for downloads and the window alike.
+  const networks = new NetworkMonitor((list) => {
+    manager.networksChanged()
+    const window = getWindow()
+    if (window && !window.isDestroyed()) window.webContents.send(IpcChannels.networksChanged, list)
+  })
+  const manager = new DownloadManager(getWindow, networks)
+  // Waking from sleep, the networks may have changed without a poll in between to see it.
+  powerMonitor.on('resume', () => {
+    manager.systemResumed()
+    void networks.refresh()
+  })
 
-  const refreshInterfaces = async (): Promise<NetworkInterfaceInfo[]> => {
-    cachedInterfaces = await listActiveInterfaces()
-    return cachedInterfaces
-  }
+  handle('listInterfaces', () => networks.refresh())
 
-  const manager = new DownloadManager(
-    getWindow,
-    (id) => cachedInterfaces.find((iface) => iface.id === id),
-    refreshInterfaces
-  )
-
-  handle('listInterfaces', refreshInterfaces)
-
-  handle('pingInterfaces', async () => measureLatencies(cachedInterfaces))
+  handle('pingInterfaces', async () => measureLatencies(networks.current ?? []))
 
   // Started now so it has settled before the first ping or download needs it.
   const bindingSupport = deviceBindingSupported()
   handle('deviceBindingSupported', async () => bindingSupport)
-
-  handle('getNetworkPreferences', async () => loadNetworkPreferences())
-
-  handle('setNetworkPreference', async (_event, id, patch) => saveNetworkPreference(id, patch))
 
   // The app only ever assigns 'light'/'dark' to nativeTheme.themeSource (main/index.ts's startup
   // call to loadThemeSource() never resolves to 'system') — narrow Electron's wider type here
@@ -90,12 +84,49 @@ export function registerIpcHandlers(getWindow: () => BrowserWindow | null): Down
   const currentThemeSource = (): ThemeSource =>
     nativeTheme.themeSource === 'dark' ? 'dark' : 'light'
 
-  handle('getThemeSource', async () => currentThemeSource())
+  handle('updateSettings', async (_event, patch) => {
+    // The one setting main also applies — before saving, so a failed write still switches the
+    // window to the theme the toggle now shows.
+    if (patch?.themeSource === 'light' || patch?.themeSource === 'dark') {
+      nativeTheme.themeSource = patch.themeSource
+    }
+    await saveSettings(patch)
+  })
 
-  handle('setThemeSource', async (_event, source) => {
-    nativeTheme.themeSource = source
-    await saveThemeSource(source)
-    return currentThemeSource()
+  // Answered via sendSync from the preload, which blocks the page until returnValue is set — so a
+  // throw here must still reply (with no saved values) rather than leave the window never showing.
+  ipcMain.on(IpcChannels.getInitialState, async (event) => {
+    try {
+      const settings = await loadSettings()
+      const { destinationDir } = settings
+      // Capped: a folder on a dropped network share can take many seconds to answer, and launch
+      // waits on this reply — past the cap it's treated as gone and Downloads is used instead.
+      const destinationExists =
+        destinationDir !== undefined &&
+        (await Promise.race([
+          stat(destinationDir).then(
+            (stats) => stats.isDirectory(),
+            () => false
+          ),
+          new Promise<boolean>((resolve) => setTimeout(resolve, DESTINATION_CHECK_MS, false))
+        ]))
+      event.returnValue = {
+        homeDir: getHomeDir(),
+        downloadsDir: getDefaultDownloadsDir(),
+        themeSource: currentThemeSource(),
+        networkPreferences: settings.networkPreferences ?? {},
+        destinationDir: destinationExists ? destinationDir : undefined
+      } satisfies InitialState
+    } catch (error) {
+      console.error('[plexo] failed to read initial state', error)
+      // No getPath() here — it may be what threw. An empty destination just keeps Start disabled.
+      event.returnValue = {
+        homeDir: '',
+        downloadsDir: '',
+        themeSource: currentThemeSource(),
+        networkPreferences: {}
+      } satisfies InitialState
+    }
   })
 
   handle('openNetworkSettings', async () => {
@@ -103,12 +134,6 @@ export function registerIpcHandlers(getWindow: () => BrowserWindow | null): Down
   })
 
   handle('probeUrl', async (_event, url, headers) => probeUrl(url, headers))
-
-  handle('getInitialPaths', async () => ({
-    homeDir: getHomeDir(),
-    downloadsDir: getDefaultDownloadsDir(),
-    isDev: is.dev
-  }))
 
   handle('chooseDestinationFolder', async (_event, defaultPath) => {
     const window = getWindow()
@@ -121,14 +146,6 @@ export function registerIpcHandlers(getWindow: () => BrowserWindow | null): Down
     return result.filePaths[0]
   })
 
-  handle('chooseSourceFile', async () => {
-    const window = getWindow()
-    if (!window) return null
-    const result = await dialog.showOpenDialog(window, { properties: ['openFile'] })
-    if (result.canceled || result.filePaths.length === 0) return null
-    return result.filePaths[0]
-  })
-
   handle('readClipboardText', async () => clipboard.readText())
 
   handle('revealInFolder', async (_event, filePath) => {
@@ -136,8 +153,6 @@ export function registerIpcHandlers(getWindow: () => BrowserWindow | null): Down
   })
 
   handle('startDownload', async (_event, request) => manager.start(request))
-
-  handle('startSimulatedDownload', async (_event, request) => manager.startSimulated(request))
 
   handle('getCurrentDownload', async () => manager.getCurrentDownload())
 
@@ -149,13 +164,13 @@ export function registerIpcHandlers(getWindow: () => BrowserWindow | null): Down
     manager.resume(id)
   })
 
-  handle('cancelDownload', async (_event, id) => {
-    manager.cancel(id)
+  handle('setDownloadNetwork', async (_event, id, networkId, enabled) => {
+    manager.setNetworkEnabled(id, networkId, enabled)
   })
 
-  handle('removeDownload', async (_event, id) => {
-    manager.remove(id)
-  })
+  handle('cancelDownload', async (_event, id) => manager.cancel(id))
+
+  handle('removeDownload', async (_event, id) => manager.remove(id))
 
   // Kicked off once at startup, not per-call — later renderer calls (e.g. a remount) just await
   // the same in-flight/settled check instead of re-hitting the GitHub API.
@@ -163,15 +178,16 @@ export function registerIpcHandlers(getWindow: () => BrowserWindow | null): Down
     const info = testKnobs.forceUpdateVersion
       ? { version: testKnobs.forceUpdateVersion, url: UPDATE_PAGE_URL }
       : await checkForUpdate(app.getVersion())
-    if (!info) return null
-    const dismissedVersion = await loadDismissedUpdateVersion()
-    return { ...info, dismissed: info.version === dismissedVersion }
+    return info
   })()
 
-  handle('checkForUpdate', async () => updateCheckPromise)
-
-  handle('dismissUpdate', async (_event, version) => {
-    await saveDismissedUpdateVersion(version)
+  // Dismissal is read per call, not cached with the check — a reload after "Not now" must not
+  // bring the dialog back.
+  handle('checkForUpdate', async () => {
+    const info = await updateCheckPromise
+    if (!info) return null
+    const { dismissedUpdateVersion } = await loadSettings()
+    return { ...info, dismissed: info.version === dismissedUpdateVersion }
   })
 
   return manager

@@ -1,7 +1,6 @@
 import { CombineDiagram } from '../components/CombineDiagram'
 import { ScreenFooter } from '../components/ScreenFooter'
 import { Button } from '../components/ui/button'
-import { useNetworkPolling } from '../hooks/useNetworkPolling'
 import { useAppStore } from '../store/useAppStore'
 
 // Colors are irrelevant here — the diagram is rendered `muted`, which overrides them all to
@@ -13,8 +12,6 @@ const PLACEHOLDER_NETWORKS = [
 ]
 
 export function NoConnectionsScreen(): React.JSX.Element {
-  useNetworkPolling(true)
-
   const loadInterfaces = useAppStore((store) => store.loadInterfaces)
 
   return (

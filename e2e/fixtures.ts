@@ -1,3 +1,4 @@
+import type {} from '../src/preload/globals'
 import { execFile } from 'node:child_process'
 import { existsSync } from 'node:fs'
 import { mkdir, mkdtemp, readdir, readFile, realpath, rm } from 'node:fs/promises'
@@ -12,7 +13,8 @@ import {
   type Page
 } from '@playwright/test'
 import type { IpcContract } from '../src/shared/ipc-contract'
-import type { DownloadState, DownloadStatus } from '../src/shared/types'
+import { applyDownloadUpdate } from '../src/shared/downloadUpdate'
+import type { DownloadState, DownloadStatus, DownloadUpdate } from '../src/shared/types'
 import { Origin, sha256, type OriginOptions } from './origin'
 
 export { expect }
@@ -46,7 +48,8 @@ type Api = {
 
 interface StartOptions {
   networks?: string[]
-  connections?: number
+  /** Streams per network, fixed so a test can count requests; 'auto' lets the app decide. */
+  connections?: number | 'auto'
   fileName?: string
   destinationDir?: string
 }
@@ -68,6 +71,8 @@ export class PlexoApp {
   page!: Page
   /** Every downloadUpdated state, one array per app launch (a relaunch starts a new one). */
   readonly sessions: DownloadState[][] = []
+  /** The same, as the window was sent them: only the blocks that changed. */
+  readonly updates: DownloadUpdate[][] = []
   readonly tracked = new Map<string, Tracked>()
   readonly output: string[] = []
   alive = false
@@ -79,21 +84,38 @@ export class PlexoApp {
 
   async launch(extraEnv: Record<string, string> = {}): Promise<this> {
     Object.assign(this.extraEnv, extraEnv)
-    this.electronApp = await electron.launch({
-      args: [PROJECT_ROOT, ...(process.platform === 'linux' ? ['--no-sandbox'] : [])],
-      env: {
-        ...(process.env as Record<string, string>),
-        PLEXO_USER_DATA: this.dirs.userData,
-        PLEXO_E2E_HIDE_WINDOW: '1',
-        PLEXO_E2E_BLOCK_BYTES: String(BLOCK),
-        PLEXO_E2E_RETRY_BASE_MS: '20',
-        PLEXO_E2E_STALL_MS: '1500',
-        // Off unless a test asks for it: a hedge is an extra request, and most tests count them.
-        PLEXO_E2E_HEDGE_MS: '600000',
-        PLEXO_E2E_INTERFACES: interfacesEnv(NETWORKS),
-        ...this.extraEnv
+    let retries = 5
+    while (true) {
+      try {
+        this.electronApp = await electron.launch({
+          args: [PROJECT_ROOT, ...(process.platform === 'linux' ? ['--no-sandbox'] : [])],
+          env: {
+            ...(process.env as Record<string, string>),
+            PLEXO_USER_DATA: this.dirs.userData,
+            PLEXO_E2E_HIDE_WINDOW: '1',
+            PLEXO_E2E_BLOCK_BYTES: String(BLOCK),
+            PLEXO_E2E_RETRY_BASE_MS: '20',
+            PLEXO_E2E_STALL_MS: '1500',
+            // A busy server gives up after its retries alone, as any other wrong answer does,
+            // unless a test waits it out on purpose.
+            PLEXO_E2E_SERVER_BUSY_MS: '1',
+            // Off unless a test asks for it: a hedge is an extra request, and most tests count them.
+            PLEXO_E2E_HEDGE_MS: '600000',
+            // Fixed for the same reason, and for downloads started through the UI.
+            PLEXO_E2E_STREAMS: '2',
+            PLEXO_E2E_INTERFACES: interfacesEnv(NETWORKS),
+            ...this.extraEnv
+          }
+        })
+        break
+      } catch (e: unknown) {
+        if (retries-- > 0 && e instanceof Error && e.message?.includes('ETXTBSY')) {
+          await new Promise((resolve) => setTimeout(resolve, 100))
+          continue
+        }
+        throw e
       }
-    })
+    }
     const child = this.electronApp.process()
     child.stdout?.on('data', (data) => this.output.push(String(data)))
     child.stderr?.on('data', (data) => this.output.push(String(data)))
@@ -102,11 +124,18 @@ export class PlexoApp {
     this.page = await this.electronApp.firstWindow()
     await this.page.waitForLoadState('domcontentloaded')
     const session: DownloadState[] = []
+    const updates: DownloadUpdate[] = []
     this.sessions.push(session)
-    await this.page.exposeFunction('__plexoRecord', (state: DownloadState) => session.push(state))
+    this.updates.push(updates)
+    // Kept whole, the way the window puts them together.
+    await this.page.exposeFunction('__plexoRecord', (update: DownloadUpdate) => {
+      updates.push(update)
+      const state = applyDownloadUpdate(session.at(-1) ?? null, update)
+      if (state && state !== session.at(-1)) session.push(state)
+    })
     await this.page.evaluate(() => {
       const w = window as unknown as { __plexoRecord: (s: unknown) => void }
-      window.plexo.onDownloadUpdated((state) => w.__plexoRecord(state))
+      window.plexo.onDownloadUpdated((update) => w.__plexoRecord(update))
     })
     return this
   }
@@ -149,8 +178,20 @@ export class PlexoApp {
     return this.electronApp.evaluate(fn as never, arg) as Promise<R>
   }
 
+  /** Sets how many streams the next download runs per network (see StartOptions). */
+  private async pinStreams(connections: number | 'auto' = 2): Promise<void> {
+    await this.evaluateMain(
+      (_electron, value) => {
+        if (value === null) delete process.env.PLEXO_E2E_STREAMS
+        else process.env.PLEXO_E2E_STREAMS = value
+      },
+      connections === 'auto' ? null : String(connections)
+    )
+  }
+
   /** Probes and starts `url` exactly the way IdleScreen's Start button does. */
   async start(url: string, expectedSha: string, options: StartOptions = {}): Promise<string> {
+    await this.pinStreams(options.connections)
     await this.api.listInterfaces()
     const probe = await this.api.probeUrl(url)
     const multiChunk = probe.supportsRanges && probe.totalBytes !== null
@@ -165,8 +206,6 @@ export class PlexoApp {
       totalBytes: probe.totalBytes ?? 0,
       supportsRanges: multiChunk,
       interfaceIds: multiChunk ? networks : networks.slice(0, 1),
-      chunkCount: multiChunk ? networks.length * (options.connections ?? 2) : 1,
-      connectionsPerNetwork: multiChunk ? (options.connections ?? 2) : 1,
       etag: probe.etag,
       lastModified: probe.lastModified
     })
@@ -186,19 +225,9 @@ export class PlexoApp {
 
   nextDownload: Tracked | null = null
 
-  /** Starts a dev-tool simulated download of a local file (see simDownload.ts). */
-  async startSimulated(
-    request: Omit<IpcContract['startSimulatedDownload']['args'][0], 'destinationDir'>,
-    expectedSha: string
-  ): Promise<string> {
-    const destBefore = await readdir(this.dirs.dest)
-    const id = await this.api.startSimulatedDownload({ ...request, destinationDir: this.dirs.dest })
-    this.tracked.set(id, { expectedSha, destBefore, destinationDir: this.dirs.dest })
-    return id
-  }
-
   async current(): Promise<DownloadState | null> {
-    return this.api.getCurrentDownload()
+    const snapshot = await this.api.getCurrentDownload()
+    return snapshot && applyDownloadUpdate(null, snapshot)
   }
 
   async waitForStatus(
@@ -210,7 +239,7 @@ export class PlexoApp {
   }
 
   /** Waits until the download state matches `predicate`. A timeout says what the state was
-   * instead, so a hang reads as "stuck in assembling", not as a bare assertion mismatch. */
+   * instead, so a hang shows the last progress and state. */
   async waitUntil(
     predicate: (state: DownloadState) => boolean,
     timeout = 20_000
@@ -222,13 +251,14 @@ export class PlexoApp {
       if (state && predicate(state)) return state
       await new Promise((resolve) => setTimeout(resolve, 50))
     }
-    const chunks = state?.chunks.map(
-      (chunk) => `${chunk.status}${chunk.error ? ` (${chunk.error})` : ''}`
+    const networks = state?.networks.map(
+      (network) => `${network.id}:${network.status}${network.error ? ` (${network.error})` : ''}`
     )
+    const chunks = state?.chunks.map((chunk) => `${chunk.interfaceId}:${chunk.status}`)
     throw new Error(
       `Timed out after ${timeout} ms waiting on the download. Last seen: ${
         state
-          ? `status=${state.status}${state.error ? `, error="${state.error}"` : ''}, bytes=${state.bytesDownloaded}/${state.totalBytes}, chunks=[${chunks?.join(', ')}]`
+          ? `status=${state.status}${state.error ? `, error="${state.error}"` : ''}, bytes=${state.bytesDownloaded}/${state.totalBytes}, networks=[${networks?.join(', ')}], chunks=[${chunks?.join(', ')}]`
           : 'no current download'
       }`
     )
@@ -238,11 +268,11 @@ export class PlexoApp {
 // --- invariants --------------------------------------------------------------------------------
 
 const ALLOWED_NEXT: Record<DownloadStatus, DownloadStatus[]> = {
-  downloading: ['downloading', 'paused', 'assembling', 'error', 'cancelled'],
+  downloading: ['downloading', 'paused', 'completed', 'error', 'cancelled'],
   paused: ['paused', 'downloading', 'error', 'cancelled'],
-  assembling: ['assembling', 'completed', 'error'],
   completed: ['completed'],
-  error: ['error'],
+  // Resumed.
+  error: ['error', 'downloading'],
   cancelled: ['cancelled']
 }
 
@@ -257,6 +287,11 @@ export function checkEvents(sessions: DownloadState[][]): void {
           state.totalBytes
         )
       }
+      expect(
+        state.blocks?.every((block, index) => block?.index === index),
+        `${label}: every block is there, in order`
+      ).toBe(true)
+      expect(state.blocks?.length, `${label}: as many blocks as planned`).toBe(state.totalBlocks)
       for (const block of state.blocks ?? []) {
         const attributed = Object.values(block.bytesByInterface).reduce((a, b) => a + b, 0)
         expect(attributed, `${label}: block ${block.index} attribution sums to its bytes`).toBe(
@@ -336,6 +371,9 @@ export async function checkFinalState(app: PlexoApp): Promise<void> {
   const tracked = app.tracked.get(state.id) ?? app.nextDownload
   const terminal = ['completed', 'error', 'cancelled'].includes(state.status)
   if (!tracked || !terminal) return
+  // A failed download keeps its progress to be resumed until the user moves on, as the window's
+  // New Download does: after that, nothing may be left.
+  if (state.status === 'error') await app.api.removeDownload(state.id)
 
   if (state.status === 'completed') {
     const bytes = await readFile(state.destinationPath)
@@ -354,9 +392,9 @@ export async function checkFinalState(app: PlexoApp): Promise<void> {
     expectedAdded
   )
 
-  const partsDir = join(app.dirs.userData, 'downloads', state.id, 'parts')
+  const stagingPath = `${state.destinationPath}.plexo`
   await expect
-    .poll(() => existsSync(partsDir), { message: 'part files cleaned up', timeout: 5000 })
+    .poll(() => existsSync(stagingPath), { message: 'staging file cleaned up', timeout: 5000 })
     .toBe(false)
 
   const pid = app.electronApp.process().pid

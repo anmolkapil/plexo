@@ -1,11 +1,10 @@
 import { electronApp, is, optimizer } from '@electron-toolkit/utils'
-import { app, BrowserWindow, Menu, nativeTheme, shell } from 'electron'
+import { app, BrowserWindow, nativeTheme, shell } from 'electron'
 import { join } from 'path'
 import icon from '../../resources/icon-dark.png?asset'
 import { registerIpcHandlers } from './ipc/handlers'
-import { loadThemeSource } from './settings'
+import { loadThemeSource, migrateLegacyNetworkPreferences } from './settings'
 import { testKnobs } from './testKnobs'
-import { IpcChannels } from '../shared/ipc-channels'
 import type { DownloadManager } from './download/downloadManager'
 import { CompanionServer } from './companion/server'
 
@@ -23,35 +22,12 @@ let downloadManager: DownloadManager | null = null
 let companionServer: CompanionServer | null = null
 let quitAfterSuspending = false
 
-// Only wired in dev — mirrors the default Electron menu (app/edit/view/window) plus one item to
-// toggle the renderer's floating simulate-download panel, which itself only renders in dev.
-function installDevMenu(): void {
-  Menu.setApplicationMenu(
-    Menu.buildFromTemplate([
-      ...(process.platform === 'darwin' ? [{ role: 'appMenu' as const }] : []),
-      { role: 'editMenu' },
-      { role: 'viewMenu' },
-      { role: 'windowMenu' },
-      {
-        label: 'Developer',
-        submenu: [
-          {
-            label: 'Toggle Dev Tools Panel',
-            accelerator: 'CmdOrCtrl+Shift+D',
-            click: () => mainWindow?.webContents.send(IpcChannels.toggleDevToolsPanel)
-          }
-        ]
-      }
-    ])
-  )
-}
-
 function createWindow(): void {
   mainWindow = new BrowserWindow({
     width: 760,
     height: 560,
-    minWidth: 620,
-    minHeight: 420,
+    minWidth: 720,
+    minHeight: 520,
     show: false,
     autoHideMenuBar: true,
     title: 'Plexo',
@@ -98,6 +74,11 @@ function createWindow(): void {
 app.whenReady().then(async () => {
   electronApp.setAppUserModelId('com.plexo.app')
 
+  // A failed move keeps the old file, to retry next launch — it must never stop the window opening.
+  await migrateLegacyNetworkPreferences().catch((error) =>
+    console.error('[plexo] failed to migrate network-preferences.json', error)
+  )
+
   // Applied before the window is created so the initial background/icon already match —
   // the saved preference otherwise only takes effect on the next 'updated' event.
   nativeTheme.themeSource = await loadThemeSource()
@@ -120,8 +101,6 @@ app.whenReady().then(async () => {
     mainWindow?.setBackgroundColor(nativeTheme.shouldUseDarkColors ? '#1c1c1e' : '#ffffff')
   })
 
-  if (is.dev) installDevMenu()
-
   createWindow()
   if (testKnobs.hideWindow) app.dock?.hide()
 
@@ -137,9 +116,16 @@ app.on('before-quit', (event) => {
   if (quitAfterSuspending || !downloadManager) return
 
   event.preventDefault()
+
+  // Guarantee the process exits even if suspending hangs
+  const forceQuitTimeout = setTimeout(() => {
+    app.exit(0)
+  }, 3000)
+
   void downloadManager.suspendAll().finally(() => {
+    clearTimeout(forceQuitTimeout)
     quitAfterSuspending = true
-    app.quit()
+    app.exit(0)
   })
 })
 

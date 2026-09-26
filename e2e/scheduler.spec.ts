@@ -114,7 +114,7 @@ test.describe('scheduler: taking the next block', () => {
         fc.array(
           fc.record({
             interfaceId: fc.constantFrom(...networks),
-            status: fc.constantFrom<ChunkStatus>('pending', 'downloading', 'retrying', 'error')
+            status: fc.constantFrom<ChunkStatus>('pending', 'downloading', 'retrying', 'paused')
           }),
           { minLength: 1, maxLength: 8 }
         ),

@@ -5,7 +5,6 @@ import { UpdateIndicator } from './UpdateIndicator'
 export type TitleBarStatus =
   | { kind: 'none' }
   | { kind: 'combined'; networkCount: number }
-  | { kind: 'assembling' }
   | { kind: 'paused'; networkCount: number }
   | { kind: 'offline' }
 
@@ -46,19 +45,6 @@ export function TitleBar({ status }: { status: TitleBarStatus }): React.JSX.Elem
             className={`${pillDotClass} bg-[var(--color-wifi)] animate-[plexo-glow_2s_ease-in-out_infinite]`}
           />
           {status.networkCount} {status.networkCount === 1 ? 'network' : 'networks'} combined
-        </ColorBadge>
-      )}
-      {status.kind === 'assembling' && (
-        <ColorBadge
-          bg="var(--color-ethernet-bg)"
-          border="var(--color-ethernet-border)"
-          text="var(--color-ethernet-text)"
-          className={pillClass}
-        >
-          <div
-            className={`${pillDotClass} bg-[var(--color-ethernet)] animate-[plexo-glow_1s_ease-in-out_infinite]`}
-          />
-          Assembling file…
         </ColorBadge>
       )}
       {status.kind === 'paused' && (

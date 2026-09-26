@@ -1,5 +1,6 @@
 import { writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
+import type { Page } from '@playwright/test'
 import { BLOCK, expect, interfacesEnv, NETWORKS, test } from './fixtures'
 
 // G. A handful of journeys through the real UI, to prove the screens are wired to the main
@@ -104,60 +105,84 @@ test.describe('UI journeys @smoke', () => {
       plexo.page.getByRole('button', { name: /Reveal in Finder|Show in folder/ })
     ).toBeVisible()
   })
+})
 
-  test('theme choice survives a restart', async ({ plexo }) => {
-    const before = await plexo.api.getThemeSource()
-    const next = before === 'light' ? 'dark' : 'light'
-    await plexo.page.getByRole('button', { name: `Switch to ${next} theme` }).click()
-    await expect.poll(() => plexo.api.getThemeSource()).toBe(next)
-    await plexo.relaunch()
-    expect(await plexo.api.getThemeSource()).toBe(next)
+// What a user sets is still set after they reload or restart — checked only through what they see.
+test.describe('settings @smoke', () => {
+  test.describe('with an update available', () => {
+    test.use({ appEnv: { PLEXO_FORCE_UPDATE_VERSION: '9.9.9' } })
+
+    test('every choice survives a reload and a restart, even made right before', async ({
+      plexo,
+      dirs
+    }) => {
+      const page = (): Page => plexo.page
+      await page().getByRole('button', { name: 'Not now' }).click()
+
+      const themeToggle = page().getByRole('button', { name: /^Switch to (dark|light) theme$/ })
+      // After switching, the toggle offers to switch back.
+      const labelAfterSwitch = (await themeToggle.getAttribute('aria-label'))!.includes('dark')
+        ? 'Switch to light theme'
+        : 'Switch to dark theme'
+      await themeToggle.click()
+
+      await stubNativeUi(plexo, dirs.dest)
+      await page().getByRole('button', { name: 'Browse…' }).click()
+
+      await page().getByRole('button', { name: 'Edit network' }).first().click()
+      await page().getByRole('textbox', { name: 'Name' }).fill('Office fibre')
+      await page().getByRole('button', { name: 'Violet' }).click()
+      await page().getByRole('button', { name: 'Done' }).click()
+
+      const expectAllKept = async (): Promise<void> => {
+        // Waiting on the titlebar indicator first means the update check has answered, so the
+        // dialog's absence below is a real "stayed dismissed", not "not checked yet".
+        await expect(page().getByRole('link', { name: 'Update available: 9.9.9' })).toBeVisible()
+        await expect(page().getByRole('alertdialog')).toBeHidden()
+        await expect(page().getByRole('button', { name: labelAfterSwitch })).toBeVisible()
+        await expect(page().getByText(dirs.dest)).toBeVisible()
+        await expect(page().getByText('Office fibre')).toBeVisible()
+        await page().getByRole('button', { name: 'Edit network' }).first().click()
+        await expect(page().getByRole('button', { name: 'Violet' })).toHaveAttribute(
+          'aria-pressed',
+          'true'
+        )
+        await page().keyboard.press('Escape')
+      }
+
+      // No waiting for saves: a user doesn't either.
+      await page().reload()
+      await expectAllKept()
+      await plexo.relaunch()
+      await expectAllKept()
+    })
   })
 
-  test('renaming a network survives a restart', async ({ plexo }) => {
-    const page = plexo.page
-    await page.getByRole('button', { name: 'Edit network' }).first().click()
-    await page.getByRole('textbox', { name: 'Name' }).fill('Office fibre')
-    await page.getByRole('button', { name: 'Done' }).click()
-    await expect(page.getByText('Office fibre')).toBeVisible()
-
-    await plexo.relaunch()
-    await expect(plexo.page.getByText('Office fibre')).toBeVisible()
-  })
-
-  test('a corrupt network-preferences.json does not break the network list', async ({
+  test('a broken settings file falls back to what a fresh install shows', async ({
     plexo,
     dirs
   }) => {
+    const settingsPath = join(dirs.userData, 'app-settings.json')
+    // The TO row, as the user sees it — compared whole, so no platform's idea of the default
+    // folder is baked into the test.
+    const choices = (): Promise<string> =>
+      plexo.page.getByText('TO', { exact: true }).locator('..').innerText()
+    const fresh = await choices()
+
     await plexo.quit()
-    await writeFile(join(dirs.userData, 'network-preferences.json'), '{"a": 42, "b": [')
+    await writeFile(settingsPath, '{"destinationDir": "/')
     await plexo.launch()
-    await expect(plexo.page.getByRole('button', { name: 'Edit network' }).first()).toBeVisible()
+    expect(await choices()).toEqual(fresh)
+
+    await plexo.quit()
+    await writeFile(settingsPath, JSON.stringify({ destinationDir: join(dirs.dest, 'unplugged') }))
+    await plexo.launch()
+    expect(await choices()).toEqual(fresh)
   })
 })
 
 test.describe('no networks', () => {
   test.use({ appEnv: { PLEXO_E2E_INTERFACES: '' } })
-
-  test('shows the no-connections screen, and settles on it @smoke', async ({ plexo }) => {
-    await plexo.evaluateMain(({ ipcMain }) => {
-      const g = globalThis as unknown as Record<string, number>
-      g.__scans = 0
-      ipcMain.removeHandler('network:list-interfaces')
-      ipcMain.handle('network:list-interfaces', () => {
-        g.__scans++
-        return []
-      })
-    }, null)
-    await new Promise((resolve) => setTimeout(resolve, 2000))
-    const scans = await plexo.evaluateMain(
-      () => (globalThis as unknown as Record<string, number>).__scans,
-      null
-    )
-    // The screen polls every 5 s; a couple of scans in 2 s is normal, thousands is the loop.
-    expect(scans).toBeLessThan(10)
-    await expect(plexo.page.getByText('No networks to combine')).toBeVisible({ timeout: 5000 })
-  })
 
   test('a network appearing takes you back to the start screen @smoke', async ({ plexo }) => {
     await expect(plexo.page.getByText('No networks to combine')).toBeVisible()

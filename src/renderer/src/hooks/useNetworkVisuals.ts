@@ -12,13 +12,13 @@ export type ResolveNetworkVisual = (
  * current download), so each screen agrees on which network is which color. */
 export function useNetworkVisuals(): ResolveNetworkVisual {
   const interfaces = useAppStore((store) => store.interfaces)
-  const chunks = useAppStore((store) => store.currentDownload?.chunks)
+  const downloadNetworks = useAppStore((store) => store.currentDownload?.networks)
   const preferences = useAppStore((store) => store.networkPreferences)
 
   const networks = new Map<string, NetworkInterfaceKind>()
   for (const iface of interfaces) networks.set(iface.id, iface.kind)
-  for (const chunk of chunks ?? []) {
-    if (!networks.has(chunk.interfaceId)) networks.set(chunk.interfaceId, chunk.interfaceKind)
+  for (const network of downloadNetworks ?? []) {
+    if (!networks.has(network.id)) networks.set(network.id, network.kind)
   }
   const colors = assignNetworkColors(networks, preferences)
 

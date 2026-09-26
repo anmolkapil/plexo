@@ -41,7 +41,7 @@ export function ThemeToggle(): React.JSX.Element {
   const current = OPTIONS.find((option) => option.id === themeSource) ?? OPTIONS[0]
 
   const toggle = (): void => {
-    void setThemeSource(current.id === 'light' ? 'dark' : 'light')
+    setThemeSource(current.id === 'light' ? 'dark' : 'light')
   }
 
   return (
