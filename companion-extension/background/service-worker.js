@@ -125,16 +125,22 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
 
 function cancelAndErase(downloadId) {
   if (downloadId === null || downloadId === undefined) return
-  chrome.downloads.cancel(downloadId, () => {
+  chrome.downloads.search({ id: downloadId }, (items) => {
     void chrome.runtime.lastError
-    chrome.downloads.search({ id: downloadId }, (items) => {
-      void chrome.runtime.lastError
-      if (items && items.length > 0) {
+    if (!items || items.length === 0) return
+    const item = items[0]
+    if (item.state === 'in_progress') {
+      chrome.downloads.cancel(downloadId, () => {
+        void chrome.runtime.lastError
         chrome.downloads.erase({ id: downloadId }, () => {
           void chrome.runtime.lastError
         })
-      }
-    })
+      })
+    } else {
+      chrome.downloads.erase({ id: downloadId }, () => {
+        void chrome.runtime.lastError
+      })
+    }
   })
 }
 
