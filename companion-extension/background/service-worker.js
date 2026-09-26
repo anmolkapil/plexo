@@ -47,23 +47,39 @@ async function updateBadge() {
 
 function setupContextMenus() {
   chrome.contextMenus.removeAll(() => {
-    chrome.contextMenus.create({
-      id: 'plexo-download-link',
-      title: 'Download with Plexo',
-      contexts: ['link']
-    })
+    void chrome.runtime.lastError
+    chrome.contextMenus.create(
+      {
+        id: 'plexo-download-link',
+        title: 'Download with Plexo',
+        contexts: ['link']
+      },
+      () => {
+        void chrome.runtime.lastError
+      }
+    )
 
-    chrome.contextMenus.create({
-      id: 'plexo-download-media',
-      title: 'Download media with Plexo',
-      contexts: ['video', 'audio']
-    })
+    chrome.contextMenus.create(
+      {
+        id: 'plexo-download-media',
+        title: 'Download media with Plexo',
+        contexts: ['video', 'audio']
+      },
+      () => {
+        void chrome.runtime.lastError
+      }
+    )
 
-    chrome.contextMenus.create({
-      id: 'plexo-download-image',
-      title: 'Download image with Plexo',
-      contexts: ['image']
-    })
+    chrome.contextMenus.create(
+      {
+        id: 'plexo-download-image',
+        title: 'Download image with Plexo',
+        contexts: ['image']
+      },
+      () => {
+        void chrome.runtime.lastError
+      }
+    )
   })
 }
 
@@ -107,8 +123,28 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
   }
 })
 
+function cancelAndErase(downloadId) {
+  if (downloadId === null || downloadId === undefined) return
+  chrome.downloads.cancel(downloadId, () => {
+    void chrome.runtime.lastError
+    chrome.downloads.search({ id: downloadId }, (items) => {
+      void chrome.runtime.lastError
+      if (items && items.length > 0) {
+        chrome.downloads.erase({ id: downloadId }, () => {
+          void chrome.runtime.lastError
+        })
+      }
+    })
+  })
+}
+
 // Process a browser download event (onCreated or onDeterminingFilename)
 async function processDownloadItem(downloadItem, suggest = null) {
+  if (!downloadItem || downloadItem.id === null || downloadItem.id === undefined) {
+    if (suggest) suggest()
+    return
+  }
+
   if (processedDownloadIds.has(downloadItem.id)) {
     if (suggest) suggest()
     return
@@ -129,18 +165,8 @@ async function processDownloadItem(downloadItem, suggest = null) {
   processedDownloadIds.add(downloadItem.id)
   setTimeout(() => processedDownloadIds.delete(downloadItem.id), 60000)
 
-  // Pause the native browser download immediately to avoid wasted network traffic
-  try {
-    await chrome.downloads.pause(downloadItem.id)
-  } catch {
-    // Ignore if download cannot be paused immediately
-  }
-
   const downloadUrl = downloadItem.finalUrl || downloadItem.url
   if (!downloadUrl) {
-    try {
-      await chrome.downloads.resume(downloadItem.id)
-    } catch {}
     if (suggest) suggest()
     return
   }
@@ -169,19 +195,9 @@ async function processDownloadItem(downloadItem, suggest = null) {
 
   if (result.success) {
     // Successfully transferred to Plexo: cancel and clean up the native browser download
-    try {
-      await chrome.downloads.cancel(downloadItem.id)
-      await chrome.downloads.erase({ id: downloadItem.id })
-    } catch {
-      // Ignore cleanup error if already cancelled
-    }
+    cancelAndErase(downloadItem.id)
   } else {
-    // Plexo is offline or unavailable: resume the native browser download
-    try {
-      await chrome.downloads.resume(downloadItem.id)
-    } catch {
-      // Ignore
-    }
+    // Plexo is offline or unavailable: let the browser download proceed normally
     updateBadge()
   }
 
