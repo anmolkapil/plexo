@@ -23,6 +23,8 @@ export interface ChunkDownloadOptions {
   /** Called once the server has answered with usable headers: how long that took, and whether
    * the request went out on a connection an earlier one had already warmed up. */
   onResponse?: (info: { ttfbMs: number; reusedSocket: boolean }) => void
+  /** Optional custom headers forwarded to the server. */
+  headers?: Record<string, string>
 }
 
 /** A response whose version doesn't match the download's. Nothing from it was written; the
@@ -190,7 +192,10 @@ export function downloadChunk(options: ChunkDownloadOptions): Promise<void> {
 
     // The whole file from the start needs no Range at all — and an empty file would answer
     // `bytes=0-` with 416, since it has no byte 0 to start from.
-    const headers: Record<string, string> = { 'User-Agent': 'Plexo/1.0' }
+    const headers: Record<string, string> = {
+      'User-Agent': 'Plexo/1.0',
+      ...(options.headers ?? {})
+    }
     if (rangeStart > 0 || rangeEnd !== null) {
       headers['Range'] =
         rangeEnd === null ? `bytes=${rangeStart}-` : `bytes=${rangeStart}-${rangeEnd}`
@@ -349,12 +354,17 @@ export function fetchRange(
   url: string,
   start: number,
   end: number,
-  connection: StreamConnection
+  connection: StreamConnection,
+  customHeaders?: Record<string, string>
 ): Promise<{ body: Buffer; version: FileVersion }> {
   return new Promise((resolve, reject) => {
     const attempt = (target: URL, redirectsLeft: number): void => {
       void connection
-        .request(target, { 'User-Agent': 'Plexo/1.0', Range: `bytes=${start}-${end}` })
+        .request(target, {
+          'User-Agent': 'Plexo/1.0',
+          ...(customHeaders ?? {}),
+          Range: `bytes=${start}-${end}`
+        })
         .then(({ req, res }) => {
           req.on('error', reject)
           const status = res.statusCode ?? 0

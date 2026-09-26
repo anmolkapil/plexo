@@ -1,0 +1,281 @@
+:root {
+  --bg: #121214;
+  --card-bg: #1c1c1f;
+  --border: #2e2e33;
+  --text-main: #f4f4f5;
+  --text-muted: #a1a1aa;
+  --primary: #3b82f6;
+  --primary-hover: #2563eb;
+  --success: #10b981;
+  --destructive: #ef4444;
+  --font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+}
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  width: 320px;
+  background-color: var(--bg);
+  color: var(--text-main);
+  font-family: var(--font-family);
+  font-size: 13px;
+  line-height: 1.4;
+  user-select: none;
+}
+
+.container {
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+/* Header */
+.header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding-bottom: 4px;
+}
+
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.logo {
+  width: 22px;
+  height: 22px;
+  color: var(--primary);
+}
+
+.brand-text h1 {
+  font-size: 15px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+}
+
+.subtitle {
+  font-size: 10px;
+  color: var(--text-muted);
+  display: block;
+  margin-top: -2px;
+}
+
+/* Status Pill */
+.status-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 8px;
+  border-radius: 9999px;
+  font-size: 11px;
+  font-weight: 500;
+  background: #27272a;
+}
+
+.status-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+}
+
+.status-pill.online {
+  background: rgba(16, 185, 129, 0.15);
+  color: #34d399;
+}
+.status-pill.online .status-dot {
+  background: #10b981;
+  box-shadow: 0 0 6px #10b981;
+}
+
+.status-pill.online.active {
+  background: rgba(59, 130, 246, 0.18);
+  color: #60a5fa;
+}
+.status-pill.online.active .status-dot {
+  background: #3b82f6;
+  box-shadow: 0 0 6px #3b82f6;
+}
+
+.status-pill.offline {
+  background: rgba(239, 68, 68, 0.15);
+  color: #f87171;
+}
+.status-pill.offline .status-dot {
+  background: #ef4444;
+}
+
+/* Cards */
+.card {
+  background: var(--card-bg);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 12px;
+}
+
+.toggle-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.card-title {
+  display: block;
+  font-size: 12px;
+  font-weight: 600;
+  margin-bottom: 2px;
+}
+
+.card-desc {
+  display: block;
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+/* Switch */
+.switch {
+  position: relative;
+  display: inline-block;
+  width: 36px;
+  height: 20px;
+  flex-shrink: 0;
+}
+
+.switch input {
+  opacity: 0;
+  width: 0;
+  height: 0;
+}
+
+.slider {
+  position: absolute;
+  cursor: pointer;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background-color: #3f3f46;
+  transition: 0.2s;
+  border-radius: 20px;
+}
+
+.slider:before {
+  position: absolute;
+  content: "";
+  height: 14px;
+  width: 14px;
+  left: 3px;
+  bottom: 3px;
+  background-color: white;
+  transition: 0.2s;
+  border-radius: 50%;
+}
+
+input:checked + .slider {
+  background-color: var(--primary);
+}
+
+input:checked + .slider:before {
+  transform: translateX(16px);
+}
+
+/* Input Group */
+.input-group {
+  display: flex;
+  gap: 6px;
+  margin-top: 6px;
+}
+
+input[type="url"] {
+  flex: 1;
+  background: #121214;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 6px 10px;
+  color: var(--text-main);
+  font-size: 12px;
+  outline: none;
+  min-width: 0;
+}
+
+input[type="url"]:focus {
+  border-color: var(--primary);
+}
+
+/* Buttons */
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.15s, opacity 0.15s;
+}
+
+.btn svg {
+  width: 14px;
+  height: 14px;
+}
+
+.btn-primary {
+  background: var(--primary);
+  color: white;
+  padding: 0 10px;
+}
+.btn-primary:hover {
+  background: var(--primary-hover);
+}
+
+.btn-secondary {
+  flex: 1;
+  background: #27272a;
+  color: var(--text-main);
+  padding: 7px 12px;
+  gap: 6px;
+}
+.btn-secondary:hover {
+  background: #3f3f46;
+}
+
+.btn-icon {
+  background: #27272a;
+  color: var(--text-muted);
+  width: 32px;
+  height: 32px;
+}
+.btn-icon:hover {
+  background: #3f3f46;
+  color: var(--text-main);
+}
+
+/* Messages */
+.message {
+  font-size: 11px;
+  margin-top: 6px;
+  display: none;
+}
+.message.success {
+  display: block;
+  color: var(--success);
+}
+.message.error {
+  display: block;
+  color: var(--destructive);
+}
+
+/* Footer */
+.footer {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding-top: 2px;
+}

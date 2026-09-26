@@ -6,6 +6,7 @@ import { registerIpcHandlers } from './ipc/handlers'
 import { loadThemeSource, migrateLegacyNetworkPreferences } from './settings'
 import { testKnobs } from './testKnobs'
 import type { DownloadManager } from './download/downloadManager'
+import { CompanionServer } from './companion/server'
 
 // In dev mode the app runs as the raw `electron` binary, which otherwise shows "Electron" in
 // the Dock tooltip/menu bar — must be set before the app is ready. Packaged builds already get
@@ -15,8 +16,10 @@ app.setName('Plexo')
 // Each e2e test runs against its own throwaway userData folder (downloads, manifests, settings).
 if (testKnobs.userDataDir) app.setPath('userData', testKnobs.userDataDir)
 
+const isTesting = Boolean(testKnobs.userDataDir)
 let mainWindow: BrowserWindow | null = null
 let downloadManager: DownloadManager | null = null
+let companionServer: CompanionServer | null = null
 let quitAfterSuspending = false
 
 function createWindow(): void {
@@ -86,6 +89,14 @@ app.whenReady().then(async () => {
 
   downloadManager = registerIpcHandlers(() => mainWindow)
 
+  companionServer = new CompanionServer(
+    () => mainWindow,
+    () => downloadManager?.hasActiveDownload() ?? false
+  )
+  if (!isTesting) {
+    void companionServer.start()
+  }
+
   nativeTheme.on('updated', () => {
     mainWindow?.setBackgroundColor(nativeTheme.shouldUseDarkColors ? '#1c1c1e' : '#ffffff')
   })
@@ -99,6 +110,9 @@ app.whenReady().then(async () => {
 })
 
 app.on('before-quit', (event) => {
+  if (companionServer) {
+    void companionServer.stop()
+  }
   if (quitAfterSuspending || !downloadManager) return
 
   event.preventDefault()

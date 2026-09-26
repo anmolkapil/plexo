@@ -1,6 +1,7 @@
 import { applyDownloadUpdate } from '@shared/downloadUpdate'
 import type {
   AppSettings,
+  CompanionDownloadPayload,
   DownloadState,
   DownloadUpdate,
   NetworkInterfaceInfo,
@@ -52,6 +53,9 @@ interface AppStore {
   draftUrl: string
   /** Persisted — the last folder picked, falling back to downloadsDir. */
   destinationDir: string
+  draftHeaders?: Record<string, string>
+  draftFileName?: string
+  incomingCompanionAlert: string | null
 
   /** Asks the main process for the network list now; it also pushes every change. */
   loadInterfaces: () => Promise<void>
@@ -66,6 +70,10 @@ interface AppStore {
   clearCurrentDownload: () => void
   setDraftUrl: (url: string) => void
   setDestinationDir: (dir: string) => void
+  setDraftHeaders: (headers?: Record<string, string>) => void
+  setDraftFileName: (name?: string) => void
+  setIncomingCompanionAlert: (alert: string | null) => void
+  ingestCompanionDownload: (payload: CompanionDownloadPayload) => void
 }
 
 // Settings saved by the main process, read once before the first paint (see InitialState).
@@ -97,6 +105,9 @@ export const useAppStore = create<AppStore>((set, get) => ({
 
   draftUrl: '',
   destinationDir: initial.destinationDir ?? initial.downloadsDir,
+  draftHeaders: undefined,
+  draftFileName: undefined,
+  incomingCompanionAlert: null,
 
   loadInterfaces: async () => {
     // A re-scan keeps showing the last result rather than flashing back to 'loading'.
@@ -201,5 +212,30 @@ export const useAppStore = create<AppStore>((set, get) => ({
   setDestinationDir: (destinationDir) => {
     set({ destinationDir })
     persist({ destinationDir })
+  },
+  setDraftHeaders: (draftHeaders) => set({ draftHeaders }),
+  setDraftFileName: (draftFileName) => set({ draftFileName }),
+  setIncomingCompanionAlert: (incomingCompanionAlert) => set({ incomingCompanionAlert }),
+  ingestCompanionDownload: (payload) => {
+    const current = get().currentDownload
+    if (current && (current.status === 'downloading' || current.status === 'paused')) {
+      const name = payload.suggestedFileName || payload.url
+      set({
+        incomingCompanionAlert: `Browser download received: ${name}. Current download is in progress.`
+      })
+      return
+    }
+
+    if (current && (current.status === 'completed' || current.status === 'cancelled')) {
+      void window.plexo.removeDownload(current.id)
+      set({ currentDownload: null })
+    }
+
+    set({
+      draftUrl: payload.url,
+      draftHeaders: payload.headers,
+      draftFileName: payload.suggestedFileName,
+      incomingCompanionAlert: null
+    })
   }
 }))

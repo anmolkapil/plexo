@@ -17,6 +17,7 @@
     "predev": "install-electron",
     "dev": "electron-vite dev",
     "build": "npm run typecheck && electron-vite build",
+    "pack:extension": "node scripts/pack-extension.mjs",
     "postinstall": "install-electron && electron-builder install-app-deps",
     "build:unpack": "npm run build && electron-builder --dir",
     "build:win": "npm run build && electron-builder --win",

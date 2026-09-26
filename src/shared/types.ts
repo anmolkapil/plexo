@@ -209,4 +209,15 @@ export interface StartDownloadRequest {
   interfaceIds: string[]
   etag: string | null
   lastModified: string | null
+  /** Optional custom headers (e.g. Cookie, Referer, User-Agent) forwarded to all chunk requests. */
+  headers?: Record<string, string>
+}
+
+export interface CompanionDownloadPayload {
+  url: string
+  suggestedFileName?: string
+  cookies?: string
+  referer?: string
+  userAgent?: string
+  headers?: Record<string, string>
 }

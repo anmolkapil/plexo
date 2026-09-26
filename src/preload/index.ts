@@ -3,6 +3,7 @@ import { IpcChannels } from '../shared/ipc-channels'
 import type { IpcContract } from '../shared/ipc-contract'
 import type {
   AppSettings,
+  CompanionDownloadPayload,
   DownloadUpdate,
   InitialState,
   NetworkInterfaceInfo
@@ -28,7 +29,7 @@ const plexoApi = {
   deviceBindingSupported: () => invoke('deviceBindingSupported'),
   openNetworkSettings: () => invoke('openNetworkSettings'),
   updateSettings: (patch: AppSettings) => invoke('updateSettings', patch),
-  probeUrl: (url: string) => invoke('probeUrl', url),
+  probeUrl: (url: string, headers?: Record<string, string>) => invoke('probeUrl', url, headers),
   chooseDestinationFolder: (defaultPath: string) => invoke('chooseDestinationFolder', defaultPath),
   readClipboardText: () => invoke('readClipboardText'),
   revealInFolder: (filePath: string) => invoke('revealInFolder', filePath),
@@ -47,6 +48,13 @@ const plexoApi = {
     const listener = (_event: IpcRendererEvent, update: DownloadUpdate): void => callback(update)
     ipcRenderer.on(IpcChannels.downloadUpdated, listener)
     return () => ipcRenderer.removeListener(IpcChannels.downloadUpdated, listener)
+  },
+
+  onCompanionDownload: (callback: (payload: CompanionDownloadPayload) => void): (() => void) => {
+    const listener = (_event: IpcRendererEvent, payload: CompanionDownloadPayload): void =>
+      callback(payload)
+    ipcRenderer.on(IpcChannels.companionDownload, listener)
+    return () => ipcRenderer.removeListener(IpcChannels.companionDownload, listener)
   },
 
   onNetworksChanged: (callback: (networks: NetworkInterfaceInfo[]) => void): (() => void) => {
