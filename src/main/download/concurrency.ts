@@ -5,9 +5,14 @@
 // - Once every one of its streams has received data, it doubles, up to the limit. Another
 //   connection costs little when the link is already full, and a server that caps each
 //   connection's speed is only outrun by more of them.
-// - A server that refuses a request (503, 429, 403) is saying it wants fewer connections from
-//   this address: the network keeps the streams the server was accepting and never goes above
-//   that again for this download.
+// - A server that refuses some of a network's streams (503, 429, 403) while it is sending data
+//   down others is saying it wants fewer connections from this address: the refused streams
+//   close, and the network never goes above the ones left again for this download. Only the
+//   streams refused count against it: one that failed some other way, or hasn't been answered
+//   yet, isn't a refusal. As in Gopeed, where a refused connection stops and the others carry on.
+// - A server that refuses while sending nothing isn't limiting connections: it is busy, or the
+//   link has expired or been denied. That is waited out or reported elsewhere (see finishFailed
+//   in downloadManager.ts), and the count stays. The network doesn't grow meanwhile.
 // - Each network is decided on its own, so one that drops out or comes back never disturbs the
 //   others.
 //
@@ -20,10 +25,10 @@ export interface NetworkSnapshot {
   streams: number
   /** Its streams that have received data. */
   answered: number
-  /** Its streams that have received data and whose last request didn't fail. */
-  accepted: number
-  /** Requests the server refused on it since the last snapshot. */
+  /** Its streams the server refused a request from since the last snapshot. */
   refused: number
+  /** Its streams that received data since the last snapshot. */
+  served: number
 }
 
 export interface Snapshot {
@@ -46,8 +51,8 @@ export class ConcurrencyController {
     let spare = snapshot.spareWork
     for (const network of snapshot.networks) {
       const { id, streams } = network
-      if (network.refused > 0) {
-        const ceiling = Math.max(1, Math.min(streams, network.accepted))
+      if (network.refused > 0 && network.served > 0) {
+        const ceiling = Math.max(1, streams - network.refused)
         this.ceilings.set(id, Math.min(ceiling, this.ceilings.get(id) ?? Infinity))
       }
       const ceiling = Math.min(this.maxPerNetwork, this.ceilings.get(id) ?? Infinity)
@@ -55,7 +60,8 @@ export class ConcurrencyController {
         actions.push({ kind: 'retire', networkId: id, count: streams - ceiling })
         continue
       }
-      if (streams === 0 || network.answered < streams) continue
+      // Not while the server is turning requests away.
+      if (network.refused > 0 || streams === 0 || network.answered < streams) continue
       const count = Math.min(streams, ceiling - streams, spare)
       if (count < 1) continue
       spare -= count

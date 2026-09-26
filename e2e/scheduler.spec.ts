@@ -228,12 +228,18 @@ test.describe('scheduler: racing a slow block', () => {
   })
 
   test('a free stream that has shown its speed races as soon as it would clearly finish first', () => {
-    // 800 bytes left at 100 B/s: 8 s. Too soon for the fixed wait, but a stream that fetched its
-    // last block at 800 B/s would be done in 1 s + 1 s startup.
-    expect(pick(laggard(100), 1, 'a')).toBeUndefined()
-    expect(pick(laggard(100), 1, 'a', 800)).toBe('hedge:0')
-    // Not when it would only finish a little sooner: at 200 B/s it needs 5 s, over half of 8 s.
-    expect(pick(laggard(100), 1, 'a', 200)).toBeUndefined()
+    // 800 bytes left at 200 B/s: 4 s. Under the 5 s a stream of unknown speed waits for, but a
+    // stream that fetched its last block at 800 B/s would be done in 1 s + 1 s startup.
+    expect(pick(laggard(200), 1, 'a')).toBeUndefined()
+    expect(pick(laggard(200), 1, 'a', 800)).toBe('hedge:0')
+    // Not when it would only finish a little sooner: at 400 B/s it needs 3 s, over half of 4 s.
+    expect(pick(laggard(200), 1, 'a', 400)).toBeUndefined()
+  })
+
+  test('a free stream of unknown speed races a block that needs at least hedgeAfterMs more', () => {
+    // 800 bytes left at 160 B/s: exactly 5 s. At 200 B/s, 4 s: left alone.
+    expect(pick(laggard(160), 1, 'a')).toBe('hedge:0')
+    expect(pick(laggard(200), 1, 'a')).toBeUndefined()
   })
 
   test('a stream never races its own block', () => {

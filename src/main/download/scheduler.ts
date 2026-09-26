@@ -111,11 +111,12 @@ function nextHedgeTarget(
         return speed ? (remaining / speed) * 1000 : Infinity
       })
     )
-    // Worth it only if the requester would finish in under half that time.
-    const mine = who.speedBytesPerSec
-      ? policy.startupMs + (remaining / who.speedBytesPerSec) * 1000
-      : policy.hedgeAfterMs
-    if (eta < 2 * mine) continue
+    // Worth it only if the requester would finish in under half that time. One whose speed isn't
+    // known yet races a block that needs at least hedgeAfterMs more.
+    const worthIt = who.speedBytesPerSec
+      ? eta >= 2 * (policy.startupMs + (remaining / who.speedBytesPerSec) * 1000)
+      : eta >= policy.hedgeAfterMs
+    if (!worthIt) continue
 
     // The holders' network may be what is slow, so a stream on another network gets the first
     // go — unless none of those would take it either.

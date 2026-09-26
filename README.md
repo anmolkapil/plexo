@@ -67,7 +67,7 @@ File ──→ Split ─────┤                                  ├─�
 
 ## Features
 
-- 🚀 **Multi-interface, multi-connection downloads** — splits files into chunks of up to 8 MB and fans them out across worker connections bound to specific network interfaces, each kept open from one chunk to the next. Each interface starts with 8 connections and doubles once they are all receiving, up to 32; if the server refuses one (503, 429, 403), that interface keeps the connections the server accepted.
+- 🚀 **Multi-interface, multi-connection downloads** — splits files into chunks of up to 8 MB and fans them out across worker connections bound to specific network interfaces, each kept open from one chunk to the next. Each interface starts with 8 connections and doubles once they are all receiving, up to 32; if the server refuses some of them (503, 429, 403) while serving the rest, the refused ones close and that interface stays at the ones left; a server refusing everything (busy, or an expired link) doesn't lower it.
 - 🔌 **Hardware interface detection** — queries Windows adapters via PowerShell `Get-NetAdapter` and macOS hardware ports via `networksetup` so Wi-Fi, Ethernet, tethered iPhones, and Thunderbolt bridges are labeled by real device names instead of bare BSD names (`en0`, `en6`).
 - ⚖️ **Dynamic work-stealing queue** — chunks are leased from a shared pending queue; faster networks pull more chunks instead of waiting for slower connections to finish.
 - ⏸️ **Resumable downloads** — cleanly pause and resume downloads with progress saved in a destination-side staging file.

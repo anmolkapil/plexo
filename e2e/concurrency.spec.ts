@@ -14,8 +14,8 @@ const network = (
   id,
   streams,
   answered: streams,
-  accepted: streams,
   refused: 0,
+  served: streams,
   ...over
 })
 
@@ -55,26 +55,66 @@ test.describe('stream count', () => {
     ])
   })
 
-  test('a refusal keeps the streams the server accepted, and it never grows past them again', () => {
+  test('streams the server refuses close, and it never grows past the ones left again', () => {
     const controller = new ConcurrencyController(MAX)
     expect(
       controller.tick({
-        networks: [network('a', 16, { answered: 10, accepted: 10, refused: 6 })],
+        networks: [network('a', 16, { served: 10, refused: 6 })],
         spareWork: 1000
       })
     ).toEqual([{ kind: 'retire', networkId: 'a', count: 6 }])
     // Later, all well again: still no growth past 10.
     expect(controller.tick({ networks: [network('a', 10)], spareWork: 1000 })).toEqual([])
+    // A stream lost some other way is made up for, back to the limit and no further.
+    expect(controller.tick({ networks: [network('a', 7)], spareWork: 1000 })).toEqual([
+      { kind: 'add', networkId: 'a', count: 3 }
+    ])
   })
 
-  test('a refusal before anything was accepted still leaves a stream', () => {
+  test('streams that have yet to receive anything are not taken for refused ones', () => {
+    // One stream refused just after starting, while the other seven were still connecting: the
+    // limit is the seven, not the none that had answered yet.
     const controller = new ConcurrencyController(MAX)
     expect(
       controller.tick({
-        networks: [network('a', 8, { answered: 0, accepted: 0, refused: 8 })],
+        networks: [network('a', 8, { answered: 0, served: 0, refused: 1 })],
         spareWork: 1000
       })
-    ).toEqual([{ kind: 'retire', networkId: 'a', count: 7 }])
+    ).toEqual([])
+    expect(
+      controller.tick({ networks: [network('a', 8, { served: 7, refused: 1 })], spareWork: 1000 })
+    ).toEqual([{ kind: 'retire', networkId: 'a', count: 1 }])
+    expect(controller.tick({ networks: [network('a', 7)], spareWork: 1000 })).toEqual([])
+  })
+
+  test('a server refusing while it sends nothing is not limiting connections: the count stays', () => {
+    // Busy, or the link expired: waited out or reported elsewhere, not a reason to close streams.
+    // Refusals spread over a few looks don't add up to a limit either.
+    const controller = new ConcurrencyController(MAX)
+    for (const refused of [16, 5, 11]) {
+      expect(
+        controller.tick({
+          networks: [network('a', 16, { served: 0, refused })],
+          spareWork: 1000
+        })
+      ).toEqual([])
+    }
+    // Once it serves again, the network grows as before.
+    expect(controller.tick({ networks: [network('a', 16)], spareWork: 1000 })).toEqual([
+      { kind: 'add', networkId: 'a', count: 16 }
+    ])
+  })
+
+  test('a limit only ever comes down', () => {
+    const controller = new ConcurrencyController(MAX)
+    controller.tick({ networks: [network('a', 16, { served: 10, refused: 6 })], spareWork: 1000 })
+    // A later partial refusal on fewer streams lowers it again; it never rises.
+    expect(
+      controller.tick({ networks: [network('a', 10, { served: 8, refused: 2 })], spareWork: 1000 })
+    ).toEqual([{ kind: 'retire', networkId: 'a', count: 2 }])
+    expect(controller.tick({ networks: [network('a', 6)], spareWork: 1000 })).toEqual([
+      { kind: 'add', networkId: 'a', count: 2 }
+    ])
   })
 
   test('each network is decided on its own', () => {
@@ -82,7 +122,7 @@ test.describe('stream count', () => {
     // b is refused and one of a's streams hasn't answered: only b changes, and a is untouched.
     expect(
       controller.tick({
-        networks: [network('a', 8, { answered: 7 }), network('b', 16, { accepted: 8, refused: 3 })],
+        networks: [network('a', 8, { answered: 7 }), network('b', 16, { served: 8, refused: 8 })],
         spareWork: 1000
       })
     ).toEqual([{ kind: 'retire', networkId: 'b', count: 8 }])

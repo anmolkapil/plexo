@@ -114,6 +114,11 @@ interface ChunkRuntime {
   /** When the server first answered busy (see HttpStatusError.transient) since this stream last
    * made progress: a busy server is waited out for SERVER_BUSY_FOR_MS, not MAX_CHUNK_RETRIES. */
   busySince: number | null
+  /** Since the stream count last looked: whether the server turned one of its requests away
+   * (403, 429, 503), and whether it received anything. What a connection limit is judged by (see
+   * concurrency.ts). */
+  refused: boolean
+  served: boolean
   /** Stopped for good, and to leave the list once its worker has (see retireStreams). */
   retiring: boolean
 }
@@ -121,12 +126,6 @@ interface ChunkRuntime {
 interface SpeedSample {
   bytes: number
   time: number
-}
-
-interface Traffic {
-  received: number
-  aliveAt: number
-  refused: number
 }
 
 interface DownloadRuntime {
@@ -166,10 +165,9 @@ interface DownloadRuntime {
   attempts: Map<number, Attempt[]>
   /** Hedges started per block index, capped at SCHEDULER_POLICY.maxHedgesPerBlock. */
   hedgesByBlock: Map<number, number>
-  /** By network id: everything its streams have received, when it last showed it was alive —
-   * received something, or came into use — and requests the server has refused on it since the
-   * stream count last looked (see concurrency.ts). */
-  traffic: Map<string, Traffic>
+  /** By network id: everything its streams have received, and when it last showed it was alive —
+   * received something, or came into use. */
+  traffic: Map<string, { received: number; aliveAt: number }>
   /** By network id: until when the server asked (Retry-After) not to be sent new requests over
    * it. */
   holdUntil: Map<string, number>
@@ -987,6 +985,11 @@ export class DownloadManager {
       this.refreshStuckConnections(runtime, now)
       this.reconcile(runtime)
       this.adjustStreams(runtime, runtime.concurrency?.tick(this.concurrencySnapshot(runtime)))
+      // Each refusal is counted once.
+      for (const self of runtime.chunkRuntimes.values()) {
+        self.refused = false
+        self.served = false
+      }
     }
     // The last blocks are in, or the run was stopped: its streams wind down.
     runtime.stop.abort()
@@ -1187,11 +1190,12 @@ export class DownloadManager {
     )
   }
 
-  private traffic(runtime: DownloadRuntime, networkId: string): Traffic {
+  private traffic(
+    runtime: DownloadRuntime,
+    networkId: string
+  ): { received: number; aliveAt: number } {
     let traffic = runtime.traffic.get(networkId)
-    if (!traffic) {
-      runtime.traffic.set(networkId, (traffic = { received: 0, aliveAt: 0, refused: 0 }))
-    }
+    if (!traffic) runtime.traffic.set(networkId, (traffic = { received: 0, aliveAt: 0 }))
     return traffic
   }
 
@@ -1493,6 +1497,7 @@ export class DownloadManager {
   ): void {
     const now = Date.now()
     self.receivedBytes += deltaBytes
+    self.served = true
     const traffic = this.traffic(runtime, chunk.interfaceId)
     traffic.received += deltaBytes
     traffic.aliveAt = now
@@ -1712,7 +1717,7 @@ export class DownloadManager {
     // The server turning a request away: the stream count takes it as a limit (see
     // concurrency.ts).
     if (error instanceof HttpStatusError && [403, 429, 503].includes(error.status)) {
-      this.traffic(runtime, network.id).refused++
+      self.refused = true
     }
     const busy = error instanceof HttpStatusError && error.transient
     if (busy) self.busySince ??= now
@@ -1778,19 +1783,16 @@ export class DownloadManager {
     const networks = inUse.map(({ id }) => {
       let streams = 0
       let answered = 0
-      let accepted = 0
+      let refused = 0
+      let served = 0
       for (const chunk of this.liveStreams(runtime, id)) {
         const self = runtime.chunkRuntimes.get(chunk.id)
         streams++
-        if (self && self.receivedBytes > 0) {
-          answered++
-          if (self.failures === 0) accepted++
-        }
+        if (self && self.receivedBytes > 0) answered++
+        if (self?.refused) refused++
+        if (self?.served) served++
       }
-      const traffic = this.traffic(runtime, id)
-      const refused = traffic.refused
-      traffic.refused = 0
-      return { id, streams, answered, accepted, refused }
+      return { id, streams, answered, refused, served }
     })
     // A new stream takes a waiting block the moment it starts.
     const waiting = runtime.blocks.filter((block) => block.status === 'pending').length
@@ -1815,12 +1817,14 @@ export class DownloadManager {
    * costs nothing: what it wrote stays, and whoever takes the block next resumes from there. */
   private retireStreams(runtime: DownloadRuntime, networkId: string, count: number): void {
     if (count < 1) return
-    // Streams whose last request failed go first (a server refusing extra connections refused
-    // those), then the newest.
-    const failed = (chunk: ChunkState): number =>
-      (runtime.chunkRuntimes.get(chunk.id)?.failures ?? 0) > 0 ? 1 : 0
+    // Streams the server just refused go first (see concurrency.ts), then ones whose last
+    // request failed, then the newest.
+    const rank = (chunk: ChunkState): number => {
+      const self = runtime.chunkRuntimes.get(chunk.id)
+      return self?.refused ? 2 : (self?.failures ?? 0) > 0 ? 1 : 0
+    }
     const order = this.liveStreams(runtime, networkId).sort(
-      (a, b) => failed(b) - failed(a) || b.id - a.id
+      (a, b) => rank(b) - rank(a) || b.id - a.id
     )
     for (const chunk of order.slice(0, count)) {
       const self = runtime.chunkRuntimes.get(chunk.id)
@@ -1863,6 +1867,8 @@ export class DownloadManager {
       failures: 0,
       strikes: 0,
       busySince: null,
+      refused: false,
+      served: false,
       retiring: false
     }
     runtime.chunkRuntimes.set(chunk.id, self)
