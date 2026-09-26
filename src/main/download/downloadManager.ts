@@ -17,12 +17,7 @@ import type {
 } from '../../shared/types'
 import { testKnobs, testStreamsPerNetwork } from '../testKnobs'
 import { advanceBlock, retractBlock } from './blockProgress'
-import {
-  ConcurrencyController,
-  type Action,
-  type ConcurrencyPolicy,
-  type Snapshot
-} from './concurrency'
+import { ConcurrencyController, type Action, type Snapshot } from './concurrency'
 import { downloadChunk, fetchRange, HttpStatusError, RemoteChangedError } from './chunkDownloader'
 import { DownloadFile } from './downloadFile'
 import { compareVersion, type FileVersion } from './fileVersion'
@@ -119,6 +114,11 @@ interface ChunkRuntime {
   /** When the server first answered busy (see HttpStatusError.transient) since this stream last
    * made progress: a busy server is waited out for SERVER_BUSY_FOR_MS, not MAX_CHUNK_RETRIES. */
   busySince: number | null
+  /** Since the stream count last looked: whether the server turned one of its requests away
+   * (403, 429, 503), and whether it received anything. What a connection limit is judged by (see
+   * concurrency.ts). */
+  refused: boolean
+  served: boolean
   /** Stopped for good, and to leave the list once its worker has (see retireStreams). */
   retiring: boolean
 }
@@ -165,9 +165,8 @@ interface DownloadRuntime {
   attempts: Map<number, Attempt[]>
   /** Hedges started per block index, capped at SCHEDULER_POLICY.maxHedgesPerBlock. */
   hedgesByBlock: Map<number, number>
-  /** By network id: everything its streams have received, which is what the stream count is
-   * judged by (see concurrency.ts), and when it last showed it was alive — received something,
-   * or came into use. */
+  /** By network id: everything its streams have received, and when it last showed it was alive —
+   * received something, or came into use. */
   traffic: Map<string, { received: number; aliveAt: number }>
   /** By network id: until when the server asked (Retry-After) not to be sent new requests over
    * it. */
@@ -283,14 +282,8 @@ const SILENT_AFTER_MS = testKnobs.silentAfterMs
 const MAX_REFRESHES_PER_BLOCK = 2
 const SCHEDULER_POLICY: SchedulerPolicy = {
   hedgeAfterMs: testKnobs.hedgeAfterMs,
-  maxHedgesPerBlock: 2
-}
-const CONCURRENCY_POLICY: ConcurrencyPolicy = {
-  maxPerNetwork: MAX_STREAMS_PER_NETWORK,
-  windowMs: testKnobs.probeWindowMs,
-  warmupMs: testKnobs.probeWindowMs,
-  minGain: 0.15,
-  maxWindows: 4
+  maxHedgesPerBlock: 2,
+  startupMs: 1000
 }
 
 /** Whether the file can be fetched in parts. Otherwise one request has to carry all of it: one
@@ -303,7 +296,7 @@ function splittable(request: StartDownloadRequest): boolean {
  * and unless a test fixes it. */
 function concurrencyFor(request: StartDownloadRequest): ConcurrencyController | null {
   return splittable(request) && testStreamsPerNetwork() === null
-    ? new ConcurrencyController(CONCURRENCY_POLICY)
+    ? new ConcurrencyController(MAX_STREAMS_PER_NETWORK)
     : null
 }
 /** How often a stream with nothing to do looks for work again. */
@@ -858,8 +851,7 @@ export class DownloadManager {
 
   /** The computer woke from sleep. Its sockets are likely dead, though nothing will say so until
    * a stall watchdog runs out, and every judgement made by the clock (a silent network, a
-   * crawling connection, a step of the stream-count controller) spans the sleep. All of it starts
-   * over. */
+   * crawling connection) spans the sleep. All of it starts over. */
   systemResumed(): void {
     const now = Date.now()
     for (const runtime of this.runtimes.values()) {
@@ -869,7 +861,6 @@ export class DownloadManager {
         self.warmSince = now
         self.slowSince = null
       }
-      this.adjustStreams(runtime, runtime.concurrency?.interrupt())
       this.wake(
         runtime,
         () => true,
@@ -993,15 +984,16 @@ export class DownloadManager {
       if (runtime.state.speedBytesPerSec !== speed) this.scheduleUpdate(runtime)
       this.refreshStuckConnections(runtime, now)
       this.reconcile(runtime)
-      this.adjustStreams(runtime, runtime.concurrency?.tick(this.concurrencySnapshot(runtime, now)))
+      this.adjustStreams(runtime, runtime.concurrency?.tick(this.concurrencySnapshot(runtime)))
+      // Each refusal is counted once.
+      for (const self of runtime.chunkRuntimes.values()) {
+        self.refused = false
+        self.served = false
+      }
     }
     // The last blocks are in, or the run was stopped: its streams wind down.
     runtime.stop.abort()
     await Promise.all(runtime.workers.values())
-    // Stopped partway through a step: streams it added were never judged, so they don't stay.
-    if (runtime.state.status !== 'downloading') {
-      this.adjustStreams(runtime, runtime.concurrency?.interrupt())
-    }
 
     if (runtime.state.status !== 'downloading') {
       // Paused, errored, or cancelled — nothing left to do right now. An error keeps what it has
@@ -1220,11 +1212,13 @@ export class DownloadManager {
     if (chunks.length > 0) this.scheduleUpdate(runtime)
   }
 
-  private adjustStreams(runtime: DownloadRuntime, action: Action | undefined): void {
-    if (action?.kind === 'add') {
-      this.startStreams(runtime, this.addStreams(runtime, action.networkId, action.count))
-    } else if (action?.kind === 'retire') {
-      this.retireStreams(runtime, action.networkId, action.count)
+  private adjustStreams(runtime: DownloadRuntime, actions: Action[] | undefined): void {
+    for (const action of actions ?? []) {
+      if (action.kind === 'add') {
+        this.startStreams(runtime, this.addStreams(runtime, action.networkId, action.count))
+      } else {
+        this.retireStreams(runtime, action.networkId, action.count)
+      }
     }
   }
 
@@ -1503,6 +1497,7 @@ export class DownloadManager {
   ): void {
     const now = Date.now()
     self.receivedBytes += deltaBytes
+    self.served = true
     const traffic = this.traffic(runtime, chunk.interfaceId)
     traffic.received += deltaBytes
     traffic.aliveAt = now
@@ -1719,6 +1714,11 @@ export class DownloadManager {
     // that answered busy is waited out for SERVER_BUSY_FOR_MS as well; then this stream gives up,
     // and once all its network's have, so does the network.
     const now = Date.now()
+    // The server turning a request away: the stream count takes it as a limit (see
+    // concurrency.ts).
+    if (error instanceof HttpStatusError && [403, 429, 503].includes(error.status)) {
+      self.refused = true
+    }
     const busy = error instanceof HttpStatusError && error.transient
     if (busy) self.busySince ??= now
     const waitingOut = busy && now - (self.busySince ?? now) < SERVER_BUSY_FOR_MS
@@ -1778,23 +1778,25 @@ export class DownloadManager {
     this.goIdle(chunk)
   }
 
-  private concurrencySnapshot(runtime: DownloadRuntime, now: number): Snapshot {
+  private concurrencySnapshot(runtime: DownloadRuntime): Snapshot {
     const inUse = runtime.state.networks.filter((network) => network.status === 'on')
     const networks = inUse.map(({ id }) => {
       let streams = 0
-      let rejected = 0
+      let answered = 0
+      let refused = 0
+      let served = 0
       for (const chunk of this.liveStreams(runtime, id)) {
         const self = runtime.chunkRuntimes.get(chunk.id)
         streams++
-        if (self && self.failures > 0 && self.receivedBytes === 0) rejected++
+        if (self && self.receivedBytes > 0) answered++
+        if (self?.refused) refused++
+        if (self?.served) served++
       }
-      return { id, streams, rejected, received: this.traffic(runtime, id).received }
+      return { id, streams, answered, refused, served }
     })
-    let retiring = 0
-    for (const self of runtime.chunkRuntimes.values()) if (self.retiring) retiring++
+    // A new stream takes a waiting block the moment it starts.
     const waiting = runtime.blocks.filter((block) => block.status === 'pending').length
-    // Two waiting blocks per new stream, so it neither idles nor strands a slow network's share.
-    return { now, networks, spareWork: Math.floor(waiting / 2), retiring }
+    return { networks, spareWork: waiting }
   }
 
   /** New streams on `networkId`, put on the download's list for the caller to start. */
@@ -1811,11 +1813,20 @@ export class DownloadManager {
     return added
   }
 
-  /** Stops the newest `count` streams on `networkId` for good. Stopping partway through a block
+  /** Stops `count` streams on `networkId` for good. Stopping partway through a block
    * costs nothing: what it wrote stays, and whoever takes the block next resumes from there. */
   private retireStreams(runtime: DownloadRuntime, networkId: string, count: number): void {
     if (count < 1) return
-    for (const chunk of this.liveStreams(runtime, networkId).slice(-count)) {
+    // Streams the server just refused go first (see concurrency.ts), then ones whose last
+    // request failed, then the newest.
+    const rank = (chunk: ChunkState): number => {
+      const self = runtime.chunkRuntimes.get(chunk.id)
+      return self?.refused ? 2 : (self?.failures ?? 0) > 0 ? 1 : 0
+    }
+    const order = this.liveStreams(runtime, networkId).sort(
+      (a, b) => rank(b) - rank(a) || b.id - a.id
+    )
+    for (const chunk of order.slice(0, count)) {
       const self = runtime.chunkRuntimes.get(chunk.id)
       if (self && runtime.workers.has(chunk.id)) {
         // Its worker takes it off the list once it has stopped.
@@ -1856,6 +1867,8 @@ export class DownloadManager {
       failures: 0,
       strikes: 0,
       busySince: null,
+      refused: false,
+      served: false,
       retiring: false
     }
     runtime.chunkRuntimes.set(chunk.id, self)
@@ -1884,7 +1897,11 @@ export class DownloadManager {
             avoid: runtime.avoidNetworkByBlock,
             hedgesUsed: runtime.hedgesByBlock
           },
-          { id: chunk.id, networkId: chunk.interfaceId },
+          {
+            id: chunk.id,
+            networkId: chunk.interfaceId,
+            speedBytesPerSec: self.lastBlockSpeed || undefined
+          },
           Date.now(),
           SCHEDULER_POLICY
         )

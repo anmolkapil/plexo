@@ -65,9 +65,9 @@ test.describe('download plan', () => {
     expect(plan.blockSizeBytes).toBe(DEFAULT_MAX_BLOCK_BYTES)
   })
 
-  test('each network starts with four streams, with blocks enough to grow to its limit', () => {
+  test('each network starts with eight streams, with blocks enough to grow to its limit', () => {
     const plan = planDownload({ totalBytes: 512 * MIB, splittable: true, networkCount: 2 })
-    expect(startingStreams(plan.blockCount, 2)).toBe(4)
+    expect(startingStreams(plan.blockCount, 2)).toBe(8)
     // Streams added later need waiting blocks to take: two each, at the most every network can have.
     expect(plan.blockCount).toBeGreaterThanOrEqual(2 * MAX_STREAMS_PER_NETWORK * 2)
   })
