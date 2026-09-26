@@ -93,12 +93,26 @@ test.describe('two networks @smoke', () => {
     expect(network(off, 'b')!.bytesDownloaded, 'what it delivered stays its own').toBeGreaterThan(0)
     const offAt = origin.log.length
 
-    // The last network in use can't be switched off: pausing is how a download stops.
-    await plexo.api.setDownloadNetwork(id, 'a', false)
-    expect(network((await plexo.current())!, 'a')?.enabled).toBe(true)
-
     await settle(500)
     expect(origin.log.slice(offAt).some(overB), 'nothing over b while it is off').toBe(false)
+
+    // Switching off the last network in use pauses the download; switching it back on resumes it.
+    await plexo.api.setDownloadNetwork(id, 'a', false)
+    const paused = await plexo.waitUntil((state) => state.status === 'paused')
+    expect(network(paused, 'a')?.enabled).toBe(false)
+    const pausedAt = origin.log.length
+    await settle(500)
+    expect(origin.log.length, 'nothing requested while every network is off').toBe(pausedAt)
+
+    await plexo.api.setDownloadNetwork(id, 'a', true)
+    await plexo.waitUntil((state) => state.status === 'downloading' && streamsOn(state, 'a') > 0)
+
+    // Resumed with none on, it switches back on the one switched off last.
+    await plexo.api.setDownloadNetwork(id, 'a', false)
+    await plexo.waitUntil((state) => state.status === 'paused')
+    await plexo.api.resumeDownload(id)
+    const resumed = await plexo.waitUntil((state) => state.status === 'downloading')
+    expect(network(resumed, 'a')?.enabled).toBe(true)
   })
 })
 

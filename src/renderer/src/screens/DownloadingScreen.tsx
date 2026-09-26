@@ -156,7 +156,6 @@ export function DownloadingScreen({ download }: { download: DownloadState }): Re
   // Every network is a row, for switching it on or off; the charts draw only those in play.
   const rows = groupByNetwork(download)
   const rowVisuals = rows.map((row) => networkVisual(row.id, row.kind, row.label))
-  const enabledCount = rows.filter((row) => row.enabled).length
   const groups = networksInPlay(rows)
   const visuals = groups.map((group) => networkVisual(group.id, group.kind, group.label))
   const totalDownloadedByNetworks = rows.reduce((sum, row) => sum + row.bytesDownloaded, 0)
@@ -365,8 +364,6 @@ export function DownloadingScreen({ download }: { download: DownloadState }): Re
                 }
                 totalBytes={download.totalBytes}
                 blocks={download.blocks}
-                // The last network in use stays on: Pause is how a download stops.
-                canSwitch={!(row.enabled && enabledCount === 1)}
                 onSwitch={(enabled) =>
                   void window.plexo.setDownloadNetwork(download.id, row.id, enabled)
                 }
