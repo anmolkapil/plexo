@@ -350,7 +350,7 @@ export function IdleScreen(): React.JSX.Element {
             {isSingleStreamOnly
               ? '1 stream'
               : streamsChoice === 'auto'
-                ? 'per network, as many as help'
+                ? 'per network, 8 up to 32'
                 : 'per network'}
           </div>
         </div>

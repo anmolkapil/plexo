@@ -758,14 +758,15 @@ export class DownloadManager {
     const { status, resumable } = runtime.state
     if (status !== 'paused' && !(status === 'error' && resumable !== false)) return
 
-    void this.resumeAfterVerifying(runtime)
+    void this.resumeAfterVerifying(runtime, false)
   }
 
   // A file that changed on the server while this download was paused is caught by the first
   // chunk request after resuming: its response is checked against the version the download
   // started on (see runWorker), which can tell a real change from a relabelled server. Whether a
   // network is there to resume on is the run's business: with none, it waits for one.
-  private async resumeAfterVerifying(runtime: DownloadRuntime): Promise<void> {
+  // `byNetwork`: resumed by switching a network back on, rather than by Resume.
+  private async resumeAfterVerifying(runtime: DownloadRuntime, byNetwork: boolean): Promise<void> {
     // The paused run can still be winding down: a writer closing, a sample check in flight. A new
     // one must not start beside it — both would go on to publish, and act on each other's streams.
     await runtime.runPromise
@@ -779,18 +780,22 @@ export class DownloadManager {
       return
     }
     if (runtime.state.status !== 'paused' && runtime.state.status !== 'error') return
+    const { networks } = runtime.state
+    // Switched back on, then off again while the paused run wound down: it stays paused.
+    if (byNetwork && !networks.some((network) => network.enabled)) return
 
     runtime.state.status = 'downloading'
     runtime.state.error = undefined
     runtime.state.resumable = undefined
     runtime.pausedForNoNetwork = undefined
     // Paused by switching off every network: resuming switches back on the one switched off
-    // last, or, after a restart, the first one present.
-    const { networks } = runtime.state
+    // last if it is still there, or else the first one present.
     if (!networks.some((network) => network.enabled)) {
+      const present = (network: { id: string }): boolean => !!this.networks.find(network.id)
       const again =
+        networks.find((network) => network.id === runtime.lastSwitchedOff && present(network)) ??
+        networks.find(present) ??
         networks.find((network) => network.id === runtime.lastSwitchedOff) ??
-        networks.find((network) => this.networks.find(network.id)) ??
         networks[0]
       if (again) again.enabled = true
     }
@@ -843,11 +848,16 @@ export class DownloadManager {
     if (wasLast && status === 'downloading') {
       runtime.pausedForNoNetwork = true
       await this.pause(id)
+      // Not paused after all (it was already publishing): nothing for a network to resume.
+      if (runtime.state.status !== 'paused') runtime.pausedForNoNetwork = undefined
       return
     }
     this.reconcile(runtime)
     this.pushUpdate(runtime)
-    if (enabled && status === 'paused' && runtime.pausedForNoNetwork) this.resume(id)
+    // Switched back on while the pause is still winding down, it resumes once that is done.
+    if (enabled && status === 'paused' && runtime.pausedForNoNetwork) {
+      void this.resumeAfterVerifying(runtime, true)
+    }
   }
 
   /** The computer's networks changed (see NetworkMonitor). A network whose addresses changed

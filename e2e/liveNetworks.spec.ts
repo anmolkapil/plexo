@@ -114,6 +114,56 @@ test.describe('two networks @smoke', () => {
     const resumed = await plexo.waitUntil((state) => state.status === 'downloading')
     expect(network(resumed, 'a')?.enabled).toBe(true)
   })
+
+  test('switching the last network off and on quickly ends up where it was left', async ({
+    plexo,
+    serve
+  }) => {
+    const origin = await serve({ size: 128 * BLOCK, bytesPerSecond: 256 * 1024 })
+    const id = await plexo.start(origin.url(), origin.sha256, { connections: 2 })
+    await plexo.waitUntil((state) => state.bytesDownloaded > 0)
+
+    // Back on before the pause has wound down: it resumes.
+    const off = plexo.api.setDownloadNetwork(id, 'a', false)
+    await plexo.api.setDownloadNetwork(id, 'a', true)
+    await off
+    await plexo.waitUntil((state) => state.status === 'downloading' && streamsOn(state, 'a') > 0)
+
+    // Off, on and off again before the resume has got going: it stays paused.
+    await plexo.api.setDownloadNetwork(id, 'a', false)
+    await plexo.waitUntil((state) => state.status === 'paused')
+    await plexo.api.setDownloadNetwork(id, 'a', true)
+    await plexo.api.setDownloadNetwork(id, 'a', false)
+    await settle(1000)
+    const left = (await plexo.current())!
+    expect(left.status).toBe('paused')
+    expect(network(left, 'a')?.enabled).toBe(false)
+
+    // …and switching it on once more still resumes it.
+    await plexo.api.setDownloadNetwork(id, 'a', true)
+    await plexo.waitForStatus('completed')
+  })
+
+  test('resumed with none on, it picks a network that is still there', async ({ plexo, serve }) => {
+    const origin = await serve({ size: 128 * BLOCK, bytesPerSecond: 256 * 1024 })
+    const id = await plexo.start(origin.url(), origin.sha256, {
+      networks: ['a', 'b'],
+      connections: 2
+    })
+    await plexo.waitUntil((state) => state.bytesDownloaded > 0)
+
+    await plexo.api.setDownloadNetwork(id, 'a', false)
+    await plexo.api.setDownloadNetwork(id, 'b', false)
+    await plexo.waitUntil((state) => state.status === 'paused')
+    // b, the one switched off last, is unplugged while paused.
+    await setNetworks(plexo, { a: NETWORKS['a'] })
+
+    await plexo.api.resumeDownload(id)
+    const resumed = await plexo.waitUntil((state) => state.status === 'downloading')
+    expect(network(resumed, 'a')?.enabled).toBe(true)
+    expect(network(resumed, 'b')?.enabled).toBe(false)
+    await plexo.waitForStatus('completed')
+  })
 })
 
 test.describe('a network that can’t reach the server @smoke', () => {
