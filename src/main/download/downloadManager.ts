@@ -115,7 +115,7 @@ interface ChunkRuntime {
    * made progress: a busy server is waited out for SERVER_BUSY_FOR_MS, not MAX_CHUNK_RETRIES. */
   busySince: number | null
   /** Since the stream count last looked: whether the server turned one of its requests away
-   * (403, 429, 503), and whether it received anything. What a connection limit is judged by (see
+   * (403, 429, 503, or left it unanswered), and whether it received anything. What a connection limit is judged by (see
    * concurrency.ts). */
   refused: boolean
   served: boolean
@@ -1299,6 +1299,9 @@ export class DownloadManager {
       if (silent && this.markUnreachable(runtime, this.network(runtime, attempt.networkId), now)) {
         unreachable = true
       }
+      // Silent while its network's other connections are served: the server took the connection
+      // and left it waiting, which is how some turn away one too many (see concurrency.ts).
+      if (silent) self.refused = true
 
       const index = attempt.block.index
       const refreshes = runtime.refreshesByBlock.get(index) ?? 0

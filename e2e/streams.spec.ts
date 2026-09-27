@@ -29,6 +29,32 @@ test.describe('automatic stream count', () => {
     expect(origin.log.some((request) => request.status === 503)).toBe(true)
   })
 
+  test.describe('left unanswered', () => {
+    // As in the app, a request with no answer is noticed as silent before it times out.
+    test.use({ appEnv: { PLEXO_E2E_STALL_MS: '20000' } })
+
+    test('a server that leaves extra connections unanswered keeps the ones it answers', async ({
+      plexo,
+      serve
+    }) => {
+      const origin = await serve({ size: 256 * BLOCK, bytesPerSecond: 256 * 1024 })
+      const accepted = new Set<number>()
+      origin.setRule(({ connection, range }) => {
+        if (range?.start === 0 && range.end === 0) return undefined // the probe
+        if (accepted.has(connection) || accepted.size < 4) {
+          accepted.add(connection)
+          return undefined
+        }
+        return 'stallHeaders'
+      })
+
+      await plexo.start(origin.url(), origin.sha256, { connections: 'auto' })
+      const state = await plexo.waitForStatus('completed', 40_000)
+      expect(peakStreams(plexo), 'more streams were tried').toBe(8)
+      expect(state.chunks).toHaveLength(4)
+    })
+  })
+
   test.describe('waited out', () => {
     test.use({ appEnv: { PLEXO_E2E_SERVER_BUSY_MS: '60000' } })
 
