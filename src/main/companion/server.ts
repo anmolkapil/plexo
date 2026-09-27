@@ -143,11 +143,6 @@ export class CompanionServer {
 
         if (req.method === 'POST' && url.pathname === '/focus') {
           const window = this.getWindow()
-          if (window && !window.isDestroyed()) {
-            if (window.isMinimized()) window.restore()
-            if (!window.isVisible()) window.show()
-            window.focus()
-          }
           if (!window || window.isDestroyed()) {
             sendJson(
               req,
@@ -158,6 +153,7 @@ export class CompanionServer {
             )
             return
           }
+          this.bringToFront(window)
           sendJson(req, res, 200, { success: true }, this.trustedOrigins)
           return
         }
@@ -253,20 +249,42 @@ export class CompanionServer {
     })
   }
 
+  bringToFront(window: BrowserWindow): void {
+    if (!window || window.isDestroyed()) return
+
+    if (window.isMinimized()) {
+      window.restore()
+    }
+    window.show()
+
+    if (typeof app?.focus === 'function') {
+      app.focus({ steal: true })
+    }
+
+    if (typeof window.moveTop === 'function') {
+      window.moveTop()
+    }
+
+    if (typeof window.setAlwaysOnTop === 'function') {
+      window.setAlwaysOnTop(true)
+      window.focus()
+      // Clearing alwaysOnTop after a brief tick allows Windows DWM to complete
+      // Z-order placement above Chrome without keeping the window permanently pinned.
+      setTimeout(() => {
+        if (!window.isDestroyed()) {
+          window.setAlwaysOnTop(false)
+        }
+      }, 300)
+    } else {
+      window.focus()
+    }
+  }
+
   deliverPayload(payload: CompanionDownloadPayload): void {
     const window = this.getWindow()
     if (!window || window.isDestroyed()) return
 
-    if (window.isMinimized()) window.restore()
-    if (!window.isVisible()) window.show()
-    if (typeof window.setAlwaysOnTop === 'function') {
-      window.setAlwaysOnTop(true)
-      window.focus()
-      window.setAlwaysOnTop(false)
-    } else {
-      window.focus()
-    }
-
+    this.bringToFront(window)
     window.webContents.send(IpcChannels.companionDownload, payload)
   }
 
