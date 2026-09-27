@@ -52,4 +52,11 @@ test.describe('automatic stream count', () => {
       expect(state.chunks.length).toBeGreaterThan(8)
     })
   })
+
+  test('a count picked on the start screen is kept rather than grown', async ({ plexo, serve }) => {
+    const origin = await serve({ size: 96 * BLOCK, bytesPerSecond: 256 * 1024 })
+    await plexo.start(origin.url(), origin.sha256, { connections: 'auto', streamsPerNetwork: 4 })
+    await plexo.waitForStatus('completed', 40_000)
+    expect(peakStreams(plexo), 'Auto would have doubled to 8 and on').toBe(4)
+  })
 })

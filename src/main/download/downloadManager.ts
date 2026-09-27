@@ -301,9 +301,19 @@ function splittable(request: StartDownloadRequest): boolean {
 /** How many streams a download runs is only for it to work out when there can be more than one,
  * and unless a test fixes it. */
 function concurrencyFor(request: StartDownloadRequest): ConcurrencyController | null {
-  return splittable(request) && testStreamsPerNetwork() === null
+  if (!splittable(request) || testStreamsPerNetwork() !== null) return null
+  const picked = pickedStreams(request)
+  return picked === undefined
     ? new ConcurrencyController(MAX_STREAMS_PER_NETWORK)
-    : null
+    : new ConcurrencyController(picked, false)
+}
+
+/** The streams per network the user picked for this download, if they didn't leave it on Auto. */
+function pickedStreams(request: StartDownloadRequest): number | undefined {
+  const picked = request.streamsPerNetwork
+  return Number.isInteger(picked) && picked! >= 1 && picked! <= MAX_STREAMS_PER_NETWORK
+    ? picked
+    : undefined
 }
 /** How often a stream with nothing to do looks for work again. */
 const IDLE_POLL_MS = 250
@@ -1173,7 +1183,7 @@ export class DownloadManager {
       ? startingStreams(
           runtime.blocks.filter((block) => block.status === 'pending').length,
           joining.length,
-          testStreamsPerNetwork() ?? undefined
+          testStreamsPerNetwork() ?? pickedStreams(runtime.requestPayload)
         )
       : 1
 
@@ -1820,7 +1830,7 @@ export class DownloadManager {
     })
     // A new stream takes a waiting block the moment it starts.
     const waiting = runtime.blocks.filter((block) => block.status === 'pending').length
-    return { networks, spareWork: waiting }
+    return { now: Date.now(), networks, spareWork: waiting }
   }
 
   /** New streams on `networkId`, put on the download's list for the caller to start. */

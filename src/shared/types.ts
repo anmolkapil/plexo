@@ -209,4 +209,6 @@ export interface StartDownloadRequest {
   interfaceIds: string[]
   etag: string | null
   lastModified: string | null
+  /** Streams per network the user picked; left out, the count is decided automatically. */
+  streamsPerNetwork?: number
 }

@@ -50,6 +50,8 @@ interface StartOptions {
   networks?: string[]
   /** Streams per network, fixed so a test can count requests; 'auto' lets the app decide. */
   connections?: number | 'auto'
+  /** With connections 'auto': the streams per network picked on the start screen. */
+  streamsPerNetwork?: number
   fileName?: string
   destinationDir?: string
 }
@@ -207,7 +209,8 @@ export class PlexoApp {
       supportsRanges: multiChunk,
       interfaceIds: multiChunk ? networks : networks.slice(0, 1),
       etag: probe.etag,
-      lastModified: probe.lastModified
+      lastModified: probe.lastModified,
+      streamsPerNetwork: options.streamsPerNetwork
     })
     this.tracked.set(id, { expectedSha, destBefore, destinationDir })
     return id

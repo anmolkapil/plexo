@@ -6,9 +6,14 @@ import { NetworkCard } from '../components/NetworkCard'
 import { ScreenFooter } from '../components/ScreenFooter'
 import { Alert, AlertDescription, AlertTitle } from '../components/ui/alert'
 import { Button } from '../components/ui/button'
+import { ToggleGroup, ToggleGroupItem } from '../components/ui/toggle-group'
 import { useLatencyPolling } from '../hooks/useNetworks'
 import { useAppStore } from '../store/useAppStore'
 import { describeError, formatBytes, toDisplayPath } from '../utils/format'
+
+type StreamsChoice = 'auto' | number
+/** Streams per network the user can pick instead of Auto. */
+const STREAMS_CHOICES: StreamsChoice[] = ['auto', 4, 8, 16, 32]
 
 type ProbeState =
   | { status: 'idle' }
@@ -71,6 +76,8 @@ export function IdleScreen(): React.JSX.Element {
   const [starting, setStarting] = useState(false)
   const [startError, setStartError] = useState<string | null>(null)
   const [fileNameOverride, setFileNameOverride] = useState<string | null>(null)
+  // Auto unless the user picks a count for this download; not remembered for the next one.
+  const [streamsChoice, setStreamsChoice] = useState<StreamsChoice>('auto')
 
   const probeRequestId = useRef(0)
 
@@ -197,7 +204,8 @@ export function IdleScreen(): React.JSX.Element {
         supportsRanges: multiChunkAllowed,
         interfaceIds: selectedInterfaceIds,
         etag: probe.result.etag,
-        lastModified: probe.result.lastModified
+        lastModified: probe.result.lastModified,
+        streamsPerNetwork: streamsChoice === 'auto' ? undefined : streamsChoice
       })
     } catch (error) {
       setStartError(describeError(error))
@@ -308,6 +316,43 @@ export function IdleScreen(): React.JSX.Element {
           >
             Browse…
           </Button>
+        </div>
+
+        <div
+          className={cn(
+            'flex min-h-9 flex-wrap items-center gap-x-3 gap-y-1 rounded-[9px] border border-border px-3 py-1.5',
+            isSingleStreamOnly && 'opacity-60'
+          )}
+        >
+          <div id="idle-streams-label" className={fieldLabelClass}>
+            STREAMS
+          </div>
+          <ToggleGroup
+            value={[String(streamsChoice)]}
+            onValueChange={(values) => {
+              if (values.length === 0) return
+              setStreamsChoice(values[0] === 'auto' ? 'auto' : Number(values[0]))
+            }}
+            disabled={isSingleStreamOnly}
+            aria-labelledby="idle-streams-label"
+            variant="pill"
+            size="xs"
+            spacing={1}
+          >
+            {STREAMS_CHOICES.map((choice) => (
+              // h-6/min-w-6: WCAG 2.5.8's 24px floor — the xs toggle size is 20px.
+              <ToggleGroupItem key={choice} value={String(choice)} className="h-6 min-w-6 px-2">
+                {choice === 'auto' ? 'Auto' : choice}
+              </ToggleGroupItem>
+            ))}
+          </ToggleGroup>
+          <div className="ml-auto font-mono text-[11px] whitespace-nowrap text-muted-foreground">
+            {isSingleStreamOnly
+              ? '1 stream'
+              : streamsChoice === 'auto'
+                ? 'per network, as many as help'
+                : 'per network'}
+          </div>
         </div>
 
         {startError && <ErrorAlert message={startError} />}
