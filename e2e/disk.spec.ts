@@ -83,9 +83,10 @@ test.describe('disk space @disk', () => {
   test('a file that fits once but not twice completes on the destination volume', async ({
     serve
   }) => {
-    const volume = await smallVolume(12)
+    const volume = await smallVolume(40)
     test.skip(!volume, 'cannot create a small volume on this machine')
     // Both metadata and destination are on the small volume; the payload must occupy only one copy.
+    // Room is left for Chromium's own caches in userData, which take several MB at launch.
     const app = new PlexoApp({
       userData: join(volume!.path, 'userData'),
       dest: join(volume!.path, 'dest')
@@ -94,7 +95,7 @@ test.describe('disk space @disk', () => {
       await mkdir(app.dirs.userData)
       await mkdir(app.dirs.dest)
       await app.launch()
-      const origin = await serve({ size: 112 * BLOCK }) // 7 MB: fits once, not twice
+      const origin = await serve({ size: 384 * BLOCK }) // 24 MB: fits once, not twice
       await app.start(origin.url(), origin.sha256)
       const done = await app.waitForStatus('completed')
       expect(await readdir(app.dirs.dest)).toEqual([done.fileName])
