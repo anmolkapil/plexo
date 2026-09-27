@@ -31,19 +31,26 @@ function isNewer(latest: string, current: string): boolean {
  *
  * Uses the releases list rather than the `/releases/latest` endpoint: every release here ships
  * as a pre-release, and GitHub's "latest" endpoint only ever considers non-prerelease releases —
- * it 404s when there isn't one, so it would never surface an update. */
-export async function checkForUpdate(currentVersion: string): Promise<ReleaseInfo | null> {
+ * it 404s when there isn't one, so it would never surface an update. `latest` stands in for the
+ * release's version where it is already known, and nothing is fetched. */
+export async function checkForUpdate(
+  currentVersion: string,
+  latest?: string
+): Promise<ReleaseInfo | null> {
+  const version = (latest ?? (await latestRelease()))?.replace(/^v/, '')
+  if (!version || !isNewer(version, currentVersion)) return null
+  return { version, url: UPDATE_PAGE_URL }
+}
+
+async function latestRelease(): Promise<string | undefined> {
   try {
     const response = await net.fetch(`https://api.github.com/repos/${REPO}/releases?per_page=1`)
-    if (!response.ok) return null
+    if (!response.ok) return undefined
     const [data] = (await response.json()) as { tag_name?: string }[]
-    if (!data?.tag_name) return null
-    const version = data.tag_name.replace(/^v/, '')
-    if (!isNewer(version, currentVersion)) return null
-    return { version, url: UPDATE_PAGE_URL }
+    return data?.tag_name
   } catch {
     // Offline, rate-limited, or GitHub is down — silently skip the notification rather than
     // surface a startup error for a non-essential check.
-    return null
+    return undefined
   }
 }

@@ -18,8 +18,6 @@ export function CompleteScreen({
   onNewDownload: () => void
 }): React.JSX.Element {
   const homeDir = useAppStore((store) => store.homeDir)
-  const peakSpeedBytesPerSec = useAppStore((store) => store.peakSpeedBytesPerSec)
-  const speedHistoryByInterface = useAppStore((store) => store.speedHistoryByInterface)
   const networkVisual = useNetworkVisuals()
 
   const finalSize = download.totalBytes || download.bytesDownloaded
@@ -91,7 +89,7 @@ export function CompleteScreen({
         {[
           { label: 'Size', value: formatBytes(finalSize) },
           { label: 'Time', value: formatDuration(elapsedSeconds) },
-          { label: 'Peak', value: formatSpeed(peakSpeedBytesPerSec) },
+          { label: 'Peak', value: formatSpeed(download.peakSpeedBytesPerSec ?? 0) },
           { label: 'Networks', value: String(groups.length) },
           // The most it ran at once: streams that didn't make it faster were closed along the way.
           { label: 'Streams', value: String(download.peakStreams ?? download.chunks.length) }
@@ -116,7 +114,7 @@ export function CompleteScreen({
         <h2 className={sectionHeaderClass}>Speed over the download</h2>
         <ThroughputChart
           order={groups.map((g, i) => ({ interfaceId: g.id, solid: visuals[i].solid }))}
-          historyByInterface={speedHistoryByInterface}
+          historyByInterface={download.speedHistory ?? {}}
         />
       </div>
 

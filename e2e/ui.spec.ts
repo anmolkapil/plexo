@@ -97,20 +97,26 @@ test.describe('UI journeys @smoke', () => {
   })
 
   test('a completed download is shown again after a restart', async ({ plexo, serve }) => {
-    const origin = await serve({ size: SIZE })
+    // Slow enough to take a few seconds, so there is a speed history and a peak to keep.
+    const origin = await serve({ size: SIZE, bytesPerSecond: 64 * 1024 })
     await plexo.start(origin.url(), origin.sha256)
     await plexo.waitForStatus('completed')
     await plexo.relaunch()
+    const { page } = plexo
     await expect(
-      plexo.page.getByRole('button', { name: /Reveal in Finder|Show in folder/ })
+      page.getByRole('button', { name: /Reveal in Finder|Show in folder/ })
     ).toBeVisible()
+    await expect(page.getByText('Peak', { exact: true }).locator('..')).not.toHaveText('Peak0 B/s')
+    await expect(page.getByRole('img', { name: /Combined throughput/ })).not.toHaveAccessibleName(
+      /peak 0 B\/s/
+    )
   })
 })
 
 // What a user sets is still set after they reload or restart — checked only through what they see.
 test.describe('settings @smoke', () => {
   test.describe('with an update available', () => {
-    test.use({ appEnv: { PLEXO_FORCE_UPDATE_VERSION: '9.9.9' } })
+    test.use({ appEnv: { PLEXO_E2E_LATEST_VERSION: '9.9.9' } })
 
     test('every choice survives a reload and a restart, even made right before', async ({
       plexo,

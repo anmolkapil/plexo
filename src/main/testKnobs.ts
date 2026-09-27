@@ -26,9 +26,9 @@ export const testKnobs = {
   slowForMs: positiveNumber('PLEXO_E2E_SLOW_FOR_MS', 10_000),
   silentAfterMs: positiveNumber('PLEXO_E2E_SILENT_MS', 5_000),
   hedgeAfterMs: positiveNumber('PLEXO_E2E_HEDGE_MS', 2_000),
-  /** Skips the real GitHub check and pretends this version is available, for exercising the
-   * update banner without needing an actual newer release published. */
-  forceUpdateVersion: env['PLEXO_FORCE_UPDATE_VERSION']
+  /** Stands in for the latest GitHub release, so the update check never goes out to GitHub: a
+   * newer one published would open the update dialog over whatever a test is looking at. */
+  latestVersion: env['PLEXO_E2E_LATEST_VERSION']
 }
 
 /** `PLEXO_E2E_STREAMS=2` fixes how many streams each network runs and turns the automatic

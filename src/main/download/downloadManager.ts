@@ -146,6 +146,8 @@ interface DownloadRuntime {
   runPromise?: Promise<void>
   publishing: boolean
   speedSamplesByChunk: Map<number, SpeedSample[]>
+  /** When the speeds last went into the history (see sampleSpeeds). */
+  speedSampledAt: number
   pushScheduled: boolean
   blocks: BlockState[]
   totalBlocks: number
@@ -348,6 +350,23 @@ function updateSpeeds(runtime: DownloadRuntime, now = Date.now()): void {
   runtime.state.speedBytesPerSec = total
 }
 
+const SPEED_HISTORY_LENGTH = 60
+
+/** Adds each network's speed to the download's history, and 0 for one no longer listed. A
+ * network seen for the first time starts at 0 too, so every series is as long as the others and
+ * lines up with them. */
+function sampleSpeeds(state: DownloadState): void {
+  const history = (state.speedHistory ??= {})
+  const length = Object.values(history)[0]?.length ?? 0
+  for (const network of state.networks) {
+    history[network.id] ??= new Array<number>(length).fill(0)
+  }
+  for (const [id, series] of Object.entries(history)) {
+    series.push(state.networks.find((network) => network.id === id)?.speedBytesPerSec ?? 0)
+    if (series.length > SPEED_HISTORY_LENGTH) series.shift()
+  }
+}
+
 /** Nothing is moving: a paused or stopped download reads 0 everywhere. */
 function clearSpeeds(state: DownloadState): void {
   state.speedBytesPerSec = 0
@@ -416,6 +435,7 @@ function newRuntime(
     file,
     publishing: false,
     speedSamplesByChunk: new Map(),
+    speedSampledAt: 0,
     pushScheduled: false,
     blocks,
     totalBlocks: state.totalBlocks ?? blocks.length,
@@ -522,6 +542,10 @@ export class DownloadManager {
               (persisted.activeInterfaces ?? []).map((iface) => newNetwork(iface, true)),
             // Streams are only for a run; a resumed download starts its own.
             chunks: [],
+            // A resumed download's last minute starts now, not wherever it stopped before the
+            // restart.
+            speedHistory:
+              persisted.state.status === 'completed' ? persisted.state.speedHistory : undefined,
             blocks
           }
           if (state.status === 'downloading') {
@@ -1025,7 +1049,16 @@ export class DownloadManager {
       const now = Date.now()
       const speed = runtime.state.speedBytesPerSec
       updateSpeeds(runtime, now)
+      runtime.state.peakSpeedBytesPerSec = Math.max(
+        runtime.state.peakSpeedBytesPerSec ?? 0,
+        runtime.state.speedBytesPerSec
+      )
       if (runtime.state.speedBytesPerSec !== speed) this.scheduleUpdate(runtime)
+      if (now - runtime.speedSampledAt >= 1000) {
+        runtime.speedSampledAt = now
+        sampleSpeeds(runtime.state)
+        this.scheduleUpdate(runtime)
+      }
       this.refreshStuckConnections(runtime, now)
       this.reconcile(runtime)
       this.adjustStreams(runtime, runtime.concurrency?.tick(this.concurrencySnapshot(runtime)))
