@@ -1,0 +1,100 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Plexo Companion Settings</title>
+  <link rel="stylesheet" href="options.css">
+</head>
+<body>
+  <div class="wrapper">
+    <header class="header">
+      <div class="title-group">
+        <h1>Plexo Companion Settings</h1>
+        <p class="subtitle">Configure browser download capture rules and local communication.</p>
+      </div>
+      <div id="connection-badge" class="badge checking">Checking...</div>
+    </header>
+
+    <main class="content">
+      <!-- Capture Mode -->
+      <section class="card">
+        <h2>Capture Mode</h2>
+        <p class="desc">Choose which downloads are transferred to Plexo.</p>
+
+        <div class="radio-group">
+          <label class="radio-label">
+            <input type="radio" name="captureMode" value="extension_list" checked>
+            <div class="radio-text">
+              <span class="label-title">Accelerate matching file extensions (Recommended)</span>
+              <span class="label-desc">Only intercept archives, media, installers, and large files.</span>
+            </div>
+          </label>
+
+          <label class="radio-label">
+            <input type="radio" name="captureMode" value="all">
+            <div class="radio-text">
+              <span class="label-title">Capture all downloads</span>
+              <span class="label-desc">Intercept every file except web pages and scripts.</span>
+            </div>
+          </label>
+        </div>
+      </section>
+
+      <!-- Extensions List -->
+      <section id="extensions-section" class="card">
+        <h2>Captured File Extensions</h2>
+        <p class="desc">Files with these extensions will be accelerated through Plexo.</p>
+
+        <div class="chips-container" id="chips-container"></div>
+
+        <div class="add-chip-row">
+          <input type="text" id="new-ext-input" placeholder="e.g. tar.gz, pkg, mkv" maxlength="20">
+          <button id="add-ext-btn" class="btn btn-secondary">Add Extension</button>
+        </div>
+      </section>
+
+      <!-- Size Threshold -->
+      <section class="card">
+        <h2>Minimum File Size Threshold</h2>
+        <p class="desc">Only capture downloads larger than this size. Set to 0 to capture regardless of size.</p>
+
+        <div class="input-inline">
+          <input type="number" id="min-size-input" min="0" max="1024" value="0">
+          <span class="unit">MB</span>
+        </div>
+      </section>
+
+      <!-- Excluded Domains -->
+      <section class="card">
+        <h2>Excluded Domains</h2>
+        <p class="desc">Downloads from these domains will always be handled by the browser directly (one per line).</p>
+
+        <textarea id="excluded-domains-input" rows="4" placeholder="google.com/document&#10;bank.example.com"></textarea>
+      </section>
+
+      <!-- Server Connection -->
+      <section class="card">
+        <h2>Companion Server Port</h2>
+        <p class="desc">Port used to communicate with Plexo desktop (default: 41829).</p>
+
+        <div class="port-row">
+          <input type="number" id="port-input" min="1024" max="65535" value="41829">
+          <button id="test-conn-btn" class="btn btn-secondary">Test Connection</button>
+          <span id="test-result" class="test-result"></span>
+        </div>
+      </section>
+    </main>
+
+    <footer class="footer">
+      <button id="reset-btn" class="btn btn-ghost">Reset to Defaults</button>
+      <div class="save-group">
+        <span id="save-status" class="save-status"></span>
+        <button id="save-btn" class="btn btn-primary">Save Changes</button>
+      </div>
+    </footer>
+  </div>
+
+  <script type="module" src="options.js"></script>
+</body>
+</html>

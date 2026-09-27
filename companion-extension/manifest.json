@@ -1,0 +1,36 @@
+{
+  "manifest_version": 3,
+  "name": "Plexo Download Companion",
+  "version": "1.0.0",
+  "description": "Capture browser downloads and transfer them to the Plexo multi-network parallel download accelerator.",
+  "icons": {
+    "16": "icons/icon-16.png",
+    "32": "icons/icon-32.png",
+    "48": "icons/icon-48.png",
+    "128": "icons/icon-128.png"
+  },
+  "background": {
+    "service_worker": "background/service-worker.js",
+    "type": "module"
+  },
+  "action": {
+    "default_popup": "popup/popup.html",
+    "default_title": "Plexo Companion"
+  },
+  "options_ui": {
+    "page": "options/options.html",
+    "open_in_tab": true
+  },
+  "permissions": [
+    "downloads",
+    "cookies",
+    "contextMenus",
+    "storage"
+  ],
+  "minimum_chrome_version": "109",
+  "host_permissions": [
+    "<all_urls>",
+    "http://127.0.0.1/*",
+    "http://localhost/*"
+  ]
+}

@@ -17,7 +17,7 @@ export interface IpcContract {
   deviceBindingSupported: { args: []; result: boolean }
   openNetworkSettings: { args: []; result: void }
   updateSettings: { args: [patch: AppSettings]; result: void }
-  probeUrl: { args: [url: string]; result: ProbeResult }
+  probeUrl: { args: [url: string, headers?: Record<string, string>]; result: ProbeResult }
   chooseDestinationFolder: { args: [defaultPath: string]; result: string | null }
   readClipboardText: { args: []; result: string }
   revealInFolder: { args: [filePath: string]; result: void }

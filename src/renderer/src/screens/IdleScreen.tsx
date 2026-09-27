@@ -64,6 +64,8 @@ export function IdleScreen(): React.JSX.Element {
   const setUrl = useAppStore((store) => store.setDraftUrl)
   const destinationDir = useAppStore((store) => store.destinationDir)
   const setDestinationDir = useAppStore((store) => store.setDestinationDir)
+  const headers = useAppStore((store) => store.draftHeaders)
+  const companionFileName = useAppStore((store) => store.draftFileName)
 
   const [probe, setProbe] = useState<ProbeState>({ status: 'idle' })
   // Tracks deselections rather than selections, so a newly-detected interface starts selected.
@@ -86,10 +88,14 @@ export function IdleScreen(): React.JSX.Element {
 
     const requestId = ++probeRequestId.current
     setProbe({ status: 'probing' })
-    setFileNameOverride(null)
+    if (companionFileName) {
+      setFileNameOverride(companionFileName)
+    } else {
+      setFileNameOverride(null)
+    }
     const timer = setTimeout(async () => {
       try {
-        const result = await window.plexo.probeUrl(trimmed)
+        const result = await window.plexo.probeUrl(trimmed, headers)
         if (probeRequestId.current !== requestId) return
         setProbe({ status: 'ready', result })
       } catch (error) {
@@ -99,7 +105,7 @@ export function IdleScreen(): React.JSX.Element {
     }, PROBE_DEBOUNCE_MS)
 
     return () => clearTimeout(timer)
-  }, [url])
+  }, [url, headers, companionFileName])
 
   const ready = probe.status === 'ready' ? probe.result : null
   const multiChunkAllowed = ready !== null && ready.supportsRanges && ready.totalBytes !== null
@@ -197,7 +203,8 @@ export function IdleScreen(): React.JSX.Element {
         supportsRanges: multiChunkAllowed,
         interfaceIds: selectedInterfaceIds,
         etag: probe.result.etag,
-        lastModified: probe.result.lastModified
+        lastModified: probe.result.lastModified,
+        headers
       })
     } catch (error) {
       setStartError(describeError(error))

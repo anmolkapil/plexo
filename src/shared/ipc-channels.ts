@@ -17,6 +17,7 @@ export const IpcChannels = {
   cancelDownload: 'download:cancel',
   removeDownload: 'download:remove',
   downloadUpdated: 'download:updated',
+  companionDownload: 'companion:download',
   networksChanged: 'network:changed',
   checkForUpdate: 'update:check'
 } as const

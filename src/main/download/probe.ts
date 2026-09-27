@@ -26,7 +26,11 @@ interface ProbeResponse {
 
 /** GET with a 1-byte range: cheaper than fetching the body, and unlike HEAD it
  * also tells us (via the 206 status) whether range requests actually work. */
-function requestOneByte(url: URL, deadline: number): Promise<ProbeResponse> {
+function requestOneByte(
+  url: URL,
+  deadline: number,
+  customHeaders?: Record<string, string>
+): Promise<ProbeResponse> {
   return new Promise((resolve, reject) => {
     const requester = url.protocol === 'https:' ? httpsRequest : httpRequest
     const req = requester(
@@ -35,7 +39,7 @@ function requestOneByte(url: URL, deadline: number): Promise<ProbeResponse> {
         hostname: url.hostname.replace(/^\[|\]$/g, ''),
         port: url.port || undefined,
         path: `${url.pathname}${url.search}`,
-        headers: { 'User-Agent': USER_AGENT, Range: 'bytes=0-0' }
+        headers: { 'User-Agent': USER_AGENT, ...(customHeaders ?? {}), Range: 'bytes=0-0' }
       },
       (res) => {
         clearTimeout(timer)
@@ -108,14 +112,15 @@ function fileNameFromHeaders(headers: Headers, url: URL): string {
 }
 
 async function requestFollowingRedirects(
-  rawUrl: string
+  rawUrl: string,
+  customHeaders?: Record<string, string>
 ): Promise<{ current: URL; response: ProbeResponse | null }> {
   let current = new URL(rawUrl)
   let response: ProbeResponse | null = null
   const deadline = Date.now() + PROBE_TIMEOUT_MS
 
   for (let redirect = 0; redirect <= MAX_REDIRECTS; redirect += 1) {
-    response = await requestOneByte(current, deadline)
+    response = await requestOneByte(current, deadline, customHeaders)
     if (response.statusCode >= 300 && response.statusCode < 400) {
       const location = headerValue(response.headers, 'location')
       if (!location) break
@@ -128,8 +133,11 @@ async function requestFollowingRedirects(
   return { current, response }
 }
 
-export async function probeUrl(rawUrl: string): Promise<ProbeResult> {
-  const { current, response } = await requestFollowingRedirects(rawUrl)
+export async function probeUrl(
+  rawUrl: string,
+  customHeaders?: Record<string, string>
+): Promise<ProbeResult> {
+  const { current, response } = await requestFollowingRedirects(rawUrl, customHeaders)
 
   // An empty file can't satisfy a request for its first byte: the server answers 416 and gives
   // the size as `bytes */0`. That's a valid, empty download, not an error.

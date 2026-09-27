@@ -133,6 +133,7 @@ interface DownloadRuntime {
   publicationPath?: string
   publicationIdentity?: { dev: number; ino: number }
   requestPayload: StartDownloadRequest
+  credentialsRequiredAfterRestart: boolean
   chunkRuntimes: Map<number, ChunkRuntime>
   /** The running streams' workers, by stream id. Empty unless the download is running. */
   workers: Map<number, Promise<void>>
@@ -191,7 +192,9 @@ interface PersistedDownloadBase {
   partialPath: string
   publicationPath?: string
   publicationIdentity?: { dev: number; ino: number }
-  requestPayload: StartDownloadRequest
+  /** Request options persisted to disk. Custom headers (cookies, auth) are kept in memory only and never written to disk. */
+  requestPayload: Omit<StartDownloadRequest, 'headers'>
+  credentialsRequiredAfterRestart?: boolean
   /** The networks, as saved before a download listed them in its state. Read only to fill in
    * `networks` for a download saved that way. */
   activeInterfaces?: NetworkInterfaceInfo[]
@@ -399,6 +402,7 @@ function newRuntime(
   return {
     state,
     requestPayload,
+    credentialsRequiredAfterRestart: false,
     chunkRuntimes: new Map(),
     workers: new Map(),
     stop: new AbortController(),
@@ -575,6 +579,7 @@ export class DownloadManager {
           const runtime = newRuntime(state, persisted.requestPayload, file, blocks)
           runtime.publicationPath = persisted.publicationPath
           runtime.publicationIdentity = persisted.publicationIdentity
+          runtime.credentialsRequiredAfterRestart = persisted.credentialsRequiredAfterRestart ?? false
           this.recomputeAggregates(runtime)
           restored.push(runtime)
         } catch {
@@ -626,7 +631,7 @@ export class DownloadManager {
   /** Plexo shows one download at a time (see useAppStore's currentDownload) — starting a second
    * one while one is already running or paused would silently race it for disk I/O and
    * scramble the renderer's single-download view as updates from both interleave. */
-  private hasActiveDownload(): boolean {
+  hasActiveDownload(): boolean {
     for (const runtime of this.runtimes.values()) {
       if (runtime.state.status === 'downloading' || runtime.state.status === 'paused') {
         return true
@@ -761,6 +766,14 @@ export class DownloadManager {
     await runtime.runPromise
     // Just after launch the networks may not have been looked at yet.
     await this.networks.refresh()
+
+    if (runtime.credentialsRequiredAfterRestart) {
+      runtime.state.status = 'error'
+      runtime.state.error =
+        'This download used Cookie or Authorization headers and cannot resume after restarting Plexo.'
+      this.pushUpdate(runtime)
+      return
+    }
 
     if ((await runtime.file.size().catch(() => -1)) < 0) {
       runtime.state.error =
@@ -1487,6 +1500,7 @@ export class DownloadManager {
         createDestination: () => runtime.file.writer(block.rangeStart + (attempt.startOffset ?? 0)),
         signal: AbortSignal.any([self.controller.signal, attempt.abort.signal]),
         acceptedVersions: runtime.acceptedVersions,
+        headers: runtime.requestPayload.headers,
         onResponse: (info) => (attempt.response = info),
         onNetworkProgress: (bytesThisRun) => {
           const delta = bytesThisRun - attempt.networkReceived
@@ -2006,7 +2020,8 @@ export class DownloadManager {
             runtime.requestPayload.url,
             block.rangeStart,
             block.rangeStart + local.length - 1,
-            connection
+            connection,
+            runtime.requestPayload.headers
           )
           // A reply from a server still presenting an accepted label proves nothing here.
           if (compareVersion([seen], remote.version).kind !== 'same') continue
@@ -2109,6 +2124,10 @@ export class DownloadManager {
         const path = this.manifestPath(runtime.state.id)
         const temporaryPath = `${path}.tmp`
         const { blocks, ...state } = runtime.state
+        const persistedPayload: Omit<StartDownloadRequest, 'headers'> = {
+          ...runtime.requestPayload
+        }
+        delete (persistedPayload as { headers?: unknown }).headers
         const persisted: PersistedDownload = {
           version: 5,
           savedAt: Date.now(),
@@ -2117,7 +2136,12 @@ export class DownloadManager {
           partialPath: runtime.file.path,
           publicationPath: runtime.publicationPath,
           publicationIdentity: runtime.publicationIdentity,
-          requestPayload: runtime.requestPayload
+          requestPayload: persistedPayload,
+          credentialsRequiredAfterRestart:
+            runtime.credentialsRequiredAfterRestart ||
+            Object.keys(runtime.requestPayload.headers ?? {}).some((name) =>
+              /^(authorization|cookie)$/i.test(name)
+            )
         }
         if (runtime.state.status === 'downloading' || runtime.state.status === 'paused') {
           await runtime.file.sync()
