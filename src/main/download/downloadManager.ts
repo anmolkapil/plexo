@@ -115,8 +115,8 @@ interface ChunkRuntime {
    * made progress: a busy server is waited out for SERVER_BUSY_FOR_MS, not MAX_CHUNK_RETRIES. */
   busySince: number | null
   /** Since the stream count last looked: whether the server turned one of its requests away
-   * (403, 429, 503, or left it unanswered), and whether it received anything. What a connection limit is judged by (see
-   * concurrency.ts). */
+   * (403, 429, 503, or left it unanswered), and whether it received anything. What a connection
+   * limit is judged by (see concurrency.ts). */
   refused: boolean
   served: boolean
   /** Stopped for good, and to leave the list once its worker has (see retireStreams). */

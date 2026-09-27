@@ -7,13 +7,14 @@
 //   connection costs little when the link is already full, and a server that caps each
 //   connection's speed is only outrun by more of them.
 // - A server that refuses some of a network's streams (503, 429, 403, or leaves them unanswered
-//   for SILENT_AFTER_MS, see downloadManager.ts) while it is sending data down others is saying it wants fewer connections from this address: the refused streams
-//   close, and the network stays at the ones left. After RECOVER_MS without another refusal it
-//   may have one more, and so on back up to the limit, as in Surge: a server that was only
-//   briefly unwell doesn't cap the rest of a long download, and one that meant it costs one
-//   refused request a minute. Only the
-//   streams refused count against it: one that failed some other way, or hasn't been answered
-//   yet, isn't a refusal. As in Gopeed, where a refused connection stops and the others carry on.
+//   for SILENT_AFTER_MS, see downloadManager.ts) while it is sending data down others is saying
+//   it wants fewer connections from this address: the refused streams close, and the network
+//   stays at the ones left. After RECOVER_MS without another refusal it may have one more, and
+//   so on back up to the limit, as in Surge: a server that was only briefly unwell doesn't cap
+//   the rest of a long download, and one that meant it costs one refused request a minute. Only
+//   the streams refused count against it: one that failed some other way, or hasn't been
+//   answered yet, isn't a refusal. As in Gopeed, where a refused connection stops and the others
+//   carry on.
 // - A server that refuses while sending nothing isn't limiting connections: it is busy, or the
 //   link has expired or been denied. That is waited out or reported elsewhere (see finishFailed
 //   in downloadManager.ts), and the count stays. The network doesn't grow meanwhile.
