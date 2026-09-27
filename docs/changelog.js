@@ -10,6 +10,36 @@
 
   root.PlexoChangelog = [
     {
+      version: 'v1.0.0-rc.11',
+      items: [
+        {
+          kind: 'faster',
+          title: 'More streams, sooner',
+          text: 'Each network starts with 8 streams and doubles once they are all receiving, up to 32. Far-away servers fill your connection much faster.'
+        },
+        {
+          kind: 'new',
+          title: 'Pick your stream count',
+          text: 'Leave it on Auto, or choose a fixed 4, 8, 16 or 32 streams per network on the start screen.'
+        },
+        {
+          kind: 'improved',
+          title: 'Backs off when a server asks',
+          text: 'If a server turns some streams away or leaves them unanswered, that network drops to the ones it accepted, then gets one more back each minute.'
+        },
+        {
+          kind: 'faster',
+          title: 'Quicker finish',
+          text: 'A slow block near the end is raced by a free stream sooner, and raced again if that backup gets stuck too.'
+        },
+        {
+          kind: 'improved',
+          title: 'Unticking the last network pauses',
+          text: 'Switching off the last network pauses the download, and switching one back on resumes it.'
+        }
+      ]
+    },
+    {
       version: 'v1.0.0-rc.10',
       items: [
         {
