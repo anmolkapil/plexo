@@ -95,6 +95,8 @@ export class PlexoApp {
             ...(process.env as Record<string, string>),
             PLEXO_USER_DATA: this.dirs.userData,
             PLEXO_E2E_HIDE_WINDOW: '1',
+            // Never newer than this build, unless a test says otherwise.
+            PLEXO_E2E_LATEST_VERSION: '0',
             PLEXO_E2E_BLOCK_BYTES: String(BLOCK),
             PLEXO_E2E_RETRY_BASE_MS: '20',
             PLEXO_E2E_STALL_MS: '1500',

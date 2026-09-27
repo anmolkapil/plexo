@@ -97,9 +97,7 @@ function waitingFor(download: DownloadState): string | null {
 
 export function DownloadingScreen({ download }: { download: DownloadState }): React.JSX.Element {
   const homeDir = useAppStore((store) => store.homeDir)
-  const speedHistory = useAppStore((store) => store.speedHistory)
-  const speedHistoryByInterface = useAppStore((store) => store.speedHistoryByInterface)
-  const peakSpeedBytesPerSec = useAppStore((store) => store.peakSpeedBytesPerSec)
+  const speedHistory = download.speedHistory ?? {}
   const networkVisual = useNetworkVisuals()
   const isPaused = download.status === 'paused'
   const percent = formatPercent(download.bytesDownloaded, download.totalBytes)
@@ -196,7 +194,9 @@ export function DownloadingScreen({ download }: { download: DownloadState }): Re
 
   const statusBadge = isPaused ? { label: 'PAUSED', palette: KIND_PALETTE.usb } : null
 
-  const throughputStatusLabel = isPaused ? null : `LAST ${speedHistory.length}S`
+  const throughputStatusLabel = isPaused
+    ? null
+    : `LAST ${Object.values(speedHistory)[0]?.length ?? 0}S`
   const pauseResumeLabel = resuming ? 'Resuming…' : isPaused ? 'Resume' : 'Pause'
 
   return (
@@ -224,7 +224,7 @@ export function DownloadingScreen({ download }: { download: DownloadState }): Re
               <div className="flex items-center gap-2 font-mono text-[10px] leading-none font-medium tabular-nums text-muted-foreground">
                 <InlineStat label="AVG" value={formatSpeed(avgSpeedBytesPerSec)} />
                 <Dot />
-                <InlineStat label="PEAK" value={formatSpeed(peakSpeedBytesPerSec)} />
+                <InlineStat label="PEAK" value={formatSpeed(download.peakSpeedBytesPerSec ?? 0)} />
               </div>
               {isPaused || waiting
                 ? (download.error || waiting) && (
@@ -262,7 +262,7 @@ export function DownloadingScreen({ download }: { download: DownloadState }): Re
                 interfaceId: g.id,
                 solid: visuals[i].solid
               }))}
-              historyByInterface={speedHistoryByInterface}
+              historyByInterface={speedHistory}
             />
           </div>
         </div>

@@ -21,7 +21,7 @@ import { measureLatencies } from '../network/latency'
 import { NetworkMonitor } from '../network/interfaces'
 import { loadSettings, saveSettings } from '../settings'
 import { testKnobs } from '../testKnobs'
-import { checkForUpdate, UPDATE_PAGE_URL } from '../updateCheck'
+import { checkForUpdate } from '../updateCheck'
 
 async function openNetworkSettings(): Promise<void> {
   if (process.platform === 'win32') {
@@ -174,12 +174,7 @@ export function registerIpcHandlers(getWindow: () => BrowserWindow | null): Down
 
   // Kicked off once at startup, not per-call — later renderer calls (e.g. a remount) just await
   // the same in-flight/settled check instead of re-hitting the GitHub API.
-  const updateCheckPromise = (async () => {
-    const info = testKnobs.forceUpdateVersion
-      ? { version: testKnobs.forceUpdateVersion, url: UPDATE_PAGE_URL }
-      : await checkForUpdate(app.getVersion())
-    return info
-  })()
+  const updateCheckPromise = checkForUpdate(app.getVersion(), testKnobs.latestVersion)
 
   // Dismissal is read per call, not cached with the check — a reload after "Not now" must not
   // bring the dialog back.

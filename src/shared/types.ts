@@ -128,6 +128,10 @@ export interface DownloadState {
   chunks: ChunkState[]
   /** The most streams it has run at once. */
   peakStreams?: number
+  /** Each network's speed, by network id, sampled once a second over the last minute. */
+  speedHistory?: Record<string, number[]>
+  /** The fastest the download has gone. */
+  peakSpeedBytesPerSec?: number
   blocks?: BlockState[]
   totalBlocks?: number
   blockSizeBytes?: number
