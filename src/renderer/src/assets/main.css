@@ -245,6 +245,40 @@
   }
 }
 
+/* A queue row arriving: a short rise into place, so a link added while it is open is noticed
+   without the list jumping. */
+@keyframes plexo-row-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* The title bar's queue count when it changes. */
+@keyframes plexo-bump {
+  0%,
+  100% {
+    transform: scale(1);
+  }
+  40% {
+    transform: scale(1.08);
+  }
+}
+
+/* A bar with no known end (a link being checked): a segment sweeping across its track. */
+@keyframes plexo-indeterminate {
+  from {
+    transform: translateX(-100%);
+  }
+  to {
+    transform: translateX(250%);
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,

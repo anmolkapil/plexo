@@ -6,6 +6,7 @@ import { registerIpcHandlers } from './ipc/handlers'
 import { loadThemeSource, migrateLegacyNetworkPreferences } from './settings'
 import { testKnobs } from './testKnobs'
 import type { DownloadManager } from './download/downloadManager'
+import type { DownloadQueue } from './queue/downloadQueue'
 
 // In dev mode the app runs as the raw `electron` binary, which otherwise shows "Electron" in
 // the Dock tooltip/menu bar — must be set before the app is ready. Packaged builds already get
@@ -17,6 +18,7 @@ if (testKnobs.userDataDir) app.setPath('userData', testKnobs.userDataDir)
 
 let mainWindow: BrowserWindow | null = null
 let downloadManager: DownloadManager | null = null
+let downloadQueue: DownloadQueue | null = null
 let quitAfterSuspending = false
 
 function createWindow(): void {
@@ -84,7 +86,7 @@ app.whenReady().then(async () => {
     optimizer.watchWindowShortcuts(window)
   })
 
-  downloadManager = registerIpcHandlers(() => mainWindow)
+  ;({ manager: downloadManager, queue: downloadQueue } = registerIpcHandlers(() => mainWindow))
 
   nativeTheme.on('updated', () => {
     mainWindow?.setBackgroundColor(nativeTheme.shouldUseDarkColors ? '#1c1c1e' : '#ffffff')
@@ -108,11 +110,16 @@ app.on('before-quit', (event) => {
     app.exit(0)
   }, 3000)
 
-  void downloadManager.suspendAll().finally(() => {
-    clearTimeout(forceQuitTimeout)
-    quitAfterSuspending = true
-    app.exit(0)
-  })
+  // Downloads pause and save first; the queue's last change is saved after, so it can't be
+  // cut short by the exit.
+  void downloadManager
+    .suspendAll()
+    .then(() => downloadQueue?.flush())
+    .finally(() => {
+      clearTimeout(forceQuitTimeout)
+      quitAfterSuspending = true
+      app.exit(0)
+    })
 })
 
 app.on('window-all-closed', () => {

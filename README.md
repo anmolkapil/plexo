@@ -76,6 +76,7 @@ File ──→ Split ─────┤                                  ├─�
 - 🔁 **Automatic retry with backoff** — failed chunks go back to the queue and are retried with jittered exponential backoff (1s–15s). A dropped connection is retried for as long as its network is there; a busy server (429, 503, …) is waited out, honouring `Retry-After`; a server that answers wrongly gets 5 retries.
 - 🔄 **Network changes and sleep** — a network that gets a new address, or a computer that wakes from sleep, gets its connections going again at once instead of waiting out a backoff; the computer is kept awake while a download runs.
 - 💤 **Stall detection & watchdog** — automatically drops and re-queues connections that remain open but silent (>20s without incoming data, not counting time spent waiting on the disk).
+- 📋 **Download queue** — paste many links at once (one per line); they download one after another into one folder, each over every network. The queue survives a relaunch, retries what failed, and says clearly when a link has expired. See [Download queue](#download-queue).
 - 🔔 **Desktop notifications** — native desktop alerts when downloads complete or encounter errors.
 - 💾 **Upfront disk-space verification** — checks the destination volume before writing the staging file.
 - 🔀 **Mid-download redirect handling** — transparently follows 3xx HTTP redirects (up to 5 hops) during probing and individual chunk downloads.
@@ -253,6 +254,17 @@ Start the application in development mode:
 ```bash
 npm run dev
 ```
+
+---
+
+## Download queue
+
+Paste several links into the link field (or use **Add several links** on the start screen) and they go to the queue, opened from the list icon in the title bar. Files download **one at a time** — a single file already has every network to itself — into the queue's folder, over the networks left on at the start screen.
+
+- **Failures**: a failure a moment could fix (a busy server, a dropped connection) is retried once, a few seconds later; anything else waits for **Retry**, which picks up where it stopped. With no network connected the queue waits for one, and a save folder it can't write to (gone, read-only, full) pauses it with the reason, rather than failing every file in turn.
+- **Expired links**: a link answering `401`/`403`/`404`/`410`, or with a web page instead of the file, is marked _expired_ rather than retried.
+- **Relaunch**: the queue comes back **stopped**, with its current download paused. **Resume queue** carries on.
+- One notification when the queue runs out, rather than one per file.
 
 ---
 

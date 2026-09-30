@@ -6,6 +6,8 @@ import type {
   NetworkInterfaceInfo,
   NetworkPreference,
   NetworkPreferences,
+  QueueItem,
+  QueueState,
   ThemeSource,
   UpdateInfo
 } from '@shared/types'
@@ -52,6 +54,18 @@ interface AppStore {
   draftUrl: string
   /** Persisted — the last folder picked, falling back to downloadsDir. */
   destinationDir: string
+  /** Persisted — networks switched off on the start screen; the queue leaves them out too. */
+  excludedNetworks: string[]
+
+  /** The download queue, as the main process last sent it. Null until the first one arrives. */
+  queue: QueueState | null
+  queueOpen: boolean
+  addLinksOpen: boolean
+  /** The text the Add links dialog opened with — kept after it closes, so the dialog doesn't
+   * empty out while it animates away. */
+  addLinksDraft: string
+  /** Counts openings: each one starts a fresh form. */
+  addLinksKey: number
 
   /** Asks the main process for the network list now; it also pushes every change. */
   loadInterfaces: () => Promise<void>
@@ -66,6 +80,22 @@ interface AppStore {
   clearCurrentDownload: () => void
   setDraftUrl: (url: string) => void
   setDestinationDir: (dir: string) => void
+  setExcludedNetworks: (ids: string[]) => void
+  receiveQueue: (queue: QueueState) => void
+  setQueueOpen: (open: boolean) => void
+  openAddLinks: (text?: string) => void
+  closeAddLinks: () => void
+}
+
+/** Which queue item each download was started for, as queue updates have shown it. Kept after
+ * the item lets go of the download (one that failed with nothing worth keeping is removed at
+ * once), so that download's screen still knows its item. */
+const itemOfDownload = new Map<string, string>()
+
+/** The queue item a download was started for, while that item is still in the queue. */
+export function queueItemFor(downloadId: string): QueueItem | undefined {
+  const itemId = itemOfDownload.get(downloadId)
+  return itemId ? useAppStore.getState().queue?.items.find((item) => item.id === itemId) : undefined
 }
 
 // Settings saved by the main process, read once before the first paint (see InitialState).
@@ -97,6 +127,13 @@ export const useAppStore = create<AppStore>((set, get) => ({
 
   draftUrl: '',
   destinationDir: initial.destinationDir ?? initial.downloadsDir,
+  excludedNetworks: initial.excludedNetworks,
+
+  queue: null,
+  queueOpen: false,
+  addLinksOpen: false,
+  addLinksDraft: '',
+  addLinksKey: 0,
 
   loadInterfaces: async () => {
     // A re-scan keeps showing the last result rather than flashing back to 'loading'.
@@ -160,6 +197,13 @@ export const useAppStore = create<AppStore>((set, get) => ({
     const previous = get().currentDownload
     const download = applyDownloadUpdate(previous, update)
     if (!download || download === previous) return
+    // The last word of a queue download whose item was removed while it ran (cancelled from the
+    // browser, say): the item went first, so there is nothing to show for it.
+    const over = download.status === 'error' || download.status === 'cancelled'
+    if (over && itemOfDownload.has(download.id) && !queueItemFor(download.id)) {
+      if (previous?.id === download.id) get().clearCurrentDownload()
+      return
+    }
     const isNewDownload = !previous || previous.id !== download.id
 
     let speedHistory = isNewDownload ? [] : get().speedHistory
@@ -201,5 +245,32 @@ export const useAppStore = create<AppStore>((set, get) => ({
   setDestinationDir: (destinationDir) => {
     set({ destinationDir })
     persist({ destinationDir })
-  }
+  },
+
+  setExcludedNetworks: (excludedNetworks) => {
+    set({ excludedNetworks })
+    persist({ excludedNetworks })
+  },
+
+  receiveQueue: (queue) => {
+    for (const item of queue.items) {
+      if (item.downloadId) itemOfDownload.set(item.downloadId, item.id)
+    }
+    set({ queue })
+    // A failed or cancelled queue download on screen whose item has since been removed (here or
+    // from the browser): its download went with it, so there is nothing left to show.
+    const current = get().currentDownload
+    const over = current?.status === 'error' || current?.status === 'cancelled'
+    if (over && itemOfDownload.has(current.id) && !queueItemFor(current.id)) {
+      get().clearCurrentDownload()
+    }
+  },
+  setQueueOpen: (queueOpen) => set({ queueOpen }),
+  openAddLinks: (text = '') =>
+    set((store) => ({
+      addLinksOpen: true,
+      addLinksDraft: text,
+      addLinksKey: store.addLinksKey + 1
+    })),
+  closeAddLinks: () => set({ addLinksOpen: false })
 }))

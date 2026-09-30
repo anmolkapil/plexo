@@ -38,14 +38,17 @@ export class RemoteChangedError extends Error {
   }
 }
 
-/** The server answered with a status that isn't the range asked for. */
+/** The server answered with a status that isn't what was asked for. */
 export class HttpStatusError extends Error {
   constructor(
     readonly status: number,
     /** How long the server asked to be left alone (Retry-After), if it said. */
-    readonly retryAfterMs: number | null
+    readonly retryAfterMs: number | null,
+    /** The answer was a web page (an error page, a login, a captcha) rather than the file. */
+    readonly webPage = false,
+    message = `Unexpected status ${status} for range request`
   ) {
-    super(`Unexpected status ${status} for range request`)
+    super(message)
   }
 
   /** A server that is busy, briefly broken or limiting requests: worth waiting out, not a sign
@@ -225,9 +228,13 @@ export function downloadChunk(options: ChunkDownloadOptions): Promise<void> {
           // into this chunk's slot. When the range is also bounded, the
           // length check at the end of the body is what confirms the server
           // sent this chunk rather than the whole file.
-          const isValidFullBody = status === 200 && rangeStart === 0
+          // A web page answering a bounded range is never the file: a server that serves parts
+          // answers them with 206, so it's an error page, a login or a captcha instead.
+          const webPage = /^text\/html\b/i.test(header(res, 'content-type') ?? '')
+          const isValidFullBody =
+            status === 200 && rangeStart === 0 && !(webPage && rangeEnd !== null)
           if (status !== 206 && !isValidFullBody) {
-            fail(new HttpStatusError(status, retryAfterMs(header(res, 'retry-after'))))
+            fail(new HttpStatusError(status, retryAfterMs(header(res, 'retry-after')), webPage))
             res.resume()
             return
           }

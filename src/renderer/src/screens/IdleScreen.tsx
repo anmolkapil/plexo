@@ -1,6 +1,6 @@
 import type { ProbeResult } from '@shared/types'
 import { cn } from 'cn'
-import { AlertTriangle, ClipboardPaste, Info } from 'lucide-react'
+import { AlertTriangle, ClipboardPaste, Info, ListPlus } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 import { NetworkCard } from '../components/NetworkCard'
 import { ScreenFooter } from '../components/ScreenFooter'
@@ -10,6 +10,7 @@ import { ToggleGroup, ToggleGroupItem } from '../components/ui/toggle-group'
 import { useLatencyPolling } from '../hooks/useNetworks'
 import { useAppStore } from '../store/useAppStore'
 import { describeError, formatBytes, toDisplayPath } from '../utils/format'
+import { isBatch } from '../utils/links'
 
 type StreamsChoice = 'auto' | number
 /** Streams per network the user can pick instead of Auto. */
@@ -69,10 +70,15 @@ export function IdleScreen(): React.JSX.Element {
   const setUrl = useAppStore((store) => store.setDraftUrl)
   const destinationDir = useAppStore((store) => store.destinationDir)
   const setDestinationDir = useAppStore((store) => store.setDestinationDir)
+  const openAddLinks = useAppStore((store) => store.openAddLinks)
 
   const [probe, setProbe] = useState<ProbeState>({ status: 'idle' })
-  // Tracks deselections rather than selections, so a newly-detected interface starts selected.
-  const [deselectedInterfaceIds, setDeselectedInterfaceIds] = useState<string[]>([])
+  // Deselections rather than selections, so a newly-detected interface starts selected. Saved:
+  // the queue's downloads start on the same networks.
+  const excludedNetworks = useAppStore((store) => store.excludedNetworks)
+  const setExcludedNetworks = useAppStore((store) => store.setExcludedNetworks)
+  // For a file that can only go over one network: the one picked for it, not remembered.
+  const [singlePick, setSinglePick] = useState<string | null>(null)
   const [starting, setStarting] = useState(false)
   const [startError, setStartError] = useState<string | null>(null)
   const [fileNameOverride, setFileNameOverride] = useState<string | null>(null)
@@ -116,8 +122,12 @@ export function IdleScreen(): React.JSX.Element {
   const sizeUnknown = isSingleStreamOnly && ready.supportsRanges
 
   const detectedIds = interfaces.map((iface) => iface.id)
-  const enabledIds = detectedIds.filter((id) => !deselectedInterfaceIds.includes(id))
-  const selectedInterfaceIds = isSingleStreamOnly ? enabledIds.slice(0, 1) : enabledIds
+  // Networks switched off last time may be all that's connected now: then every one is on.
+  const included = detectedIds.filter((id) => !excludedNetworks.includes(id))
+  const enabledIds = included.length > 0 ? included : detectedIds
+  const selectedInterfaceIds = isSingleStreamOnly
+    ? [singlePick && detectedIds.includes(singlePick) ? singlePick : enabledIds[0]].filter(Boolean)
+    : enabledIds
 
   const startLabel = starting ? 'Starting…' : probe.status === 'probing' ? 'Checking…' : 'Start'
   const canStart =
@@ -162,23 +172,17 @@ export function IdleScreen(): React.JSX.Element {
   const handleToggleInterface = (id: string): void => {
     if (isSingleStreamOnly) {
       // Single-stream mode can only download through 1 interface at a time
-      setDeselectedInterfaceIds(detectedIds.filter((otherId) => otherId !== id))
+      setSinglePick(id)
       return
     }
 
-    setDeselectedInterfaceIds((prev) => {
-      const isCurrentlySelected = !prev.includes(id)
-      if (isCurrentlySelected) {
-        // Deselecting: keep at least 1 interface selected
-        const remainingCount = detectedIds.filter(
-          (otherId) => !prev.includes(otherId) && otherId !== id
-        ).length
-        if (remainingCount === 0) return prev
-        return [...prev, id]
-      } else {
-        return prev.filter((entry) => entry !== id)
-      }
-    })
+    if (enabledIds.includes(id)) {
+      // Deselecting: keep at least 1 interface selected
+      if (enabledIds.length === 1) return
+      setExcludedNetworks([...excludedNetworks.filter((entry) => entry !== id), id])
+    } else {
+      setExcludedNetworks(excludedNetworks.filter((entry) => entry !== id))
+    }
   }
 
   const handleBrowse = async (): Promise<void> => {
@@ -188,7 +192,9 @@ export function IdleScreen(): React.JSX.Element {
 
   const handlePaste = async (): Promise<void> => {
     const text = await window.plexo.readClipboardText()
-    if (text.trim()) setUrl(text.trim())
+    // Several links at once are a batch: they go to the queue rather than into the one field.
+    if (isBatch(text)) openAddLinks(text)
+    else if (text.trim()) setUrl(text.trim())
   }
 
   const handleStart = async (): Promise<void> => {
@@ -231,6 +237,13 @@ export function IdleScreen(): React.JSX.Element {
               type="url"
               value={url}
               onChange={(event) => setUrl(event.target.value)}
+              onPaste={(event) => {
+                const text = event.clipboardData.getData('text')
+                if (isBatch(text)) {
+                  event.preventDefault()
+                  openAddLinks(text)
+                }
+              }}
               placeholder="https://"
               spellCheck={false}
               aria-labelledby="idle-link-label"
@@ -382,7 +395,20 @@ export function IdleScreen(): React.JSX.Element {
       </div>
 
       <ScreenFooter className="gap-2.5">
-        <div className="font-mono text-[11px] text-muted-foreground">{footerParts.join(' · ')}</div>
+        <div className="min-w-0 truncate font-mono text-[11px] text-muted-foreground">
+          {footerParts.join(' · ')}
+        </div>
+        <div className="flex-1" />
+        <Button
+          type="button"
+          variant="secondary"
+          size="xs"
+          onClick={() => openAddLinks()}
+          className="shrink-0 font-mono text-[10px] tracking-wide uppercase"
+        >
+          <ListPlus data-icon="inline-start" />
+          Add several links
+        </Button>
       </ScreenFooter>
     </div>
   )

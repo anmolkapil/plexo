@@ -1,17 +1,20 @@
 import type { DownloadState } from '@shared/types'
 import { useEffect } from 'react'
+import { AddLinksDialog } from './components/AddLinksDialog'
 import { TitleBar, type TitleBarStatus } from './components/TitleBar'
 import { NetworkBindingDialog } from './components/NetworkBindingDialog'
+import { QueueSheet } from './components/QueueSheet'
 import { UpdateDialog } from './components/UpdateDialog'
 import { TooltipProvider } from './components/ui/tooltip'
 import { useDownloadEvents } from './hooks/useDownloadEvents'
 import { useNetworkEvents } from './hooks/useNetworks'
+import { useQueueEvents } from './hooks/useQueueEvents'
 import { CompleteScreen } from './screens/CompleteScreen'
 import { DownloadingScreen } from './screens/DownloadingScreen'
 import { ErrorScreen } from './screens/ErrorScreen'
 import { IdleScreen } from './screens/IdleScreen'
 import { NoConnectionsScreen } from './screens/NoConnectionsScreen'
-import { useAppStore } from './store/useAppStore'
+import { queueItemFor, useAppStore } from './store/useAppStore'
 
 function assertNever(status: never): never {
   throw new Error(`Unhandled download status: ${String(status)}`)
@@ -66,6 +69,7 @@ function renderDownload(
 function App(): React.JSX.Element {
   useDownloadEvents()
   useNetworkEvents()
+  useQueueEvents()
 
   const interfaces = useAppStore((store) => store.interfaces)
   const interfacesStatus = useAppStore((store) => store.interfacesStatus)
@@ -78,17 +82,32 @@ function App(): React.JSX.Element {
   }, [checkForUpdate])
 
   const handleNewDownload = (): void => {
-    if (currentDownload) void window.plexo.removeDownload(currentDownload.id)
+    const current = currentDownload
     clearCurrentDownload()
+    if (!current) return
+    // A failed queue item's download holds what it fetched, for the item's Retry to pick up:
+    // moving on from its screen leaves it be.
+    if (current.status === 'error' && queueItemFor(current.id)) return
+    void window.plexo.removeDownload(current.id)
   }
 
   const handleDownloadAgain = (): void => {
-    if (currentDownload) {
-      const url = currentDownload.url
-      void window.plexo.removeDownload(currentDownload.id)
-      clearCurrentDownload()
-      useAppStore.getState().setDraftUrl(url)
+    if (!currentDownload) return
+    const { id, url } = currentDownload
+    // One of the queue's: it goes back into the queue, into the queue's folder, rather than to
+    // the start screen as a download of its own.
+    const item = queueItemFor(id)
+    clearCurrentDownload()
+    if (item) {
+      void window.plexo
+        .removeDownload(id)
+        .then(() => window.plexo.queueCommand({ kind: 'retry', id: item.id }))
+        .catch(() => {})
+      useAppStore.getState().setQueueOpen(true)
+      return
     }
+    void window.plexo.removeDownload(id)
+    useAppStore.getState().setDraftUrl(url)
   }
 
   const noConnections = interfacesStatus === 'ready' && interfaces.length === 0
@@ -113,6 +132,8 @@ function App(): React.JSX.Element {
       <div className="flex h-full flex-col">
         <TitleBar status={titleBarStatus} />
         <div className="min-h-0 flex-1">{screen}</div>
+        <QueueSheet />
+        <AddLinksDialog />
         <UpdateDialog />
         <NetworkBindingDialog />
       </div>

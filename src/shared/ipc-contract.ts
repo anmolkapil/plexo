@@ -1,14 +1,18 @@
 import type {
+  AddLinksResult,
   AppSettings,
   DownloadUpdate,
   NetworkInterfaceInfo,
   ProbeResult,
+  QueueCommand,
+  QueueLink,
+  QueueState,
   StartDownloadRequest,
   UpdateInfo
 } from './types'
 
 /** The request/response half of the IPC surface (every IpcChannels entry except the
- * main->renderer push events, downloadUpdated and networksChanged) — one source of truth for
+ * main->renderer push events, downloadUpdated, networksChanged and queueUpdated) — one source of truth for
  * both plexoApi (preload) and registerIpcHandlers (main), so a signature drift between the two
  * is a compile error instead of a runtime one. */
 export interface IpcContract {
@@ -29,4 +33,10 @@ export interface IpcContract {
   cancelDownload: { args: [id: string]; result: void }
   removeDownload: { args: [id: string]; result: void }
   checkForUpdate: { args: []; result: UpdateInfo | null }
+  getQueue: { args: []; result: QueueState }
+  addToQueue: {
+    args: [links: QueueLink[], options: { start: boolean }]
+    result: AddLinksResult
+  }
+  queueCommand: { args: [command: QueueCommand]; result: void }
 }

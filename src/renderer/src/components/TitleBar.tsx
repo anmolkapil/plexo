@@ -1,4 +1,5 @@
 import { ColorBadge } from './ColorBadge'
+import { QueueButton } from './QueueButton'
 import { ThemeToggle } from './ThemeToggle'
 import { UpdateIndicator } from './UpdateIndicator'
 
@@ -70,6 +71,7 @@ export function TitleBar({ status }: { status: TitleBarStatus }): React.JSX.Elem
         </ColorBadge>
       )}
       <UpdateIndicator />
+      <QueueButton />
       <ThemeToggle />
     </div>
   )

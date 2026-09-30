@@ -33,6 +33,8 @@ export interface ProbeResult {
   /** Strong validators, used to detect if the remote content changes between pause and resume. */
   etag: string | null
   lastModified: string | null
+  /** The server named the file (Content-Disposition), i.e. meant it as a download. */
+  attachment: boolean
 }
 
 export type DownloadStatus = 'downloading' | 'paused' | 'completed' | 'error' | 'cancelled'
@@ -94,6 +96,13 @@ export interface BlockState {
  */
 export type NetworkStatus = 'on' | 'off' | 'offline' | 'unreachable' | 'failed'
 
+/** What a server answered that made a download (or one of its networks) give up: its HTTP
+ * status, and whether it sent a web page (an error page, a login, a captcha) instead of the file. */
+export interface ServerRefusal {
+  status: number
+  webPage: boolean
+}
+
 /** A network as one download sees it: whether the user has it on, and how it is doing. */
 export interface DownloadNetwork {
   /** A NetworkInterfaceInfo id. */
@@ -105,6 +114,8 @@ export interface DownloadNetwork {
   enabled: boolean
   status: NetworkStatus
   error?: string
+  /** For a failed network whose server answered with a refusal: what it answered. */
+  refusal?: ServerRefusal
   /** Bytes of the file it delivered. */
   bytesDownloaded: number
   speedBytesPerSec: number
@@ -132,6 +143,8 @@ export interface DownloadState {
   totalBlocks?: number
   blockSizeBytes?: number
   error?: string
+  /** For an error the server's answers caused: what it answered (see ServerRefusal). */
+  refusal?: ServerRefusal
   /** For an error: whether resuming can pick up where it stopped. False when the progress was
    * thrown away, e.g. the file changed on the server. */
   resumable?: boolean
@@ -185,6 +198,9 @@ export interface AppSettings {
   destinationDir?: string
   /** User customizations (name/color) per network interface id. */
   networkPreferences?: NetworkPreferences
+  /** Networks switched off on the start screen, by id: downloads, the queue's included, don't
+   * start on them. */
+  excludedNetworks?: string[]
 }
 
 /** Everything the renderer needs for its first paint, read synchronously by the preload so no
@@ -196,6 +212,7 @@ export interface InitialState {
   networkPreferences: NetworkPreferences
   /** The last folder picked, if it still exists — otherwise the renderer uses downloadsDir. */
   destinationDir?: string
+  excludedNetworks: string[]
 }
 
 export interface StartDownloadRequest {
@@ -211,4 +228,83 @@ export interface StartDownloadRequest {
   lastModified: string | null
   /** Streams per network the user picked; left out, the count is decided automatically. */
   streamsPerNetwork?: number
+  /** Started by the download queue for this item: how the queue finds it again after a
+   * relaunch, and why it doesn't notify on its own (the queue sums up instead). */
+  queueItemId?: string
+}
+
+/**
+ * - queued: waiting its turn.
+ * - starting: being checked (probed) and started.
+ * - active: its download is the current one — running or paused.
+ * - completed / failed: done, either way. A failed one may keep what it downloaded, to resume
+ *   from once it is retried.
+ */
+export type QueueItemStatus = 'queued' | 'starting' | 'active' | 'completed' | 'failed'
+
+/** Why a queue item failed: `expired` means the link stopped working (the server refuses it, or
+ * it now leads to a web page) and only a fresh link will help. */
+export type QueueItemProblem = 'expired' | 'cancelled' | 'other'
+
+export interface QueueItem {
+  id: string
+  url: string
+  /** The name to save it as; the server's name when unset. */
+  fileName?: string
+  addedAt: number
+  status: QueueItemStatus
+  /** 0 or unset: not known yet. */
+  totalBytes?: number
+  bytesDownloaded?: number
+  /** Its download in the download manager, while it has one. */
+  downloadId?: string
+  /** Where the finished file was saved. */
+  destinationPath?: string
+  error?: string
+  problem?: QueueItemProblem
+  /** Downloads started for it, retries included. */
+  attempts: number
+  /** Waiting, after a failure a moment could fix, for its automatic retry at this time. */
+  retryAt?: number
+  /** When it completed or failed. */
+  finishedAt?: number
+}
+
+export interface QueueState {
+  /** Starts the next item whenever nothing is downloading. Stopped after a relaunch. */
+  running: boolean
+  /** Every item is saved here. */
+  destinationDir: string
+  /** The current download is one of the user's own that failed: the queue waits until they
+   * resume it or move on, rather than sweeping it away. */
+  blocked: boolean
+  /** The saved queue couldn't be read at launch: what to tell the user. Nothing is saved over it
+   * until a relaunch reads it. */
+  loadError?: string
+  /** Running, but no network is connected: the next item starts once one is. */
+  waitingForNetwork: boolean
+  /** Why the queue stopped itself: its folder can't be saved to (gone, read-only, full). */
+  stoppedBecause?: string
+  items: QueueItem[]
+}
+
+/** A link to queue, as pasted. */
+export interface QueueLink {
+  url: string
+}
+
+export type QueueCommand =
+  | { kind: 'start' }
+  | { kind: 'stop' }
+  | { kind: 'retry'; id: string }
+  | { kind: 'retryFailed' }
+  | { kind: 'remove'; id: string }
+  | { kind: 'move'; id: string; offset: -1 | 1 }
+  | { kind: 'clearFinished' }
+  | { kind: 'setDestination'; dir: string }
+
+export interface AddLinksResult {
+  added: number
+  /** Already in the queue and not finished. */
+  duplicates: number
 }

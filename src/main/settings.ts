@@ -54,6 +54,11 @@ function sanitizeSettings(parsed: unknown): AppSettings {
   if (parsed.networkPreferences !== undefined) {
     settings.networkPreferences = sanitizeNetworkPreferences(parsed.networkPreferences)
   }
+  if (Array.isArray(parsed.excludedNetworks)) {
+    settings.excludedNetworks = parsed.excludedNetworks
+      .filter((id): id is string => typeof id === 'string' && id.length > 0 && id.length <= 256)
+      .slice(0, 64)
+  }
   return settings
 }
 

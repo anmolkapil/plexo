@@ -5,7 +5,10 @@ import type {
   AppSettings,
   DownloadUpdate,
   InitialState,
-  NetworkInterfaceInfo
+  NetworkInterfaceInfo,
+  QueueCommand,
+  QueueLink,
+  QueueState
 } from '../shared/types'
 
 /** Typed wrapper around ipcRenderer.invoke — the channel name picks its args/result shape out of
@@ -42,11 +45,21 @@ const plexoApi = {
   cancelDownload: (downloadId: string) => invoke('cancelDownload', downloadId),
   removeDownload: (downloadId: string) => invoke('removeDownload', downloadId),
   checkForUpdate: () => invoke('checkForUpdate'),
+  getQueue: () => invoke('getQueue'),
+  addToQueue: (links: QueueLink[], options: { start: boolean }) =>
+    invoke('addToQueue', links, options),
+  queueCommand: (command: QueueCommand) => invoke('queueCommand', command),
 
   onDownloadUpdated: (callback: (update: DownloadUpdate) => void): (() => void) => {
     const listener = (_event: IpcRendererEvent, update: DownloadUpdate): void => callback(update)
     ipcRenderer.on(IpcChannels.downloadUpdated, listener)
     return () => ipcRenderer.removeListener(IpcChannels.downloadUpdated, listener)
+  },
+
+  onQueueUpdated: (callback: (queue: QueueState) => void): (() => void) => {
+    const listener = (_event: IpcRendererEvent, queue: QueueState): void => callback(queue)
+    ipcRenderer.on(IpcChannels.queueUpdated, listener)
+    return () => ipcRenderer.removeListener(IpcChannels.queueUpdated, listener)
   },
 
   onNetworksChanged: (callback: (networks: NetworkInterfaceInfo[]) => void): (() => void) => {

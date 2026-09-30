@@ -12,13 +12,14 @@ import {
 } from 'electron'
 import { IpcChannels } from '../../shared/ipc-channels'
 import type { IpcContract } from '../../shared/ipc-contract'
-import type { InitialState, ThemeSource } from '../../shared/types'
+import type { InitialState, QueueCommand, ThemeSource } from '../../shared/types'
 import { DownloadManager } from '../download/downloadManager'
 import { getDefaultDownloadsDir, getHomeDir } from '../download/paths'
 import { probeUrl } from '../download/probe'
 import { deviceBindingSupported } from '../network/deviceBinding'
 import { measureLatencies } from '../network/latency'
 import { NetworkMonitor } from '../network/interfaces'
+import { DownloadQueue } from '../queue/downloadQueue'
 import { loadSettings, saveSettings } from '../settings'
 import { testKnobs } from '../testKnobs'
 import { checkForUpdate, UPDATE_PAGE_URL } from '../updateCheck'
@@ -56,14 +57,24 @@ function handle<K extends keyof IpcContract>(
 
 const DESTINATION_CHECK_MS = 300
 
-export function registerIpcHandlers(getWindow: () => BrowserWindow | null): DownloadManager {
+export function registerIpcHandlers(getWindow: () => BrowserWindow | null): {
+  manager: DownloadManager
+  queue: DownloadQueue
+} {
   // The main process keeps the network list, for downloads and the window alike.
   const networks = new NetworkMonitor((list) => {
     manager.networksChanged()
+    queue.networksChanged(list)
     const window = getWindow()
     if (window && !window.isDestroyed()) window.webContents.send(IpcChannels.networksChanged, list)
   })
-  const manager = new DownloadManager(getWindow, networks)
+  // The queue loads first: the manager asks it, while restoring, which failed downloads to keep.
+  const queue = new DownloadQueue(getWindow, networks, async () => ({
+    ...(await loadSettings()),
+    downloadsDir: getDefaultDownloadsDir()
+  }))
+  const manager = new DownloadManager(getWindow, networks, () => queue.retainedDownloads())
+  void queue.attach(manager)
   // Waking from sleep, the networks may have changed without a poll in between to see it.
   powerMonitor.on('resume', () => {
     manager.systemResumed()
@@ -115,7 +126,8 @@ export function registerIpcHandlers(getWindow: () => BrowserWindow | null): Down
         downloadsDir: getDefaultDownloadsDir(),
         themeSource: currentThemeSource(),
         networkPreferences: settings.networkPreferences ?? {},
-        destinationDir: destinationExists ? destinationDir : undefined
+        destinationDir: destinationExists ? destinationDir : undefined,
+        excludedNetworks: settings.excludedNetworks ?? []
       } satisfies InitialState
     } catch (error) {
       console.error('[plexo] failed to read initial state', error)
@@ -124,7 +136,8 @@ export function registerIpcHandlers(getWindow: () => BrowserWindow | null): Down
         homeDir: '',
         downloadsDir: '',
         themeSource: currentThemeSource(),
-        networkPreferences: {}
+        networkPreferences: {},
+        excludedNetworks: []
       } satisfies InitialState
     }
   })
@@ -172,6 +185,36 @@ export function registerIpcHandlers(getWindow: () => BrowserWindow | null): Down
 
   handle('removeDownload', async (_event, id) => manager.remove(id))
 
+  handle('getQueue', async () => {
+    await queue.loaded
+    return queue.getState()
+  })
+
+  handle('addToQueue', async (_event, links, options) =>
+    queue.addLinks(Array.isArray(links) ? links : [], { start: options?.start === true })
+  )
+
+  handle('queueCommand', async (_event, command: QueueCommand) => {
+    switch (command?.kind) {
+      case 'start':
+        return queue.start()
+      case 'stop':
+        return queue.stop()
+      case 'retry':
+        return queue.retry(command.id)
+      case 'retryFailed':
+        return queue.retryFailed()
+      case 'remove':
+        return queue.remove(command.id)
+      case 'move':
+        return queue.move(command.id, command.offset === -1 ? -1 : 1)
+      case 'clearFinished':
+        return queue.clearFinished()
+      case 'setDestination':
+        return queue.setDestination(command.dir)
+    }
+  })
+
   // Kicked off once at startup, not per-call — later renderer calls (e.g. a remount) just await
   // the same in-flight/settled check instead of re-hitting the GitHub API.
   const updateCheckPromise = (async () => {
@@ -190,5 +233,5 @@ export function registerIpcHandlers(getWindow: () => BrowserWindow | null): Down
     return { ...info, dismissed: info.version === dismissedUpdateVersion }
   })
 
-  return manager
+  return { manager, queue }
 }
