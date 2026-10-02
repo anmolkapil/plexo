@@ -131,7 +131,7 @@ export function IdleScreen(): React.JSX.Element {
         ? 'Checking…'
         : 'Start'
   const canStart =
-    (probe.status === 'ready' || (isDownloading && url.trim() !== '')) &&
+    probe.status === 'ready' &&
     selectedInterfaceIds.length > 0 &&
     Boolean(destinationDir) &&
     !starting
@@ -202,20 +202,19 @@ export function IdleScreen(): React.JSX.Element {
   }
 
   const handleStart = async (): Promise<void> => {
-    if (!canStart) return
-    if (!isDownloading && probe.status !== 'ready') return
+    if (!canStart || probe.status !== 'ready') return
 
     setStarting(true)
     setStartError(null)
     try {
-      const urls = url.trim().split(/\s+/).filter(Boolean)
+      const streamsPerNetwork = streamsChoice === 'auto' ? undefined : streamsChoice
       if (isDownloading) {
-        urls.forEach((u) => useAppStore.getState().queueUrl(u))
+        useAppStore.getState().queueUrl({
+          url: probe.result.finalUrl,
+          streamsPerNetwork
+        })
         setUrl('')
       } else {
-        if (urls.length > 1) {
-          urls.slice(1).forEach((u) => useAppStore.getState().queueUrl(u))
-        }
         // @ts-expect-error ready check
         await window.plexo.startDownload({
           // @ts-expect-error ready check
@@ -254,14 +253,14 @@ export function IdleScreen(): React.JSX.Element {
             <div id="idle-link-label" className={fieldLabelClass}>
               LINK
             </div>
-            <textarea
+            <input
+              type="url"
               value={url}
               onChange={(event) => setUrl(event.target.value)}
               placeholder="https://"
               spellCheck={false}
               aria-labelledby="idle-link-label"
-              rows={2}
-              className="min-w-0 flex-1 resize-none rounded-[3px] border-none bg-transparent font-mono text-[13px] text-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
+              className="min-w-0 flex-1 rounded-[3px] border-none bg-transparent font-mono text-[13px] text-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
             />
             <Button
               type="button"

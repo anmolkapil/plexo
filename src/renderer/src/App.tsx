@@ -64,10 +64,12 @@ function renderDownload(
 }
 
 import { QueueSidebar } from './components/QueueSidebar'
+import { useQueueProcessor } from './hooks/useQueueProcessor'
 
 function App(): React.JSX.Element {
   useDownloadEvents()
   useNetworkEvents()
+  useQueueProcessor()
 
   const interfaces = useAppStore((store) => store.interfaces)
   const interfacesStatus = useAppStore((store) => store.interfacesStatus)
@@ -114,15 +116,17 @@ function App(): React.JSX.Element {
         <TitleBar status={titleBarStatus} />
         <div className="flex min-h-0 flex-1">
           <div className="flex min-w-0 flex-1 flex-col">
-            {downloadScreen ? (
-              <>
-                <div className="flex-shrink-0 h-[45%] min-h-[250px] overflow-y-auto border-b border-border">
-                  <IdleScreen />
-                </div>
-                <div className="flex-1 min-h-0 overflow-y-auto relative">{downloadScreen}</div>
-              </>
-            ) : (
+            <div
+              className={
+                downloadScreen
+                  ? 'flex-shrink-0 h-[45%] min-h-[250px] overflow-y-auto border-b border-border'
+                  : 'flex-1 min-h-0 overflow-y-auto'
+              }
+            >
               <IdleScreen />
+            </div>
+            {downloadScreen && (
+              <div className="flex-1 min-h-0 overflow-y-auto relative">{downloadScreen}</div>
             )}
           </div>
           <QueueSidebar />

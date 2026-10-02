@@ -20,6 +20,11 @@ const SPEED_SAMPLE_INTERVAL_MS = 1000
 // sample, not something a component should ever read or re-render on.
 let lastSpeedSampleAt = 0
 
+export interface QueuedItem {
+  url: string
+  streamsPerNetwork?: number
+}
+
 interface AppStore {
   interfaces: NetworkInterfaceInfo[]
   interfacesStatus: LoadStatus
@@ -61,9 +66,9 @@ interface AppStore {
   setThemeSource: (source: ThemeSource) => void
   checkForUpdate: () => Promise<void>
   dismissUpdate: () => void
-  queuedUrls: string[]
-  queueUrl: (url: string) => void
-  popQueuedUrl: () => string | undefined
+  queuedUrls: QueuedItem[]
+  queueUrl: (item: QueuedItem) => void
+  popQueuedUrl: () => QueuedItem | undefined
   removeQueuedUrl: (index: number) => void
   moveQueuedUrl: (index: number, direction: 'up' | 'down') => void
 
@@ -102,9 +107,9 @@ export const useAppStore = create<AppStore>((set, get) => ({
   peakSpeedBytesPerSec: 0,
 
   queuedUrls: [],
-  queueUrl: (url) => set((state) => ({ queuedUrls: [...state.queuedUrls, url] })),
+  queueUrl: (item) => set((state) => ({ queuedUrls: [...state.queuedUrls, item] })),
   popQueuedUrl: () => {
-    let next: string | undefined
+    let next: QueuedItem | undefined
     set((state) => {
       if (state.queuedUrls.length === 0) return state
       next = state.queuedUrls[0]
