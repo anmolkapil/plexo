@@ -62,6 +62,9 @@ function InfoAlert({ title, message }: { title?: string; message: string }): Rea
 export function IdleScreen(): React.JSX.Element {
   useLatencyPolling()
 
+  const currentDownload = useAppStore((store) => store.currentDownload)
+  const isDownloading = currentDownload !== null
+
   const interfaces = useAppStore((store) => store.interfaces)
   const homeDir = useAppStore((store) => store.homeDir)
   const latencies = useAppStore((store) => store.latencies)
@@ -90,13 +93,14 @@ export function IdleScreen(): React.JSX.Element {
       setFileNameOverride(null)
       return
     }
+    const firstUrl = trimmed.split(/\s+/)[0] || ''
 
     const requestId = ++probeRequestId.current
     setProbe({ status: 'probing' })
     setFileNameOverride(null)
     const timer = setTimeout(async () => {
       try {
-        const result = await window.plexo.probeUrl(trimmed)
+        const result = await window.plexo.probeUrl(firstUrl)
         if (probeRequestId.current !== requestId) return
         setProbe({ status: 'ready', result })
       } catch (error) {
@@ -119,9 +123,15 @@ export function IdleScreen(): React.JSX.Element {
   const enabledIds = detectedIds.filter((id) => !deselectedInterfaceIds.includes(id))
   const selectedInterfaceIds = isSingleStreamOnly ? enabledIds.slice(0, 1) : enabledIds
 
-  const startLabel = starting ? 'Starting…' : probe.status === 'probing' ? 'Checking…' : 'Start'
+  const startLabel = starting
+    ? 'Starting…'
+    : isDownloading
+      ? 'Queue'
+      : probe.status === 'probing'
+        ? 'Checking…'
+        : 'Start'
   const canStart =
-    probe.status === 'ready' &&
+    (probe.status === 'ready' || (isDownloading && url.trim() !== '')) &&
     selectedInterfaceIds.length > 0 &&
     Boolean(destinationDir) &&
     !starting
@@ -192,21 +202,38 @@ export function IdleScreen(): React.JSX.Element {
   }
 
   const handleStart = async (): Promise<void> => {
-    if (probe.status !== 'ready' || !canStart) return
+    if (!canStart) return
+    if (!isDownloading && probe.status !== 'ready') return
+
     setStarting(true)
     setStartError(null)
     try {
-      await window.plexo.startDownload({
-        url: probe.result.finalUrl,
-        destinationDir,
-        suggestedFileName: fileNameOverride?.trim() || probe.result.suggestedFileName,
-        totalBytes: probe.result.totalBytes ?? 0,
-        supportsRanges: multiChunkAllowed,
-        interfaceIds: selectedInterfaceIds,
-        etag: probe.result.etag,
-        lastModified: probe.result.lastModified,
-        streamsPerNetwork: streamsChoice === 'auto' ? undefined : streamsChoice
-      })
+      const urls = url.trim().split(/\s+/).filter(Boolean)
+      if (isDownloading) {
+        urls.forEach((u) => useAppStore.getState().queueUrl(u))
+        setUrl('')
+      } else {
+        if (urls.length > 1) {
+          urls.slice(1).forEach((u) => useAppStore.getState().queueUrl(u))
+        }
+        // @ts-expect-error ready check
+        await window.plexo.startDownload({
+          // @ts-expect-error ready check
+          url: probe.result.finalUrl,
+          destinationDir,
+          // @ts-expect-error ready check
+          suggestedFileName: fileNameOverride?.trim() || probe.result.suggestedFileName,
+          // @ts-expect-error ready check
+          totalBytes: probe.result.totalBytes ?? 0,
+          supportsRanges: multiChunkAllowed,
+          interfaceIds: selectedInterfaceIds,
+          // @ts-expect-error ready check
+          etag: probe.result.etag,
+          // @ts-expect-error ready check
+          lastModified: probe.result.lastModified,
+          streamsPerNetwork: streamsChoice === 'auto' ? undefined : streamsChoice
+        })
+      }
     } catch (error) {
       setStartError(describeError(error))
     } finally {
@@ -227,14 +254,14 @@ export function IdleScreen(): React.JSX.Element {
             <div id="idle-link-label" className={fieldLabelClass}>
               LINK
             </div>
-            <input
-              type="url"
+            <textarea
               value={url}
               onChange={(event) => setUrl(event.target.value)}
               placeholder="https://"
               spellCheck={false}
               aria-labelledby="idle-link-label"
-              className="min-w-0 flex-1 rounded-[3px] border-none bg-transparent font-mono text-[13px] text-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
+              rows={2}
+              className="min-w-0 flex-1 resize-none rounded-[3px] border-none bg-transparent font-mono text-[13px] text-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
             />
             <Button
               type="button"

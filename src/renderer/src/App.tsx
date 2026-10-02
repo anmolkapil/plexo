@@ -63,6 +63,8 @@ function renderDownload(
   }
 }
 
+import { QueueSidebar } from './components/QueueSidebar'
+
 function App(): React.JSX.Element {
   useDownloadEvents()
   useNetworkEvents()
@@ -93,26 +95,38 @@ function App(): React.JSX.Element {
 
   const noConnections = interfacesStatus === 'ready' && interfaces.length === 0
 
-  let screen: React.JSX.Element
+  let downloadScreen: React.JSX.Element | null = null
   let titleBarStatus: TitleBarStatus = { kind: 'none' }
 
   if (currentDownload) {
-    ;({ screen, titleBarStatus } = renderDownload(currentDownload, {
+    ;({ screen: downloadScreen, titleBarStatus } = renderDownload(currentDownload, {
       onNewDownload: handleNewDownload,
       onDownloadAgain: handleDownloadAgain
     }))
   } else if (noConnections) {
-    screen = <NoConnectionsScreen />
+    downloadScreen = <NoConnectionsScreen />
     titleBarStatus = { kind: 'offline' }
-  } else {
-    screen = <IdleScreen />
   }
 
   return (
     <TooltipProvider>
-      <div className="flex h-full flex-col">
+      <div className="flex h-full flex-col bg-background">
         <TitleBar status={titleBarStatus} />
-        <div className="min-h-0 flex-1">{screen}</div>
+        <div className="flex min-h-0 flex-1">
+          <div className="flex min-w-0 flex-1 flex-col">
+            {downloadScreen ? (
+              <>
+                <div className="flex-shrink-0 h-[45%] min-h-[250px] overflow-y-auto border-b border-border">
+                  <IdleScreen />
+                </div>
+                <div className="flex-1 min-h-0 overflow-y-auto relative">{downloadScreen}</div>
+              </>
+            ) : (
+              <IdleScreen />
+            )}
+          </div>
+          <QueueSidebar />
+        </div>
         <UpdateDialog />
         <NetworkBindingDialog />
       </div>

@@ -61,6 +61,12 @@ interface AppStore {
   setThemeSource: (source: ThemeSource) => void
   checkForUpdate: () => Promise<void>
   dismissUpdate: () => void
+  queuedUrls: string[]
+  queueUrl: (url: string) => void
+  popQueuedUrl: () => string | undefined
+  removeQueuedUrl: (index: number) => void
+  moveQueuedUrl: (index: number, direction: 'up' | 'down') => void
+
   /** A snapshot or an update of the current download, from the main process. */
   receiveDownloadUpdate: (update: DownloadUpdate) => void
   clearCurrentDownload: () => void
@@ -94,6 +100,35 @@ export const useAppStore = create<AppStore>((set, get) => ({
   speedHistory: [],
   speedHistoryByInterface: {},
   peakSpeedBytesPerSec: 0,
+
+  queuedUrls: [],
+  queueUrl: (url) => set((state) => ({ queuedUrls: [...state.queuedUrls, url] })),
+  popQueuedUrl: () => {
+    let next: string | undefined
+    set((state) => {
+      if (state.queuedUrls.length === 0) return state
+      next = state.queuedUrls[0]
+      return { queuedUrls: state.queuedUrls.slice(1) }
+    })
+    return next
+  },
+  removeQueuedUrl: (index) =>
+    set((state) => ({ queuedUrls: state.queuedUrls.filter((_, i) => i !== index) })),
+  moveQueuedUrl: (index, direction) =>
+    set((state) => {
+      if (
+        (direction === 'up' && index === 0) ||
+        (direction === 'down' && index === state.queuedUrls.length - 1)
+      ) {
+        return state
+      }
+      const newUrls = [...state.queuedUrls]
+      const targetIndex = direction === 'up' ? index - 1 : index + 1
+      const temp = newUrls[index]
+      newUrls[index] = newUrls[targetIndex]
+      newUrls[targetIndex] = temp
+      return { queuedUrls: newUrls }
+    }),
 
   draftUrl: '',
   destinationDir: initial.destinationDir ?? initial.downloadsDir,

@@ -1,4 +1,5 @@
 import type { DownloadState } from '@shared/types'
+import { useEffect, useRef } from 'react'
 import { HeroBand } from '../components/HeroBand'
 import { ScreenFooter } from '../components/ScreenFooter'
 import { ThroughputChart } from '../components/ThroughputChart'
@@ -21,6 +22,53 @@ export function CompleteScreen({
   const peakSpeedBytesPerSec = useAppStore((store) => store.peakSpeedBytesPerSec)
   const speedHistoryByInterface = useAppStore((store) => store.speedHistoryByInterface)
   const networkVisual = useNetworkVisuals()
+  const destinationDir = useAppStore((store) => store.destinationDir)
+
+  const hasPopped = useRef(false)
+
+  useEffect(() => {
+    if (hasPopped.current) return
+    hasPopped.current = true
+
+    const processNext = (): void => {
+      const nextUrl = useAppStore.getState().popQueuedUrl()
+      if (!nextUrl) return
+
+      window.plexo
+        .probeUrl(nextUrl)
+        .then((result) => {
+          const interfaceIds = useAppStore.getState().interfaces.map((i) => i.id)
+          const multiChunkAllowed = result.supportsRanges && result.totalBytes !== null
+
+          // Remove current download to clear the screen
+          window.plexo
+            .removeDownload(download.id)
+            .then(() => {
+              useAppStore.getState().clearCurrentDownload()
+              window.plexo
+                .startDownload({
+                  url: result.finalUrl,
+                  destinationDir,
+                  suggestedFileName: result.suggestedFileName,
+                  totalBytes: result.totalBytes ?? 0,
+                  supportsRanges: multiChunkAllowed,
+                  interfaceIds: multiChunkAllowed ? interfaceIds : interfaceIds.slice(0, 1),
+                  etag: result.etag,
+                  lastModified: result.lastModified
+                })
+                .catch(console.error)
+            })
+            .catch(console.error)
+        })
+        .catch((err) => {
+          console.error('Failed to probe queued URL:', nextUrl, err)
+          // If probing fails (e.g. invalid URL), skip it and process the next one
+          processNext()
+        })
+    }
+
+    processNext()
+  }, [download.id, destinationDir])
 
   const finalSize = download.totalBytes || download.bytesDownloaded
   const totalPausedMs = download.totalPausedMs ?? 0
