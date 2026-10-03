@@ -1,8 +1,15 @@
 import { request as httpRequest } from 'node:http'
 import { request as httpsRequest } from 'node:https'
+import { isAbsolute } from 'node:path'
 import { URL } from 'node:url'
 import type { ProbeResult } from '../../shared/types'
 import { testKnobs } from '../testKnobs'
+import {
+  describeTorrent,
+  downloadTorrentFile,
+  fetchMagnetMetadata,
+  readTorrentFile
+} from './torrent/metadata'
 
 const MAX_REDIRECTS = 5
 const USER_AGENT = 'Plexo/1.0'
@@ -128,7 +135,20 @@ async function requestFollowingRedirects(
   return { current, response }
 }
 
+/** A link the server says is a torrent, or that is named like one. */
+function isTorrentLink(headers: Headers, url: URL): boolean {
+  const contentType = headerValue(headers, 'content-type') ?? ''
+  return /^application\/x-bittorrent\b/i.test(contentType) || /\.torrent$/i.test(url.pathname)
+}
+
+/** What a link would download: a file over HTTP(S), or a torrent — a magnet link, a link to a
+ * .torrent, or the path of a .torrent on this computer (opened or dropped on the window). */
 export async function probeUrl(rawUrl: string): Promise<ProbeResult> {
+  if (/^magnet:/i.test(rawUrl)) return describeTorrent(await fetchMagnetMetadata(rawUrl), rawUrl)
+  if (isAbsolute(rawUrl) && /\.torrent$/i.test(rawUrl)) {
+    return describeTorrent(await readTorrentFile(rawUrl), rawUrl)
+  }
+
   const { current, response } = await requestFollowingRedirects(rawUrl)
 
   // An empty file can't satisfy a request for its first byte: the server answers 416 and gives
@@ -138,6 +158,7 @@ export async function probeUrl(rawUrl: string): Promise<ProbeResult> {
     /^\s*bytes\s+\*\/0\s*$/i.test(headerValue(response.headers, 'content-range') ?? '')
   ) {
     return {
+      kind: 'http',
       requestedUrl: rawUrl,
       finalUrl: current.toString(),
       supportsRanges: false,
@@ -151,6 +172,11 @@ export async function probeUrl(rawUrl: string): Promise<ProbeResult> {
 
   if (!response || response.statusCode === 0 || response.statusCode >= 400) {
     throw new Error(`Server responded with status ${response?.statusCode || 'unknown'}`)
+  }
+
+  if (isTorrentLink(response.headers, current)) {
+    const finalUrl = current.toString()
+    return describeTorrent(await downloadTorrentFile(finalUrl, PROBE_TIMEOUT_MS), finalUrl)
   }
 
   const contentRange = headerValue(response.headers, 'content-range')
@@ -172,6 +198,7 @@ export async function probeUrl(rawUrl: string): Promise<ProbeResult> {
   }
 
   return {
+    kind: 'http',
     requestedUrl: rawUrl,
     finalUrl: current.toString(),
     supportsRanges,

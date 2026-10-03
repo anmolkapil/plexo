@@ -1,6 +1,9 @@
-import type { BlockState, BlockStatus } from '@shared/types'
+import type { DownloadUnitState, TorrentPieceStatus } from '@shared/types'
+import { cn } from 'cn'
+import { ArrowDown, ArrowUp } from 'lucide-react'
 import { useCallback, useRef, useState } from 'react'
 import type { NetworkVisual } from '../theme'
+import { Tooltip, TooltipContent, TooltipTrigger } from './ui/tooltip'
 import { formatBytes, type NetworkGroup } from '../utils/format'
 
 // The grid is a byte-space map of the file: one square per chunk, running left-to-right,
@@ -23,10 +26,13 @@ const TARGET_CELL_PX = 12
 const CELL_GAP_PX = 3
 const CELL_HEIGHT_PX = 13
 const MIN_COLS = 8
-// Rows visible before the grid starts scrolling.
-const MAX_VISIBLE_ROWS = 6
+// Rows visible before the grid starts scrolling: few enough that the network table below keeps
+// room for its rows at the window's minimum height.
+const MAX_VISIBLE_ROWS = 4
 // Room for the hover outline (1.5px, offset 1) so it isn't clipped against the scroll edges.
 const GRID_INSET_PX = 3
+// Rows drawn beyond the visible ones on each side, so a scroll doesn't show blank rows first.
+const BUFFER_ROWS = 2
 
 // A cell whose bytes can't be traced to a network must not borrow a network's color: the brand
 // amber IS the USB network's color (--color-accent and --color-usb are the same hex), so the old
@@ -42,7 +48,7 @@ interface CellSegment {
 }
 
 interface DisplayCell {
-  status: BlockStatus
+  status: TorrentPieceStatus
   /** The network that delivered the most bytes here — what the cell reads out as, and what
    * colors it when its share is drawn as a single block. */
   interfaceId?: string
@@ -53,6 +59,7 @@ interface DisplayCell {
   fillRatio: number
   totalBytes: number
   bytesDownloaded: number
+  provisionalBytes: number
   /** 1-based chunk number, matching the "Chunk #N" badges in the streams table so a hovered
    * square points back at a specific stream's work. */
   chunkNumber: number
@@ -65,7 +72,11 @@ interface DisplayCell {
  * retry or a pause/resume handed from one network to another would otherwise be repainted in the
  * finishing network's color. `orderedInterfaceIds` fixes the order contributors are listed in, so
  * a square's readout doesn't reshuffle between progress pushes. */
-function describeBlocks(blocks: BlockState[], orderedInterfaceIds: string[]): DisplayCell[] {
+function describeBlocks(
+  blocks: DownloadUnitState[],
+  orderedInterfaceIds: string[],
+  firstIndex = 0
+): DisplayCell[] {
   return blocks.map((block, index) => {
     const totalBytes = block.rangeEnd !== null ? block.rangeEnd - block.rangeStart + 1 : 0
 
@@ -102,10 +113,15 @@ function describeBlocks(blocks: BlockState[], orderedInterfaceIds: string[]): Di
       interfaceId:
         dominantInterfaceId ?? (block.status === 'downloading' ? block.interfaceId : undefined),
       segments,
-      fillRatio: totalBytes > 0 ? block.bytesDownloaded / totalBytes : 0,
+      fillRatio:
+        totalBytes > 0
+          ? (block.bytesDownloaded + (block.kind === 'torrent' ? block.provisionalBytes : 0)) /
+            totalBytes
+          : 0,
       totalBytes,
       bytesDownloaded: block.bytesDownloaded,
-      chunkNumber: index + 1
+      provisionalBytes: block.kind === 'torrent' ? block.provisionalBytes : 0,
+      chunkNumber: firstIndex + index + 1
     }
   })
 }
@@ -138,12 +154,14 @@ function describeContributors(
 }
 
 interface BlockGridProps {
-  blocks?: BlockState[]
+  blocks?: DownloadUnitState[]
   groups: NetworkGroup[]
   visuals: NetworkVisual[]
   knownSize: boolean
   remainingBytes: number
   isPaused?: boolean
+  /** A torrent's grid: its blocks are the torrent's pieces. */
+  pieces?: boolean
 }
 
 export function BlockGrid({
@@ -152,11 +170,21 @@ export function BlockGrid({
   visuals,
   knownSize,
   remainingBytes,
-  isPaused = false
+  isPaused = false,
+  pieces = false
 }: BlockGridProps): React.JSX.Element {
+  const unit = pieces ? 'Piece' : 'Chunk'
   const [gridWidth, setGridWidth] = useState(0)
   const [hoveredIndex, setHoveredIndex] = useState<number | null>(null)
   const observerRef = useRef<ResizeObserver | null>(null)
+  const scrollerRef = useRef<HTMLDivElement | null>(null)
+  // How far the grid is scrolled: which rows are in view, for the way to what's active (below).
+  const [scrollTop, setScrollTop] = useState(0)
+
+  const fittedCols = Math.floor((gridWidth + CELL_GAP_PX) / (TARGET_CELL_PX + CELL_GAP_PX))
+  // Squares keep their size and the grid wraps; how many rows that takes is the file's business,
+  // not the window's. Only the width decides the wrap, exactly like a paragraph reflowing.
+  const cols = Math.min(blocks?.length ?? 0, Math.max(MIN_COLS, fittedCols))
 
   // A callback ref rather than useEffect: the measured node only exists on the grid branch
   // below, so this has to re-observe whenever that node mounts or unmounts.
@@ -178,33 +206,76 @@ export function BlockGrid({
       }
     })
 
-    const fittedCols = Math.floor((gridWidth + CELL_GAP_PX) / (TARGET_CELL_PX + CELL_GAP_PX))
-    // Squares keep their size and the grid wraps; how many rows that takes is the file's business,
-    // not the window's. Only the width decides the wrap, exactly like a paragraph reflowing.
-    const cols = Math.min(blocks.length, Math.max(MIN_COLS, fittedCols))
     const orderedInterfaceIds = groups.map((g) => g.id)
-    const cells = gridWidth > 0 ? describeBlocks(blocks, orderedInterfaceIds) : []
     const chunkBytes =
       blocks[0].rangeEnd !== null ? blocks[0].rangeEnd - blocks[0].rangeStart + 1 : 0
     const rows = Math.ceil(blocks.length / cols)
     const visibleRows = Math.min(rows, MAX_VISIBLE_ROWS)
+    // Only the rows in view (and a few either side) are drawn: a big torrent has hundreds of
+    // thousands of pieces. Padding above and below stands in for the rest, so the scroll height
+    // is the whole file's.
+    const rowStride = CELL_HEIGHT_PX + CELL_GAP_PX
+    const startRow = Math.max(0, Math.floor(scrollTop / rowStride) - BUFFER_ROWS)
+    const endRow = Math.min(rows, Math.floor(scrollTop / rowStride) + visibleRows + BUFFER_ROWS)
+    const firstIndex = startRow * cols
+    const cells =
+      gridWidth > 0
+        ? describeBlocks(blocks.slice(firstIndex, endRow * cols), orderedInterfaceIds, firstIndex)
+        : []
     // Cut the viewport exactly on a row boundary, so a scrollable grid never shows a half-row
     // that could be mistaken for a shorter square.
     const gridMaxHeight =
       visibleRows * CELL_HEIGHT_PX + (visibleRows - 1) * CELL_GAP_PX + GRID_INSET_PX * 2
 
+    // The grid stays where it's scrolled: following the work moved it from under the reader, and
+    // a torrent's work is all over the file. When none of what's in flight is in view, a pill
+    // points the way to the nearest of it, and goes there.
+    const firstInView = Math.round(scrollTop / rowStride)
+    const lastInView = firstInView + visibleRows - 1
+    const activeRows = blocks.flatMap((block, index) =>
+      block.status === 'downloading' ? [Math.floor(index / cols)] : []
+    )
+    const nearestActive =
+      rows <= MAX_VISIBLE_ROWS || activeRows.some((row) => row >= firstInView && row <= lastInView)
+        ? null
+        : activeRows.reduce<number | null>((nearest, row) => {
+            const distance = (r: number): number =>
+              r < firstInView ? firstInView - r : r - lastInView
+            return nearest === null || distance(row) < distance(nearest) ? row : nearest
+          }, null)
+    const goToActive = (): void => {
+      if (nearestActive === null) return
+      const reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches
+      scrollerRef.current?.scrollTo({
+        // A row of what's before it above, for context.
+        top: Math.max(0, nearestActive - 1) * rowStride,
+        behavior: reduce ? 'auto' : 'smooth'
+      })
+    }
+
     // Hovering reads out into the legend line rather than a native `title` tooltip: the grid
     // re-renders on every progress push, which resets Chromium's tooltip timer so it never
     // appears on an active block — and a tooltip advertises nothing to hover in the first place.
-    const hoveredCell = hoveredIndex !== null ? cells[hoveredIndex] : undefined
+    const hoveredCell =
+      hoveredIndex !== null && blocks[hoveredIndex]
+        ? describeBlocks([blocks[hoveredIndex]], orderedInterfaceIds, hoveredIndex)[0]
+        : undefined
     let readout: string
     if (hoveredCell) {
       const where =
         describeContributors(hoveredCell, visualByInterfaceId) ??
-        (hoveredCell.status === 'pending' ? 'queued' : '—')
-      readout = `Chunk #${hoveredCell.chunkNumber} · ${formatBytes(hoveredCell.bytesDownloaded)} / ${formatBytes(hoveredCell.totalBytes)} · ${where}`
+        (hoveredCell.status === 'pending'
+          ? 'queued'
+          : hoveredCell.status === 'skipped'
+            ? 'skipped: in no file chosen'
+            : '—')
+      const provisional =
+        hoveredCell.provisionalBytes > 0
+          ? ` · ${formatBytes(hoveredCell.provisionalBytes)} received, awaiting verification`
+          : ''
+      readout = `${unit} #${hoveredCell.chunkNumber} · ${formatBytes(hoveredCell.bytesDownloaded)} verified${provisional} / ${formatBytes(hoveredCell.totalBytes)} · ${where}`
     } else {
-      readout = `${blocks.length} chunks · ${formatBytes(chunkBytes)} each`
+      readout = `${blocks.length} ${unit.toLowerCase()}s · ${formatBytes(chunkBytes)} each`
     }
 
     return (
@@ -232,99 +303,132 @@ export function BlockGrid({
           )}
         </div>
 
-        <div
-          onMouseLeave={() => setHoveredIndex(null)}
-          style={{
-            maxHeight: gridMaxHeight,
-            // gridMaxHeight is measured including the inset padding, so say so rather than
-            // leaning on the global reset — a content-box here would cut a half-row.
-            boxSizing: 'border-box',
-            overflowY: rows > MAX_VISIBLE_ROWS ? 'auto' : 'visible',
-            // The scrollbar takes width from the grid, and the ResizeObserver sits on the grid
-            // itself rather than this scroller, so the column count already accounts for it.
-            padding: GRID_INSET_PX,
-            margin: -GRID_INSET_PX
-          }}
-        >
+        <div className="relative">
+          {nearestActive !== null && (
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <button
+                    type="button"
+                    onClick={goToActive}
+                    aria-label={`Show the ${unit.toLowerCase()}s in progress`}
+                    className={cn(
+                      'absolute right-4 z-10 flex size-6 cursor-pointer items-center justify-center rounded-full border-[0.5px] border-[var(--border-strong)] bg-card text-[var(--text-secondary)] shadow-[0_2px_8px_rgba(0,0,0,0.18)] hover:text-foreground dark:shadow-[0_2px_8px_rgba(0,0,0,0.55)] focus-visible:outline-2 focus-visible:outline-ring',
+                      nearestActive < firstInView ? '-top-1' : '-bottom-1'
+                    )}
+                  >
+                    {nearestActive < firstInView ? (
+                      <ArrowUp aria-hidden className="size-3.5" />
+                    ) : (
+                      <ArrowDown aria-hidden className="size-3.5" />
+                    )}
+                  </button>
+                }
+              />
+              <TooltipContent>{`Show the ${unit.toLowerCase()}s in progress`}</TooltipContent>
+            </Tooltip>
+          )}
           <div
-            ref={measureGrid}
+            ref={scrollerRef}
+            onScroll={(event) => setScrollTop(event.currentTarget.scrollTop)}
+            onMouseLeave={() => setHoveredIndex(null)}
             style={{
-              display: 'grid',
-              gridTemplateColumns: `repeat(${cols}, minmax(0, 1fr))`,
-              gap: CELL_GAP_PX,
-              width: '100%',
-              minHeight: CELL_HEIGHT_PX
+              maxHeight: gridMaxHeight,
+              // gridMaxHeight is measured including the inset padding, so say so rather than
+              // leaning on the global reset — a content-box here would cut a half-row.
+              boxSizing: 'border-box',
+              overflowY: rows > MAX_VISIBLE_ROWS ? 'auto' : 'visible',
+              // The scrollbar takes width from the grid, and the ResizeObserver sits on the grid
+              // itself rather than this scroller, so the column count already accounts for it.
+              padding: GRID_INSET_PX,
+              margin: -GRID_INSET_PX
             }}
           >
-            {cells.map((cell, index) => {
-              const visual = cell.interfaceId
-                ? visualByInterfaceId.get(cell.interfaceId)
-                : undefined
+            <div
+              ref={measureGrid}
+              style={{
+                display: 'grid',
+                gridTemplateColumns: `repeat(${cols}, minmax(0, 1fr))`,
+                gap: CELL_GAP_PX,
+                width: '100%',
+                minHeight: CELL_HEIGHT_PX,
+                paddingTop: startRow * rowStride,
+                paddingBottom: (rows - endRow) * rowStride
+              }}
+            >
+              {cells.map((cell, slot) => {
+                const index = firstIndex + slot
+                const visual = cell.interfaceId
+                  ? visualByInterfaceId.get(cell.interfaceId)
+                  : undefined
 
-              // Base track uses theme-aware tokens (not hardcoded white-based rgba) so a
-              // mostly-pending bucket stays visible in light theme, not just dark.
-              let background = 'var(--track-bg)'
-              let border = '0.5px solid var(--border-strong)'
-              let boxShadow = 'none'
-              let opacity = 1
-              const fillColor = visual?.solid || UNATTRIBUTED_SOLID
+                // Base track uses theme-aware tokens (not hardcoded white-based rgba) so a
+                // mostly-pending bucket stays visible in light theme, not just dark.
+                let background = 'var(--track-bg)'
+                let border = '0.5px solid var(--border-strong)'
+                let boxShadow = 'none'
+                let opacity = 1
+                const fillColor = visual?.solid || UNATTRIBUTED_SOLID
 
-              if (cell.status === 'downloading') {
-                background = visual?.bg || UNATTRIBUTED_BG
-                border = `1px solid ${visual?.solid || UNATTRIBUTED_SOLID}`
-                boxShadow = isPaused ? 'none' : `0 0 7px ${visual?.solid || UNATTRIBUTED_SOLID}`
-                opacity = isPaused ? 0.6 : 1
-              } else if (cell.status === 'completed') {
-                border = 'none'
-                opacity = 0.92
-              }
+                if (cell.status === 'downloading') {
+                  background = visual?.bg || UNATTRIBUTED_BG
+                  border = `1px solid ${visual?.solid || UNATTRIBUTED_SOLID}`
+                  boxShadow = isPaused ? 'none' : `0 0 7px ${visual?.solid || UNATTRIBUTED_SOLID}`
+                  opacity = isPaused ? 0.6 : 1
+                } else if (cell.status === 'completed') {
+                  border = 'none'
+                  opacity = 0.92
+                } else if (cell.status === 'skipped') {
+                  // None of the files chosen needs it: there, but not this download's.
+                  border = '0.5px dashed var(--border-strong)'
+                  opacity = 0.3
+                }
 
-              const rawFillPercent = Math.min(1, Math.max(0, cell.fillRatio)) * 100
-              // A square is only ~12px wide, so the first bytes of a chunk round to nothing —
-              // floor a started chunk to a visible sliver rather than 0 width.
-              const fillPercent = rawFillPercent > 0 ? Math.max(6, Math.round(rawFillPercent)) : 0
+                const rawFillPercent = Math.min(1, Math.max(0, cell.fillRatio)) * 100
+                // A square is only ~12px wide, so the first bytes of a chunk round to nothing —
+                // floor a started chunk to a visible sliver rather than 0 width.
+                const fillPercent = rawFillPercent > 0 ? Math.max(6, Math.round(rawFillPercent)) : 0
 
-              return (
-                <div
-                  key={index}
-                  onMouseEnter={() => setHoveredIndex(index)}
-                  style={{
-                    position: 'relative',
-                    height: CELL_HEIGHT_PX,
-                    borderRadius: 2.5,
-                    background,
-                    border,
-                    boxShadow,
-                    opacity,
-                    outline: hoveredIndex === index ? '1.5px solid var(--text-secondary)' : 'none',
-                    outlineOffset: 1,
-                    overflow: 'hidden',
-                    transition: 'opacity 0.3s, box-shadow 0.15s',
-                    // A multi-GB file can mean thousands of cells; skip layout/paint work for the
-                    // ones scrolled out of view (MAX_VISIBLE_ROWS caps what's visible, not what's
-                    // rendered) rather than hand-rolling a virtualized list for a fixed-size grid.
-                    contentVisibility: 'auto',
-                    containIntrinsicSize: `${TARGET_CELL_PX}px ${CELL_HEIGHT_PX}px`
-                  }}
-                >
-                  {/* One square, one color: the network that actually delivered most of this
+                return (
+                  <div
+                    key={index}
+                    onMouseEnter={() => setHoveredIndex(index)}
+                    style={{
+                      position: 'relative',
+                      height: CELL_HEIGHT_PX,
+                      borderRadius: 2.5,
+                      background,
+                      border,
+                      boxShadow,
+                      opacity,
+                      outline:
+                        hoveredIndex === index ? '1.5px solid var(--text-secondary)' : 'none',
+                      outlineOffset: 1,
+                      overflow: 'hidden',
+                      transition: 'opacity 0.3s, box-shadow 0.15s'
+                    }}
+                  >
+                    {/* One square, one color: the network that actually delivered most of this
                     square's bytes. The full per-network breakdown is still exact underneath —
                     hovering reads it out — but the grid itself stays a glanceable map of which
                     network owns which stretch of the file rather than a stack of gradients. */}
-                  {fillPercent > 0 && (
-                    <div
-                      style={{
-                        position: 'absolute',
-                        inset: 0,
-                        width: `${fillPercent}%`,
-                        background: fillColor,
-                        transition: 'width 0.15s, background 0.15s'
-                      }}
-                    />
-                  )}
-                </div>
-              )
-            })}
+                    {fillPercent > 0 && (
+                      <div
+                        style={{
+                          position: 'absolute',
+                          inset: 0,
+                          width: `${fillPercent}%`,
+                          background: fillColor,
+                          opacity:
+                            cell.provisionalBytes > 0 && cell.bytesDownloaded === 0 ? 0.55 : 1,
+                          transition: 'width 0.15s, background 0.15s'
+                        }}
+                      />
+                    )}
+                  </div>
+                )
+              })}
+            </div>
           </div>
         </div>
       </div>

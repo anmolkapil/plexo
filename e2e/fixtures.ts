@@ -1,25 +1,44 @@
 import type {} from '../src/preload/globals'
 import { execFile } from 'node:child_process'
 import { existsSync } from 'node:fs'
-import { mkdir, mkdtemp, readdir, readFile, realpath, rm } from 'node:fs/promises'
+import { mkdir, mkdtemp, readdir, readFile, realpath, rm, stat } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join, resolve } from 'node:path'
+import { join, relative, resolve, sep } from 'node:path'
 import { promisify } from 'node:util'
 import {
   _electron as electron,
   expect,
   test as base,
   type ElectronApplication,
+  type Locator,
   type Page
 } from '@playwright/test'
 import type { IpcContract } from '../src/shared/ipc-contract'
 import { applyDownloadUpdate } from '../src/shared/downloadUpdate'
-import type { DownloadState, DownloadStatus, DownloadUpdate } from '../src/shared/types'
+import type {
+  DownloadState,
+  DownloadStatus,
+  DownloadUpdate,
+  HttpDownloadState,
+  TorrentDownloadState
+} from '../src/shared/types'
 import { Origin, sha256, type OriginOptions } from './origin'
 
 export { expect }
 
-const PROJECT_ROOT = resolve(__dirname, '..')
+export function expectHttp(state: DownloadState): HttpDownloadState {
+  expect(state.kind).toBe('http')
+  if (state.kind !== 'http') throw new Error('Expected an HTTP download')
+  return state
+}
+
+export function expectTorrent(state: DownloadState): TorrentDownloadState {
+  expect(state.kind).toBe('torrent')
+  if (state.kind !== 'torrent') throw new Error('Expected a torrent download')
+  return state
+}
+
+export const PROJECT_ROOT = resolve(__dirname, '..')
 
 /** Small blocks so a ~1 MB test file still splits into many of them. */
 export const BLOCK = 64 * 1024
@@ -54,6 +73,8 @@ interface StartOptions {
   streamsPerNetwork?: number
   fileName?: string
   destinationDir?: string
+  /** For a torrent: the files to download, by index. */
+  selectedFiles?: number[]
 }
 
 interface Tracked {
@@ -84,13 +105,14 @@ export class PlexoApp {
     private extraEnv: Record<string, string> = {}
   ) {}
 
-  async launch(extraEnv: Record<string, string> = {}): Promise<this> {
+  /** `args` follow the app on its command line, as a link the OS hands over would. */
+  async launch(extraEnv: Record<string, string> = {}, args: string[] = []): Promise<this> {
     Object.assign(this.extraEnv, extraEnv)
     let retries = 5
     while (true) {
       try {
         this.electronApp = await electron.launch({
-          args: [PROJECT_ROOT, ...(process.platform === 'linux' ? ['--no-sandbox'] : [])],
+          args: [PROJECT_ROOT, ...args, ...(process.platform === 'linux' ? ['--no-sandbox'] : [])],
           env: {
             ...(process.env as Record<string, string>),
             PLEXO_USER_DATA: this.dirs.userData,
@@ -106,6 +128,8 @@ export class PlexoApp {
             // Fixed for the same reason, and for downloads started through the UI.
             PLEXO_E2E_STREAMS: '2',
             PLEXO_E2E_INTERFACES: interfacesEnv(NETWORKS),
+            // Torrent tests find their peers from the link itself; a run never joins the real DHT.
+            PLEXO_E2E_DHT: '0',
             ...this.extraEnv
           }
         })
@@ -129,11 +153,16 @@ export class PlexoApp {
     const updates: DownloadUpdate[] = []
     this.sessions.push(session)
     this.updates.push(updates)
-    // Kept whole, the way the window puts them together.
+    // Kept whole, the way the window puts them together: each download from its own last state.
+    const latest = new Map<string, DownloadState>()
     await this.page.exposeFunction('__plexoRecord', (update: DownloadUpdate) => {
       updates.push(update)
-      const state = applyDownloadUpdate(session.at(-1) ?? null, update)
-      if (state && state !== session.at(-1)) session.push(state)
+      const previous = latest.get(update.state.id) ?? null
+      const state = applyDownloadUpdate(previous, update)
+      if (state && state !== previous) {
+        latest.set(state.id, state)
+        session.push(state)
+      }
     })
     await this.page.evaluate(() => {
       const w = window as unknown as { __plexoRecord: (s: unknown) => void }
@@ -201,7 +230,7 @@ export class PlexoApp {
     const destinationDir = options.destinationDir ?? this.dirs.dest
     const destBefore = existsSync(destinationDir) ? await readdir(destinationDir) : []
 
-    const id = await this.api.startDownload({
+    const common = {
       url: probe.finalUrl,
       destinationDir,
       suggestedFileName: options.fileName ?? probe.suggestedFileName,
@@ -209,9 +238,18 @@ export class PlexoApp {
       supportsRanges: multiChunk,
       interfaceIds: multiChunk ? networks : networks.slice(0, 1),
       etag: probe.etag,
-      lastModified: probe.lastModified,
-      streamsPerNetwork: options.streamsPerNetwork
-    })
+      lastModified: probe.lastModified
+    }
+    const id = await this.api.startDownload(
+      probe.kind === 'torrent'
+        ? {
+            ...common,
+            kind: 'torrent',
+            infoHash: probe.torrent.infoHash,
+            selectedFiles: options.selectedFiles
+          }
+        : { ...common, kind: 'http', streamsPerNetwork: options.streamsPerNetwork }
+    )
     this.tracked.set(id, { expectedSha, destBefore, destinationDir })
     return id
   }
@@ -228,9 +266,41 @@ export class PlexoApp {
 
   nextDownload: Tracked | null = null
 
+  /** Opens New download as its button does, and gives its link field. */
+  async newDownload(): Promise<Locator> {
+    const link = this.page.getByRole('textbox', { name: 'Link' })
+    if (!(await link.isVisible())) {
+      await this.page.getByRole('button', { name: 'New download' }).first().click()
+    }
+    return link
+  }
+
+  /** Every download, running or finished, oldest first. A finished one comes from history, so it
+   * has no work units left. */
+  async all(): Promise<DownloadState[]> {
+    const running = (await this.api.listDownloads()).map((snapshot) =>
+      applyDownloadUpdate(null, snapshot)!
+    )
+    // As the window was last sent it, when this launch saw it finish: blocks and all.
+    const seen = this.sessions.at(-1) ?? []
+    const finished = (await this.api.listHistory()).map((entry): DownloadState => {
+      const last = seen.findLast((state) => state.id === entry.id)
+      if (last?.status === 'completed') return last
+      return entry.kind === 'http'
+        ? { ...entry, blocks: [], streams: [] }
+        : { ...entry, pieces: [], peers: [] }
+    })
+    return [...running, ...finished].sort((a, b) => a.startedAt - b.startedAt)
+  }
+
+  /** The download started last. */
   async current(): Promise<DownloadState | null> {
-    const snapshot = await this.api.getCurrentDownload()
-    return snapshot && applyDownloadUpdate(null, snapshot)
+    return (await this.all()).at(-1) ?? null
+  }
+
+  /** One download by id, wherever it is. */
+  async byId(id: string): Promise<DownloadState | null> {
+    return (await this.all()).find((state) => state.id === id) ?? null
   }
 
   async waitForStatus(
@@ -239,6 +309,30 @@ export class PlexoApp {
   ): Promise<DownloadState> {
     const wanted = Array.isArray(status) ? status : [status]
     return this.waitUntil((state) => wanted.includes(state.status), timeout)
+  }
+
+  async waitForHttpStatus(
+    status: DownloadStatus | DownloadStatus[],
+    timeout = 20_000
+  ): Promise<HttpDownloadState> {
+    return expectHttp(await this.waitForStatus(status, timeout))
+  }
+
+  async waitForTorrentStatus(
+    status: DownloadStatus | DownloadStatus[],
+    timeout = 20_000
+  ): Promise<TorrentDownloadState> {
+    return expectTorrent(await this.waitForStatus(status, timeout))
+  }
+
+  async currentHttp(): Promise<HttpDownloadState | null> {
+    const state = await this.current()
+    return state ? expectHttp(state) : null
+  }
+
+  async currentTorrent(): Promise<TorrentDownloadState | null> {
+    const state = await this.current()
+    return state ? expectTorrent(state) : null
   }
 
   /** Waits until the download state matches `predicate`. A timeout says what the state was
@@ -257,11 +351,15 @@ export class PlexoApp {
     const networks = state?.networks.map(
       (network) => `${network.id}:${network.status}${network.error ? ` (${network.error})` : ''}`
     )
-    const chunks = state?.chunks.map((chunk) => `${chunk.interfaceId}:${chunk.status}`)
+    const connections = state
+      ? (state.kind === 'http' ? state.streams : state.peers).map(
+          (connection) => `${connection.interfaceId}:${connection.status}`
+        )
+      : undefined
     throw new Error(
       `Timed out after ${timeout} ms waiting on the download. Last seen: ${
         state
-          ? `status=${state.status}${state.error ? `, error="${state.error}"` : ''}, bytes=${state.bytesDownloaded}/${state.totalBytes}, networks=[${networks?.join(', ')}], chunks=[${chunks?.join(', ')}]`
+          ? `status=${state.status}${state.error ? `, error="${state.error}"` : ''}, bytes=${state.bytesDownloaded}/${state.totalBytes}, networks=[${networks?.join(', ')}], connections=[${connections?.join(', ')}]`
           : 'no current download'
       }`
     )
@@ -271,11 +369,13 @@ export class PlexoApp {
 // --- invariants --------------------------------------------------------------------------------
 
 const ALLOWED_NEXT: Record<DownloadStatus, DownloadStatus[]> = {
+  queued: ['queued', 'downloading', 'paused', 'cancelled'],
   downloading: ['downloading', 'paused', 'completed', 'error', 'cancelled'],
-  paused: ['paused', 'downloading', 'error', 'cancelled'],
+  // Resumed: at once, or into the queue when it's full.
+  paused: ['paused', 'downloading', 'queued', 'error', 'cancelled'],
   completed: ['completed'],
-  // Resumed.
-  error: ['error', 'downloading'],
+  // Resumed, or removed by the user.
+  error: ['error', 'downloading', 'queued', 'cancelled'],
   cancelled: ['cancelled']
 }
 
@@ -290,46 +390,69 @@ export function checkEvents(sessions: DownloadState[][]): void {
           state.totalBytes
         )
       }
+      const units = state.kind === 'http' ? state.blocks : state.pieces
       expect(
-        state.blocks?.every((block, index) => block?.index === index),
-        `${label}: every block is there, in order`
+        units.every((unit, index) => unit.index === index),
+        `${label}: every work unit is there, in order`
       ).toBe(true)
-      expect(state.blocks?.length, `${label}: as many blocks as planned`).toBe(state.totalBlocks)
-      for (const block of state.blocks ?? []) {
-        const attributed = Object.values(block.bytesByInterface).reduce((a, b) => a + b, 0)
-        expect(attributed, `${label}: block ${block.index} attribution sums to its bytes`).toBe(
-          block.bytesDownloaded
+      expect(units.length, `${label}: as many work units as planned`).toBe(
+        state.kind === 'http' ? state.totalBlocks : state.totalPieces
+      )
+      for (const unit of units) {
+        const attributed = Object.values(unit.bytesByInterface).reduce((a, b) => a + b, 0)
+        expect(attributed, `${label}: unit ${unit.index} attribution sums to its bytes`).toBe(
+          unit.bytesDownloaded
         )
-        if (block.rangeEnd !== null) {
-          const size = block.rangeEnd - block.rangeStart + 1
+        if (unit.rangeEnd !== null) {
+          const size = unit.rangeEnd - unit.rangeStart + 1
           expect(
-            block.bytesDownloaded,
-            `${label}: block ${block.index} within its size`
+            unit.bytesDownloaded,
+            `${label}: unit ${unit.index} within its size`
           ).toBeLessThanOrEqual(size)
-          if (block.status === 'completed') {
-            expect(block.bytesDownloaded, `${label}: completed block ${block.index} is full`).toBe(
+          if (unit.status === 'completed') {
+            expect(unit.bytesDownloaded, `${label}: completed unit ${unit.index} is full`).toBe(
               size
             )
           }
         }
+        if (unit.kind === 'torrent') {
+          expect(unit.provisionalBytes).toBeGreaterThanOrEqual(0)
+          expect(unit.provisionalBytes).toBeLessThanOrEqual(
+            unit.rangeEnd === null ? 0 : unit.rangeEnd - unit.rangeStart + 1
+          )
+        }
       }
-      if (state.status === 'downloading') {
+      if (state.kind === 'torrent') {
+        // Peers are connections, not piece owners. Each belongs to one known network and exposes
+        // only transfer telemetry; verified progress belongs to pieces above.
+        for (const peer of state.peers) {
+          expect(
+            state.networks.map((network) => network.id),
+            `${label}: peer ${peer.id} is on a network of this download`
+          ).toContain(peer.interfaceId)
+          expect(['connected', 'receiving']).toContain(peer.status)
+        }
+        const uploaded = state.networks.reduce((sum, network) => sum + network.bytesUploaded, 0)
+        expect(uploaded, `${label}: the networks' uploads add up to the download's`).toBe(
+          state.bytesUploaded
+        )
+      } else if (state.status === 'downloading') {
         // A stream holds a block exactly while it is fetching it. A block has at most one stream
         // fetching it for real and two racing it as hedges, and is in flight whenever the first
         // is there. What the stream rows show is only as true as this.
         const primaries = new Map<number, number>()
         const hedges = new Map<number, number>()
-        for (const chunk of state.chunks) {
-          const holding = chunk.currentBlockIndex !== undefined
-          expect(holding, `${label}: stream ${chunk.id} (${chunk.status}) holds a block`).toBe(
-            chunk.status === 'downloading'
+        for (const stream of state.streams) {
+          const holding = stream.currentBlockIndex !== undefined
+          expect(holding, `${label}: stream ${stream.id} (${stream.status}) holds a block`).toBe(
+            stream.status === 'downloading'
           )
-          if (chunk.currentBlockIndex === undefined) {
-            expect(chunk.hedge, `${label}: idle stream ${chunk.id} is not racing`).toBeFalsy()
+          if (stream.currentBlockIndex === undefined) {
+            expect(stream.hedge, `${label}: idle stream ${stream.id} is not racing`).toBeFalsy()
             continue
           }
-          const tally = chunk.hedge ? hedges : primaries
-          tally.set(chunk.currentBlockIndex, (tally.get(chunk.currentBlockIndex) ?? 0) + 1)
+          const tally = stream.hedge ? hedges : primaries
+          tally.set(stream.currentBlockIndex, (tally.get(stream.currentBlockIndex) ?? 0) + 1)
         }
         for (const [index, count] of primaries) {
           expect(count, `${label}: block ${index} has one stream fetching it`).toBe(1)
@@ -338,7 +461,7 @@ export function checkEvents(sessions: DownloadState[][]): void {
           expect(count, `${label}: block ${index} has at most two hedges`).toBeLessThanOrEqual(2)
         }
         for (const index of primaries.keys()) {
-          expect(state.blocks?.[index]?.status, `${label}: held block ${index} is in flight`).toBe(
+          expect(state.blocks[index]?.status, `${label}: held block ${index} is in flight`).toBe(
             'downloading'
           )
         }
@@ -352,6 +475,31 @@ export function checkEvents(sessions: DownloadState[][]): void {
       lastStatus.set(state.id, state.status)
     }
   }
+}
+
+/** A folder's files as one hash: each file's path (relative, with `/`) and the SHA-256 of its
+ * bytes, in path order. What a multi-file torrent's download is checked against. */
+export function treeSha(files: { path: string; data: Buffer }[]): string {
+  const lines = files
+    .map((file) => `${file.path}\0${sha256(file.data)}\n`)
+    .sort()
+    .join('')
+  return sha256(Buffer.from(lines))
+}
+
+/** sha256 of a file, or treeSha of a folder. */
+export async function shaOfPath(path: string): Promise<string> {
+  if (!(await stat(path)).isDirectory()) return sha256(await readFile(path))
+  const entries = await readdir(path, { recursive: true, withFileTypes: true })
+  const files = await Promise.all(
+    entries
+      .filter((entry) => entry.isFile())
+      .map(async (entry) => {
+        const full = join(entry.parentPath, entry.name)
+        return { path: relative(path, full).split(sep).join('/'), data: await readFile(full) }
+      })
+  )
+  return treeSha(files)
 }
 
 async function openFilesUnder(pid: number, roots: string[]): Promise<string[]> {
@@ -372,36 +520,51 @@ async function openFilesUnder(pid: number, roots: string[]): Promise<string[]> {
  * exactly right. The one that matters most: `completed` never means wrong bytes.
  */
 export async function checkFinalState(app: PlexoApp): Promise<void> {
-  const state = await app.current()
-  if (!state) return
-  const tracked = app.tracked.get(state.id) ?? app.nextDownload
-  const terminal = ['completed', 'error', 'cancelled'].includes(state.status)
-  if (!tracked || !terminal) return
-  // A failed download keeps its progress to be resumed until the user moves on, as the window's
-  // New Download does: after that, nothing may be left.
-  if (state.status === 'error') await app.api.removeDownload(state.id)
+  const states = await app.all()
+  const latest = states.at(-1)
+  const checked = states.flatMap((state) => {
+    const tracked = app.tracked.get(state.id) ?? (state === latest ? app.nextDownload : null)
+    return tracked ? [{ state, tracked }] : []
+  })
+  // Any still under way: there's no final state to check yet.
+  const terminal = (status: DownloadStatus): boolean =>
+    ['completed', 'error', 'cancelled'].includes(status)
+  if (checked.length === 0 || !checked.every(({ state }) => terminal(state.status))) return
 
-  if (state.status === 'completed') {
-    const bytes = await readFile(state.destinationPath)
-    expect(sha256(bytes), 'completed file matches the source byte for byte').toBe(
-      tracked.expectedSha
-    )
-  } else {
-    expect(existsSync(state.destinationPath), 'no file left at the destination').toBe(false)
+  for (const { state, tracked } of checked) {
+    // A failed download keeps its progress to be resumed until the user moves on, as the
+    // window's New Download does: after that, nothing may be left.
+    if (state.status === 'error') await app.api.removeDownload(state.id)
+
+    if (state.status === 'completed') {
+      expect(await shaOfPath(state.destinationPath), 'completed download matches its source').toBe(
+        tracked.expectedSha
+      )
+    } else {
+      expect(existsSync(state.destinationPath), 'no file left at the destination').toBe(false)
+    }
+
+    const stagingPath = `${state.destinationPath}.plexo`
+    await expect
+      .poll(() => existsSync(stagingPath), { message: 'staging file cleaned up', timeout: 5000 })
+      .toBe(false)
   }
 
-  const destAfter = existsSync(tracked.destinationDir) ? await readdir(tracked.destinationDir) : []
-  const added = destAfter.filter((name) => !tracked.destBefore.includes(name))
-  const expectedAdded =
-    state.status === 'completed' ? [state.destinationPath.split(/[\\/]/).pop()] : []
-  expect(added, 'no stray files (placeholders, partials) in the destination folder').toEqual(
-    expectedAdded
-  )
-
-  const stagingPath = `${state.destinationPath}.plexo`
-  await expect
-    .poll(() => existsSync(stagingPath), { message: 'staging file cleaned up', timeout: 5000 })
-    .toBe(false)
+  // Each folder gains exactly the downloads that completed into it, and nothing else.
+  for (const destinationDir of new Set(checked.map(({ tracked }) => tracked.destinationDir))) {
+    const into = checked.filter(({ tracked }) => tracked.destinationDir === destinationDir)
+    // As the folder was before the first of them started (later ones saw the earlier ones' files).
+    const before = new Set(into[0].tracked.destBefore)
+    const destAfter = existsSync(destinationDir) ? await readdir(destinationDir) : []
+    const added = destAfter.filter((name) => !before.has(name)).sort()
+    const expectedAdded = into
+      .filter(({ state }) => state.status === 'completed')
+      .map(({ state }) => state.destinationPath.split(/[\\/]/).pop())
+      .sort()
+    expect(added, 'no stray files (placeholders, partials) in the destination folder').toEqual(
+      expectedAdded
+    )
+  }
 
   const pid = app.electronApp.process().pid
   if (pid) {

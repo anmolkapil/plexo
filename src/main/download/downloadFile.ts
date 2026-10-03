@@ -98,4 +98,10 @@ export class DownloadFile {
   async discard(): Promise<void> {
     await rm(this.path, { force: true })
   }
+
+  /** Clears what's left once the download is published (or was found to be). A file published by
+   * rename leaves nothing, bar the partial of a publish interrupted after it. */
+  async discardLeftover(): Promise<void> {
+    await this.discard()
+  }
 }

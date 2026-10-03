@@ -1,28 +1,34 @@
-import type { DownloadState } from '@shared/types'
+import type { DownloadState, FinishedDownload } from '@shared/types'
 import { HeroBand } from '../components/HeroBand'
-import { ScreenFooter } from '../components/ScreenFooter'
+import { DetailHeader } from '../components/DetailHeader'
 import { ThroughputChart } from '../components/ThroughputChart'
 import { Button } from '../components/ui/button'
 import { useNetworkVisuals } from '../hooks/useNetworkVisuals'
 import { useAppStore } from '../store/useAppStore'
-import { dirnameOf, formatBytes, formatDuration, formatSpeed, toDisplayPath } from '../utils/format'
+import {
+  describeFileCount,
+  dirnameOf,
+  formatBytes,
+  formatDuration,
+  formatSpeed,
+  toDisplayPath,
+  wantedBytes
+} from '../utils/format'
 
 const sectionHeaderClass =
   'font-mono text-[10px] leading-none tracking-[0.16em] text-muted-foreground uppercase'
 
 export function CompleteScreen({
-  download,
-  onNewDownload
+  download
 }: {
-  download: DownloadState
-  onNewDownload: () => void
+  /** Just finished, or as history keeps it. */
+  download: DownloadState | FinishedDownload
 }): React.JSX.Element {
   const homeDir = useAppStore((store) => store.homeDir)
-  const peakSpeedBytesPerSec = useAppStore((store) => store.peakSpeedBytesPerSec)
-  const speedHistoryByInterface = useAppStore((store) => store.speedHistoryByInterface)
   const networkVisual = useNetworkVisuals()
+  const missing = 'missing' in download && download.missing === true
 
-  const finalSize = download.totalBytes || download.bytesDownloaded
+  const finalSize = wantedBytes(download) || download.bytesDownloaded
   const totalPausedMs = download.totalPausedMs ?? 0
   // completedAt is always set by the time a download reaches 'completed' — the
   // fallback here is just to keep this pure (no Date.now() during render).
@@ -38,13 +44,26 @@ export function CompleteScreen({
   const visuals = groups.map((group) => networkVisual(group.id, group.kind, group.label))
   const totalWeight = groups.reduce((sum, group) => sum + group.bytesDownloaded, 0) || 1
   const totalRetries = download.networks.reduce((sum, network) => sum + network.retries, 0)
-  // "Chunks" in the block grid means byte ranges, not parallel connections.
-  const totalChunkCount = download.totalBlocks ?? download.blocks?.length ?? 1
+  const isTorrent = download.kind === 'torrent'
+  // "Chunks" in the block grid means byte ranges, not parallel connections. A torrent's are its
+  // pieces, those its chosen files needed.
+  const totalChunkCount =
+    'unitsWritten' in download
+      ? download.unitsWritten
+      : download.kind === 'torrent'
+        ? download.pieces.filter((piece) => piece.status !== 'skipped').length
+        : download.totalBlocks
+  const files = isTorrent && download.files.total > 1 ? download.files : null
 
   const handleReveal = (): void => void window.plexo.revealInFolder(download.destinationPath)
 
   return (
     <div className="flex h-full flex-col bg-background">
+      <DetailHeader download={download}>
+        <Button type="button" onClick={handleReveal} disabled={missing}>
+          {window.plexo.platform === 'darwin' ? 'Show in Finder' : 'Show in folder'}
+        </Button>
+      </DetailHeader>
       <div role="status" className="sr-only">
         Download complete: {download.fileName}
       </div>
@@ -67,8 +86,11 @@ export function CompleteScreen({
               {download.fileName}
             </div>
             <div className="mt-[5px] truncate font-mono text-[11.5px] leading-[1.3] text-muted-foreground">
+              {files && `${describeFileCount(files.chosen, files.total)} · `}
               {formatBytes(finalSize)} ·{' '}
-              {toDisplayPath(dirnameOf(download.destinationPath), homeDir)}
+              {missing
+                ? 'moved or deleted since'
+                : toDisplayPath(dirnameOf(download.destinationPath), homeDir)}
             </div>
           </div>
           <div className="flex flex-col items-end gap-[5px]">
@@ -91,10 +113,19 @@ export function CompleteScreen({
         {[
           { label: 'Size', value: formatBytes(finalSize) },
           { label: 'Time', value: formatDuration(elapsedSeconds) },
-          { label: 'Peak', value: formatSpeed(peakSpeedBytesPerSec) },
+          {
+            label: 'Peak',
+            value:
+              download.peakSpeedBytesPerSec === undefined
+                ? '—'
+                : formatSpeed(download.peakSpeedBytesPerSec)
+          },
           { label: 'Networks', value: String(groups.length) },
           // The most it ran at once: streams that didn't make it faster were closed along the way.
-          { label: 'Streams', value: String(download.peakStreams ?? download.chunks.length) }
+          {
+            label: isTorrent ? 'Peers' : 'Streams',
+            value: String(isTorrent ? download.peakPeers : download.peakStreams)
+          }
         ].map((stat, index) => (
           <div
             key={stat.label}
@@ -116,7 +147,7 @@ export function CompleteScreen({
         <h2 className={sectionHeaderClass}>Speed over the download</h2>
         <ThroughputChart
           order={groups.map((g, i) => ({ interfaceId: g.id, solid: visuals[i].solid }))}
-          historyByInterface={speedHistoryByInterface}
+          historyByInterface={download.speedHistory ?? {}}
         />
       </div>
 
@@ -148,22 +179,17 @@ export function CompleteScreen({
             </div>
           ))}
         </div>
-      </div>
-
-      <ScreenFooter>
-        <div className="shrink-0 font-mono text-[11px] leading-[1.4] whitespace-nowrap text-muted-foreground">
-          {`written in ${totalChunkCount} chunks · ${totalRetries} ${
-            totalRetries === 1 ? 'retry' : 'retries'
-          }`}
+        <div className="mt-auto pt-3 font-mono text-[11px] leading-[1.4] text-muted-foreground">
+          {[
+            `written in ${totalChunkCount} ${isTorrent ? 'pieces' : 'chunks'}`,
+            // What its peers got from it while it downloaded.
+            isTorrent && `uploaded ${formatBytes(download.bytesUploaded ?? 0)}`,
+            `${totalRetries} ${totalRetries === 1 ? 'retry' : 'retries'}`
+          ]
+            .filter(Boolean)
+            .join(' · ')}
         </div>
-        <div className="flex-1" />
-        <Button type="button" variant="secondary" onClick={onNewDownload}>
-          New Download
-        </Button>
-        <Button type="button" onClick={handleReveal}>
-          {window.plexo.platform === 'darwin' ? 'Reveal in Finder' : 'Show in folder'}
-        </Button>
-      </ScreenFooter>
+      </div>
     </div>
   )
 }

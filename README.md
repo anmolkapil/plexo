@@ -11,7 +11,7 @@ For example, if your computer has:
 - USB-tethered phone (iPhone or Android)
 - Cellular
 
-Plexo can utilize all of them simultaneously to download the **same file**.
+Plexo can use them together to download the **same file**. It supports direct download links, magnet links, and `.torrent` links or files.
 
 https://github.com/user-attachments/assets/e57728f4-fb63-441f-839c-174eef954b17
 
@@ -67,7 +67,14 @@ File ──→ Split ─────┤                                  ├─�
 
 ## Features
 
-- 🚀 **Multi-interface, multi-connection downloads** — splits files into chunks of up to 8 MB and fans them out across worker connections bound to specific network interfaces, each kept open from one chunk to the next. Each interface starts with 8 connections and doubles once they are all receiving, up to 32. If the server refuses some (503, 429, 403, or leaves them unanswered), that interface drops to the ones it accepted, then gets one more back each minute without a refusal; a server refusing everything (busy, or an expired link) doesn't lower it. You can also pick a fixed 4, 8, 16 or 32 per interface on the start screen instead of Auto.
+- **Torrents** — open magnet links, `.torrent` links, or local `.torrent` files. Choose files before downloading and see peers, pieces, download speed, and upload speed across networks.
+- **Download queue** — run two downloads at once by default, or choose between one and eight. Waiting downloads start automatically when a slot opens.
+- **Downloads list and history** — browse Downloading, Queued, Paused, Needs attention, and Finished groups. Filter the list and keep finished history across restarts.
+- **Selection actions** — pause, resume, retry, cancel, remove finished entries from the list, or move finished files to Trash. Each action applies only to eligible selected downloads.
+- **Speed and data limits** — set a total download speed, use slow mode, and set speed or daily, weekly, or monthly data limits for individual networks. Limits apply to direct downloads and torrents.
+- **Usage controls** — reset a network’s usage for its selected period, or remove its speed and data limits while keeping recorded usage.
+- **Fix expired links** — paste a new link to the same file and continue from the saved progress when the file still matches.
+- 🚀 **Multi-interface, multi-connection downloads** — splits files into chunks of up to 8 MB and fans them out across worker connections bound to specific network interfaces, each kept open from one chunk to the next. Each interface starts with 8 connections and doubles once they are all receiving, up to 32. If the server refuses some (503, 429, 403, or leaves them unanswered), that interface drops to the ones it accepted, then gets one more back each minute without a refusal; a server refusing everything (busy, or an expired link) doesn't lower it. You can also pick a fixed 4, 8, 16 or 32 per interface in the download’s details instead of Auto.
 - 🔌 **Hardware interface detection** — queries Windows adapters via PowerShell `Get-NetAdapter` and macOS hardware ports via `networksetup` so Wi-Fi, Ethernet, tethered iPhones, and Thunderbolt bridges are labeled by real device names instead of bare BSD names (`en0`, `en6`).
 - ⚖️ **Dynamic work-stealing queue** — chunks are leased from a shared pending queue; faster networks pull more chunks instead of waiting for slower connections to finish.
 - ⏸️ **Resumable downloads** — cleanly pause and resume downloads with progress saved in a destination-side staging file.
@@ -86,7 +93,36 @@ File ──→ Split ─────┤                                  ├─�
 
 ---
 
-# How it works
+## Managing downloads
+
+Use the header dropdown to filter **All downloads**, **In progress**, **Finished**, or **Needs attention**. In progress includes downloading, queued, and paused items. Click a filename or its chevron to open detailed progress.
+
+Select downloads using their checkboxes. **Select all** selects the current filtered list. The header shows available actions and how many selected downloads each action applies to:
+
+- **Pause** for downloading or queued items; **Resume** for paused items.
+- **Retry** for recoverable failures. Expired links use **Fix link** individually; downloads that cannot resume use **Download again**.
+- **Remove from list** for finished downloads. Their files stay on your computer. **Clear finished list** removes finished history without touching files.
+- **Cancel downloads…** stops unfinished downloads and deletes their partial data after confirmation.
+- **Move files to Trash…** moves finished files to Trash (Recycle Bin on Windows) after confirmation. For torrents, Plexo removes only the files it downloaded and preserves unrelated files added to the folder. Missing files can still be removed from the list. Older torrent history without a file record must be managed in your file browser.
+
+## Speed and data limits
+
+Open **Speed & data limits…** from the networks menu. Settings apply immediately; **Done** closes the modal.
+
+Under **All downloads**, set the total speed limit, slow-mode speed, and number of simultaneous downloads. Slow mode replaces the total speed limit while enabled. Per-network speed limits still apply.
+
+Choose a network to set its speed in KB/s or MB/s and its data allowance in GB per **Day**, **Week**, or **Month**. Data usage counts bytes received by Plexo on that network, including torrent transfers; uploads and other apps do not count. When the allowance is reached, Plexo stops using that network while available networks can continue.
+
+Periods follow the local calendar: days reset at midnight, weeks start Monday, and months reset on the first day. Usage survives restarts, and switching periods shows the usage recorded for that period.
+
+- **Reset data usage…** resets only the selected network’s current period to zero, keeping its configured limits and other periods’ usage. It makes that network available again if its data allowance was reached.
+- **Remove limits…** removes the selected network’s speed and data limits while preserving its recorded usage. Total speed and slow-mode settings still apply.
+
+Both actions ask for confirmation. New download, Fix link, and limits dialogs close through their dedicated buttons or Escape; clicking outside does not dismiss them.
+
+---
+
+# How direct downloads work
 
 Instead of downloading a file linearly over a single socket, Plexo requests arbitrary slices of the file simultaneously across multiple physical network interfaces. Three core technical primitives make this work:
 
@@ -142,7 +178,7 @@ Instead, Plexo uses a **dynamic work-stealing queue**:
 1. The file is split into **chunks of up to 8 MB** (smaller for small files, so every network gets a share).
 2. All chunks enter a centralized pending queue.
 3. A pool of worker connections continuously lease the next chunk from the queue as soon as they become free. Each keeps its one connection to the server from chunk to chunk, so it pays for the handshake and TCP's slow start once, not per chunk. Connections start interleaved across networks, so each network is served before any is served twice.
-   - **How many.** Each network starts with 8 connections, and once every one of them is receiving it doubles, up to 32, never more than there are chunks for. Another connection costs little when the link is already full, and a server that caps each connection's speed is only outrun by more of them. A server that refuses some of a network's connections (503, 429, 403, or leaves them unanswered for 5 seconds) while still sending data down the others is asking for fewer: the refused ones close, their chunks go back to the queue to carry on from where they got to, and that network stays at the ones left. After a minute without another refusal it may have one more, and so on back up. A server that refuses everything (busy, or an expired link) isn't limiting connections, so the count stays. On the start screen you can pick a fixed 4, 8, 16 or 32 per network instead of Auto.
+   - **How many.** Each network starts with 8 connections, and once every one of them is receiving it doubles, up to 32, never more than there are chunks for. Another connection costs little when the link is already full, and a server that caps each connection's speed is only outrun by more of them. A server that refuses some of a network's connections (503, 429, 403, or leaves them unanswered for 5 seconds) while still sending data down the others is asking for fewer: the refused ones close, their chunks go back to the queue to carry on from where they got to, and that network stays at the ones left. After a minute without another refusal it may have one more, and so on back up. A server that refuses everything (busy, or an expired link) isn't limiting connections, so the count stays. In the download’s details you can pick a fixed 4, 8, 16 or 32 per network instead of Auto.
 4. Faster interfaces finish chunks quicker and immediately pick up new ones; slower interfaces pull fewer chunks.
 5. **Racing the tail.** Once no chunk is left waiting, a free connection can start a second attempt at a chunk another connection is fetching too slowly (as soon as the free connection would finish it in under half the time the chunk still needs; a chunk whose second attempt is stuck too can get one more), picking up from where the first had got to. Whichever finishes first wins and the other is dropped. It costs a few bytes fetched twice at the very end, and it means one slow connection — or one slow network — can no longer hold the whole download back. A stream doing this is marked **BACKUP** in the streams table.
 
@@ -176,7 +212,7 @@ When you resume:
 2. **Safe resume**: If the validators match, Plexo resumes each range from the last saved byte offset in the staging file.
 3. **Guard against corruption**: If the file on the server has changed, Plexo refuses to resume to prevent combining incompatible slices into a corrupt file.
 
-Download manifests are stored under Plexo's application-data directory; large partial data stays beside the destination. If Plexo quits or crashes during a transfer, it restores that transfer as paused on the next launch. Cancelling or removing a download deletes its staging file.
+Download manifests are stored under Plexo's application-data directory; large partial data stays beside the destination. If Plexo quits or crashes during a transfer, it restores that transfer as paused on the next launch. Cancelling an unfinished download deletes its downloaded data. Removing a finished download from the list keeps its files.
 
 ---
 
@@ -223,7 +259,7 @@ Progress Grid:
 
 # Getting started
 
-Plexo currently doesn't have pre-built releases, so you'll need to run it from source.
+Download a build for your platform from [GitHub Releases](https://github.com/anmolkapil/plexo/releases), or run Plexo from source using the steps below.
 
 ## Requirements
 

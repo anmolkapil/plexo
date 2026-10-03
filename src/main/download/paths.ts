@@ -48,19 +48,22 @@ export async function ensureDirectory(directory: string): Promise<void> {
 }
 
 /**
- * Claims a download by exclusively creating <final name>.plexo. The final name
- * itself does not appear until the file is complete. An existing partial file
- * also claims its corresponding final name, including after a restart.
+ * The first of `name`, `name (1)`, `name (2)`… in `directory` that is free and that `claim` takes
+ * for this download: `claim` returns false to pass on a name, and an EEXIST it throws does too.
+ * `suffix` is what claiming adds to a name, room left for it within the 255-byte component limit.
  */
-export async function reserveDestinationPath(directory: string, fileName: string): Promise<string> {
+async function claimName(
+  directory: string,
+  name: string,
+  { suffix, extension }: { suffix: string; extension: boolean },
+  claim: (candidate: string) => Promise<boolean>
+): Promise<string> {
   await ensureDirectory(directory)
-  fileName = sanitizeFileName(fileName)
-  const ext = extname(fileName)
-  // Leave room for " (9999).plexo" within the usual 255-byte component limit.
-  const suffixRoom = Buffer.byteLength(' (9999).plexo')
-  const maxBaseBytes = 255 - suffixRoom - Buffer.byteLength(ext)
+  name = sanitizeFileName(name)
+  const ext = extension ? extname(name) : ''
+  const maxBaseBytes = 255 - Buffer.byteLength(` (9999)${suffix}`) - Buffer.byteLength(ext)
   if (maxBaseBytes <= 0) throw new Error('The file extension is too long')
-  const baseCharacters = Array.from(basename(fileName, ext))
+  const baseCharacters = Array.from(ext ? basename(name, ext) : name)
   while (Buffer.byteLength(baseCharacters.join('')) > maxBaseBytes) baseCharacters.pop()
   const base = baseCharacters.join('')
 
@@ -71,17 +74,49 @@ export async function reserveDestinationPath(directory: string, fileName: string
         : join(directory, `${base} (${counter})${ext}`)
     if (await pathExists(candidate)) continue
     try {
-      const handle = await open(`${candidate}.plexo`, 'wx+')
-      await handle.close()
-      if (await pathExists(candidate)) {
-        await rm(`${candidate}.plexo`)
-        continue
-      }
-      return candidate
+      if (await claim(candidate)) return candidate
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error
     }
   }
 
-  throw new Error(`Could not find an unused file name for "${fileName}" in ${directory}`)
+  throw new Error(`Could not find an unused file name for "${name}" in ${directory}`)
+}
+
+/**
+ * Claims a download by exclusively creating <final name>.plexo. The final name
+ * itself does not appear until the file is complete. An existing partial file
+ * also claims its corresponding final name, including after a restart.
+ */
+export async function reserveDestinationPath(directory: string, fileName: string): Promise<string> {
+  return claimName(
+    directory,
+    fileName,
+    { suffix: '.plexo', extension: true },
+    async (candidate) => {
+      const handle = await open(`${candidate}.plexo`, 'wx+')
+      await handle.close()
+      if (!(await pathExists(candidate))) return true
+      await rm(`${candidate}.plexo`)
+      return false
+    }
+  )
+}
+
+/**
+ * Claims the final name itself, by exclusively creating it empty: a torrent is written in place,
+ * as torrent clients do, so what's there from the start is its folder (or its one file). Being
+ * new, it's this download's alone, never something already in the destination.
+ */
+export async function claimDestinationPath(
+  directory: string,
+  name: string,
+  folder: boolean
+): Promise<string> {
+  // A folder's name has no extension to keep last: "Show.S01" goes to "Show.S01 (1)".
+  return claimName(directory, name, { suffix: '', extension: !folder }, async (candidate) => {
+    if (folder) await mkdir(candidate)
+    else await (await open(candidate, 'wx')).close()
+    return true
+  })
 }

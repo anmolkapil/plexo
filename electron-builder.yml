@@ -15,6 +15,9 @@ files:
 asarUnpack:
   - resources/**
 win:
+  # No protocols or fileAssociations: the NSIS installer would register Plexo as *the* handler for
+  # magnet links and .torrent files, taking them from a torrent client the user already has.
+  # A .torrent can still be opened with Plexo through "Open with".
   executableName: plexo
   target:
     - target: nsis
@@ -37,6 +40,17 @@ mac:
   entitlementsInherit: build/entitlements.mac.plist
   extendInfo:
     - NSDownloadsFolderUsageDescription: Plexo saves downloaded files to your Downloads folder.
+    # Magnet links and .torrent files can be opened with Plexo, as one choice among others: it's
+    # never made the default over a torrent client the user already has (LSHandlerRank).
+    - CFBundleURLTypes:
+        - CFBundleURLName: Magnet link
+          CFBundleURLSchemes: [magnet]
+      CFBundleDocumentTypes:
+        - CFBundleTypeName: Torrent
+          CFBundleTypeRole: Viewer
+          LSHandlerRank: Alternate
+          CFBundleTypeExtensions: [torrent]
+          LSItemContentTypes: [org.bittorrent.torrent]
   notarize: false
 dmg:
   artifactName: ${name}-${version}-${arch}.${ext}
@@ -48,6 +62,8 @@ linux:
       arch: [x64, arm64]
   maintainer: electronjs.org
   category: Utility
+  # Offered for magnet links and .torrent files ("Open with"), not made their default.
+  mimeTypes: [x-scheme-handler/magnet, application/x-bittorrent]
 appImage:
   artifactName: ${name}-${version}-${arch}.${ext}
 npmRebuild: false

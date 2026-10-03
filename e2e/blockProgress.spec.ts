@@ -6,13 +6,14 @@ import fc from 'fast-check'
 import { advanceBlock, retractBlock } from '../src/main/download/blockProgress'
 import { DownloadFile } from '../src/main/download/downloadFile'
 import { reserveDestinationPath } from '../src/main/download/paths'
-import type { BlockState } from '../src/shared/types'
+import type { HttpBlockState } from '../src/shared/types'
 
 // K. What a block's byte counts mean when two attempts race for it, and how range writes land
 // in the one destination-side staging file.
 
 const LENGTH = 1000
-const fresh = (): BlockState => ({
+const fresh = (): HttpBlockState => ({
+  kind: 'http',
   index: 0,
   rangeStart: 0,
   rangeEnd: LENGTH - 1,
@@ -20,7 +21,7 @@ const fresh = (): BlockState => ({
   bytesDownloaded: 0,
   bytesByInterface: {}
 })
-const attributed = (block: BlockState): number =>
+const attributed = (block: HttpBlockState): number =>
   Object.values(block.bytesByInterface).reduce((sum, bytes) => sum + bytes, 0)
 
 test.describe('block progress', () => {

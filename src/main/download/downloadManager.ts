@@ -1,190 +1,105 @@
+import { trashDownload } from './trashDownload'
+import { describeError } from '../../shared/errors'
 import { randomUUID } from 'node:crypto'
-import { readFile, readdir, rename, rm, stat, statfs, writeFile } from 'node:fs/promises'
-import { basename, join } from 'node:path'
+import { lstat, readFile, readdir, rename, rm, stat, statfs, writeFile } from 'node:fs/promises'
+import { basename, dirname, isAbsolute, join, sep } from 'node:path'
 import type { BrowserWindow } from 'electron'
 import { app, Notification, powerSaveBlocker } from 'electron'
 import { IpcChannels } from '../../shared/ipc-channels'
-import type {
-  BlockState,
-  ChunkState,
-  DownloadNetwork,
-  DownloadState,
-  DownloadStatus,
-  DownloadUpdate,
-  NetworkInterfaceInfo,
-  NetworkStatus,
-  StartDownloadRequest
-} from '../../shared/types'
-import { testKnobs, testStreamsPerNetwork } from '../testKnobs'
-import { advanceBlock, retractBlock } from './blockProgress'
-import { ConcurrencyController, type Action, type Snapshot } from './concurrency'
-import { downloadChunk, fetchRange, HttpStatusError, RemoteChangedError } from './chunkDownloader'
-import { DownloadFile } from './downloadFile'
-import { compareVersion, type FileVersion } from './fileVersion'
-import { ensureDirectory, reserveDestinationPath } from './paths'
 import {
-  interleave,
-  MAX_STREAMS_PER_NETWORK,
-  planBlocks,
-  planDownload,
-  startingStreams
-} from './plan'
-import { restoreBlocks, saveBlocks, type SavedBlocks } from './savedProgress'
-import { pickWork, type SchedulerPolicy, type Work } from './scheduler'
+  DOWNLOADS_AT_ONCE,
+  type AppSettings,
+  type DownloadNetwork,
+  type DownloadState,
+  type DownloadStatus,
+  type DownloadUnitState,
+  type DownloadUpdate,
+  type FinishedDownload,
+  type HttpBlockState,
+  type HttpDownloadNetwork,
+  type HttpDownloadState,
+  type NetworkInterfaceInfo,
+  type NetworkStatus,
+  type StartDownloadRequest,
+  type StartHttpDownloadRequest,
+  type StartTorrentDownloadRequest,
+  type TorrentDownloadNetwork,
+  type TorrentDownloadState,
+  type TorrentFileEntry,
+  type TorrentInfo
+} from '../../shared/types'
+import { Limits } from '../network/limits'
+import { loadSettings } from '../settings'
+import { addToHistory, findInHistory, removeFromHistory } from './history'
+import { testKnobs } from '../testKnobs'
+import { DownloadFile } from './downloadFile'
+import { HttpTransfer, splittable } from './httpTransfer'
+import { ensureDirectory, reserveDestinationPath } from './paths'
+import { planBlocks, planDownload, planPieces } from './plan'
+import { restoreBlocks, restorePieces, saveBlocks, type SavedBlocks } from './savedProgress'
+import { chosenFiles, wantedPieces } from './torrent/files'
+import { probeUrl } from './probe'
+import { describeTorrent, probedTorrentFile } from './torrent/metadata'
+import { TorrentDestination } from './torrent/torrentDestination'
+import { TorrentTransfer } from './torrent/torrentTransfer'
+import {
+  clearSpeeds,
+  delay,
+  recomputeAggregates,
+  updateSpeeds,
+  type Transfer,
+  type TransferHost,
+  type HttpTransferTarget,
+  type SpeedSample,
+  type TorrentTransferTarget
+} from './transfer'
 import type { NetworkMonitor } from '../network/interfaces'
 import {
   compatibleInterfaces,
-  ConnectionError,
   NoCompatibleRouteError,
   resolveTargetWithin,
-  StreamConnection,
   targetHost
 } from '../network/routes'
 
-/** Why an attempt was called off by the manager rather than by a pause or a failure. */
-type AbortReason = 'refresh' | 'lost'
-
-/**
- * One request for one block, by one stream. A block normally has a single (primary) attempt.
- * Near the end of a download a second (hedge) one may race it — see scheduler.ts — and then the
- * block is finished by whichever gets there first.
- *
- * Both write straight into the staging file at the block's own offsets. Every response is checked
- * to be the download's version before any of it is written, so racing attempts write identical
- * bytes and it doesn't matter which lands last: whatever either has written stays secured.
- */
-interface Attempt {
-  kind: 'primary' | 'hedge'
-  block: BlockState
-  streamId: number
-  networkId: string
-  /** Where the request begins, as an offset into the block. Null until it is known. */
-  startOffset: number | null
-  /** Bytes the destination writer has accepted; safe to resume from this prefix. */
-  received: number
-  /** Bytes the network has delivered, independently of disk backpressure. */
-  networkReceived: number
-  lastNetworkAt: number
-  /** When the request was sent. */
-  startedAt: number
-  /** The network previously credited for this block's prefix. */
-  previousWriter: string | undefined
-  /** Aborts this request alone; ChunkRuntime.controller aborts the whole stream. */
-  abort: AbortController
-  abortReason: AbortReason | null
-  /** What the server's answer cost, for diagnosing slow connections (see PLEXO_DEBUG). */
-  response: { ttfbMs: number; reusedSocket: boolean } | null
-}
-
-/** What became of an attempt's request. */
-type AttemptOutcome =
-  | { type: 'completed' }
-  /** The download was paused or cancelled underneath it. */
-  | { type: 'stopped' }
-  /** Called off by the manager (see AbortReason). */
-  | { type: 'aborted'; reason: AbortReason }
-  | { type: 'failed'; error: unknown }
-
-interface ChunkRuntime {
-  /** Aborts the whole stream: pause and cancel. */
-  controller: AbortController
-  /** Cuts its waits short — a backoff, a look for work — when the stream stops, or when the run
-   * has nothing left for it to do. */
-  wait: AbortSignal
-  /** Cuts a backoff short without stopping the stream: what it was waiting out has changed (see
-   * wake). Replaced once used. */
-  nudge: AbortController
-  /** Its one connection to the server, reused from block to block. */
-  connection: StreamConnection
-  /** What the stream is fetching right now, if anything. */
-  attempt: Attempt | null
-  /** When this connection last (re)connected; it isn't judged until SLOW_WARMUP_MS after. */
-  warmSince: number
-  slowSince: number | null
-  /** Speed of its last finished block, start to end — 0 until it finishes one. */
-  lastBlockSpeed: number
-  /** Everything it has received, bytes another attempt already had included: what its speed is
-   * measured from. (`ChunkState.bytesDownloaded` counts only bytes that were new.) */
-  receivedBytes: number
-  /** Failed attempts in a row, for backoff. */
-  failures: number
-  /** Of those, the ones the server answered wrongly: MAX_CHUNK_RETRIES of them and it gives up.
-   * A connection that failed isn't one — see finishFailed. */
-  strikes: number
-  /** When the server first answered busy (see HttpStatusError.transient) since this stream last
-   * made progress: a busy server is waited out for SERVER_BUSY_FOR_MS, not MAX_CHUNK_RETRIES. */
-  busySince: number | null
-  /** Since the stream count last looked: whether the server turned one of its requests away
-   * (403, 429, 503, or left it unanswered), and whether it received anything. What a connection
-   * limit is judged by (see concurrency.ts). */
-  refused: boolean
-  served: boolean
-  /** Stopped for good, and to leave the list once its worker has (see retireStreams). */
-  retiring: boolean
-}
-
-interface SpeedSample {
-  bytes: number
-  time: number
-}
-
-interface DownloadRuntime {
-  state: DownloadState
+interface RuntimeFields {
   publicationPath?: string
   publicationIdentity?: { dev: number; ino: number }
-  requestPayload: StartDownloadRequest
-  chunkRuntimes: Map<number, ChunkRuntime>
-  /** The running streams' workers, by stream id. Empty unless the download is running. */
-  workers: Map<number, Promise<void>>
-  /** Aborted once the current run is over — stopped (a pause, a cancel, an error) or every
-   * block in — so nothing starts streams for it and no stream waits on. */
-  stop: AbortController
-  /** Each network's status as reconcile last left it; how it tells a network that has just come
-   * into use. Cleared at the start of each run. */
-  reconciled: Map<string, NetworkStatus>
-  file: DownloadFile
   runPromise?: Promise<void>
+  cancelPromise?: Promise<void>
   publishing: boolean
-  speedSamplesByChunk: Map<number, SpeedSample[]>
   pushScheduled: boolean
-  blocks: BlockState[]
-  totalBlocks: number
   persistenceTimer?: NodeJS.Timeout
   persistenceChain: Promise<void>
   removed: boolean
-  /** The version this download started on, plus any since confirmed to serve identical bytes
-   * (see confirmSameBytes). Not persisted: after a restart, a confirmation is simply redone. */
-  acceptedVersions: FileVersion[]
-  /** Slow-connection refreshes per block index, capped at MAX_REFRESHES_PER_BLOCK. */
-  refreshesByBlock: Map<number, number>
-  /** For a block whose last attempt delivered nothing, the network that made it. That network
-   * leaves the block to another one while another is free to take it (see scheduler.ts). Not
-   * persisted: it only steers the next hand-out. */
-  avoidNetworkByBlock: Map<number, string>
-  /** Attempts in flight, by block index. */
-  attempts: Map<number, Attempt[]>
-  /** Hedges started per block index, capped at SCHEDULER_POLICY.maxHedgesPerBlock. */
-  hedgesByBlock: Map<number, number>
-  /** By network id: everything its streams have received, and when it last showed it was alive —
-   * received something, or came into use. */
-  traffic: Map<string, { received: number; aliveAt: number }>
-  /** By network id: until when the server asked (Retry-After) not to be sent new requests over
-   * it. */
-  holdUntil: Map<string, number>
-  /** Decides how many streams each network runs; kept for the whole download, so a pause and
-   * resume doesn't forget what it has found out. */
-  concurrency: ConcurrencyController | null
   /** Updates sent to the window so far (see DownloadUpdate). */
   sentUpdates: number
   /** Each block as the window was last sent it, by index — what tells a changed block apart. */
-  sentBlocks: Pick<BlockState, 'status' | 'interfaceId' | 'bytesDownloaded'>[]
+  sentUnits: (Pick<DownloadUnitState, 'status' | 'interfaceId' | 'bytesDownloaded'> & {
+    provisionalBytes?: number
+  })[]
   /** The network most recently switched off: what a resume switches back on if it finds none on.
    * Not persisted: after a restart, the first network present is used instead. */
   lastSwitchedOff?: string
   /** Paused by switching off its last network, rather than by Pause: switching one back on
    * resumes it. */
   pausedForNoNetwork?: boolean
+  /** When the speeds last went into the history (see sampleSpeeds). */
+  speedSampledAt: number
+  /** The best combined speed this run has shown: the peak of one done before it held one. */
+  bestSpeedSeen: number
 }
+
+interface HttpDownloadRuntime extends RuntimeFields, HttpTransferTarget {
+  kind: 'http'
+  transfer: Transfer
+}
+
+interface TorrentDownloadRuntime extends RuntimeFields, TorrentTransferTarget {
+  kind: 'torrent'
+  transfer: Transfer
+}
+
+type DownloadRuntime = HttpDownloadRuntime | TorrentDownloadRuntime
 
 interface PersistedDownloadBase {
   savedAt: number
@@ -192,24 +107,15 @@ interface PersistedDownloadBase {
   publicationPath?: string
   publicationIdentity?: { dev: number; ino: number }
   requestPayload: StartDownloadRequest
-  /** The networks, as saved before a download listed them in its state. Read only to fill in
-   * `networks` for a download saved that way. */
-  activeInterfaces?: NetworkInterfaceInfo[]
 }
 
-type PersistedDownload = PersistedDownloadBase &
-  (
-    | ({ version: 5; state: Omit<DownloadState, 'blocks'> } & SavedBlocks)
-    /** Written before version 5, with every block saved whole; still read, so an update doesn't
-     * lose the progress of a download it finds paused. */
-    | { version: 4; state: DownloadState }
-  )
+type PersistedState =
+  Omit<HttpDownloadState, 'blocks' | 'streams'> | Omit<TorrentDownloadState, 'pieces' | 'peers'>
 
-// Set PLEXO_DEBUG=1 to log every request's outcome, how long the server took to answer and
-// whether it reused a warm connection — what it takes to tell one slow connection from a slow path.
-const debug: (...args: unknown[]) => void = process.env['PLEXO_DEBUG']
-  ? (...args) => console.debug('[plexo]', ...args)
-  : () => {}
+type PersistedDownload = PersistedDownloadBase & {
+  version: 7
+  state: PersistedState
+} & SavedBlocks
 
 const UI_UPDATE_MS = 200
 /** How often a running download takes stock (see run). */
@@ -218,176 +124,34 @@ const TICK_MS = 500
 // checkpoints independent of UI updates; pause and publication still force an immediate sync.
 const CHECKPOINT_INTERVAL_MS = 15_000
 
-// Raw per-event deltas are too noisy to display (socket buffers flush in
-// irregular bursts a few ms apart). Averaging over a few seconds instead
-// gives a speed/ETA reading that tracks reality without jumping around.
-const SPEED_WINDOW_MS = 3000
+const SPEED_HISTORY_LENGTH = 60
+// The peak is the best speed held this many samples (seconds): longer than a start's burst (an
+// ISP's burst allowance, every connection ramping up at once), which isn't the line's speed.
+const PEAK_SAMPLES = 5
 
-// Appends a sample and returns the average byte rate over SPEED_WINDOW_MS.
-function pushSpeedSample(samples: SpeedSample[], bytes: number, time: number): number {
-  if (samples.length > 0 && time - samples[samples.length - 1].time > SPEED_WINDOW_MS) {
-    samples.length = 0
+/** Adds each network's speed to the download's history, and 0 for one no longer listed. A
+ * network seen for the first time starts at 0 too, so every series is as long as the others and
+ * lines up with them. Then raises the peak, once the last PEAK_SAMPLES are in. */
+function sampleSpeeds(state: DownloadState): void {
+  const history = (state.speedHistory ??= {})
+  const length = Object.values(history)[0]?.length ?? 0
+  for (const network of state.networks) {
+    history[network.id] ??= new Array<number>(length).fill(0)
   }
-  samples.push({ bytes, time })
-
-  return calculateCurrentSpeed(samples, time)
-}
-
-function calculateCurrentSpeed(samples: SpeedSample[] | undefined, time: number): number {
-  if (!samples || samples.length === 0) return 0
-
-  const latest = samples[samples.length - 1]
-  if (time - latest.time > SPEED_WINDOW_MS) {
-    return 0
+  for (const [id, series] of Object.entries(history)) {
+    series.push(state.networks.find((network) => network.id === id)?.speedBytesPerSec ?? 0)
+    if (series.length > SPEED_HISTORY_LENGTH) series.shift()
   }
-
-  const cutoff = time - SPEED_WINDOW_MS
-  while (samples.length > 2 && samples[1].time <= cutoff) {
-    samples.shift()
-  }
-
-  // At least a second: a fresh window can hold two samples ms apart, and one socket burst over a
-  // few ms reads as a speed the connection never had (and sticks as the UI's peak).
-  const oldest = samples[0]
-  const deltaSeconds = Math.max((time - oldest.time) / 1000, 1)
-  return (latest.bytes - oldest.bytes) / deltaSeconds
+  const series = Object.values(history)
+  if (series[0].length < PEAK_SAMPLES) return
+  let held = 0
+  for (const values of series) for (const value of values.slice(-PEAK_SAMPLES)) held += value
+  state.peakSpeedBytesPerSec = Math.max(state.peakSpeedBytesPerSec ?? 0, held / PEAK_SAMPLES)
 }
 
-const MAX_CHUNK_RETRIES = 5
-const RETRY_BASE_DELAY_MS = testKnobs.retryBaseDelayMs
-const RETRY_MAX_DELAY_MS = 15_000
-// A network that can't reach the server keeps one stream asking (see reconcile). That is one
-// cheap connection, so it asks often enough to find out soon after the network gets through.
-const UNREACHABLE_RETRY_MS = 5_000
-// A server that answers busy (429, 503, …) is waited out this long before a stream gives up on
-// it, however many retries that takes; what it asks for in Retry-After is waited, up to
-// RETRY_AFTER_MAX_MS.
-const SERVER_BUSY_FOR_MS = testKnobs.serverBusyForMs
-const RETRY_AFTER_MAX_MS = 120_000
-
-/** Doubling from RETRY_BASE_DELAY_MS, with ±20% jitter as gRPC's backoff has: a network that
- * drops fails all its streams at once, and they shouldn't all come back at the same instant. */
-function retryDelayMs(attempt: number): number {
-  const exact = Math.min(RETRY_BASE_DELAY_MS * 2 ** (attempt - 1), RETRY_MAX_DELAY_MS)
-  return exact * (0.8 + 0.4 * Math.random())
-}
-
-// A single TCP stream can get stuck at a crawl (loss-collapsed congestion window, a bad CDN node
-// or route) while its siblings on the same network run fine. It never goes silent, so the stall
-// watchdog can't catch it; a fresh connection usually lands somewhere healthy. Only relative
-// thresholds — nothing here knows how fast the network ought to be.
-const SLOW_RATIO = 0.1
-const SLOW_WARMUP_MS = testKnobs.slowWarmupMs
-const SLOW_FOR_MS = testKnobs.slowForMs
-// A connection that has received nothing this long, while the file is being served to others, is
-// dead rather than slow (a network that isn't answering, a stuck handshake). A whole network
-// that has received nothing this long, while its connections fail, can't reach the server.
-const SILENT_AFTER_MS = testKnobs.silentAfterMs
-// Bounds every case where refreshing can't help (the whole network got slower, a stale
-// reference): at worst a block pays for a couple of cheap reconnects, then is left alone.
-const MAX_REFRESHES_PER_BLOCK = 2
-const SCHEDULER_POLICY: SchedulerPolicy = {
-  hedgeAfterMs: testKnobs.hedgeAfterMs,
-  maxHedgesPerBlock: 2,
-  startupMs: 1000
-}
-
-/** Whether the file can be fetched in parts. Otherwise one request has to carry all of it: one
- * stream, on one network. */
-function splittable(request: StartDownloadRequest): boolean {
-  return request.supportsRanges && request.totalBytes > 0
-}
-
-/** How many streams a download runs is only for it to work out when there can be more than one,
- * and unless a test fixes it. */
-function concurrencyFor(request: StartDownloadRequest): ConcurrencyController | null {
-  if (!splittable(request) || testStreamsPerNetwork() !== null) return null
-  const picked = pickedStreams(request)
-  return picked === undefined
-    ? new ConcurrencyController(MAX_STREAMS_PER_NETWORK)
-    : new ConcurrencyController(picked, false)
-}
-
-/** The streams per network the user picked for this download, if they didn't leave it on Auto. */
-function pickedStreams(request: StartDownloadRequest): number | undefined {
-  const picked = request.streamsPerNetwork
-  return Number.isInteger(picked) && picked! >= 1 && picked! <= MAX_STREAMS_PER_NETWORK
-    ? picked
-    : undefined
-}
-/** How often a stream with nothing to do looks for work again. */
-const IDLE_POLL_MS = 250
-// Just longer than an idle stream takes to look for work, so a refreshed block goes to a
-// connection that is already proven fast, if there is one.
-const REFRESH_HANDOFF_MS = IDLE_POLL_MS + 50
-
-function median(values: number[]): number {
-  const sorted = [...values].sort((a, b) => a - b)
-  const mid = sorted.length >> 1
-  return sorted.length % 2 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2
-}
-
-/** Brings every stream's speed up to date, and each network's and the download's with them. */
-function updateSpeeds(runtime: DownloadRuntime, now = Date.now()): void {
-  let total = 0
-  const byNetwork = new Map<string, number>()
-  for (const chunk of runtime.state.chunks) {
-    if (chunk.status === 'downloading') {
-      const samples = runtime.speedSamplesByChunk.get(chunk.id)
-      chunk.speedBytesPerSec = calculateCurrentSpeed(samples, now)
-    }
-    total += chunk.speedBytesPerSec
-    byNetwork.set(
-      chunk.interfaceId,
-      (byNetwork.get(chunk.interfaceId) ?? 0) + chunk.speedBytesPerSec
-    )
-  }
-  for (const network of runtime.state.networks) {
-    network.speedBytesPerSec = byNetwork.get(network.id) ?? 0
-  }
-  runtime.state.speedBytesPerSec = total
-}
-
-/** Nothing is moving: a paused or stopped download reads 0 everywhere. */
-function clearSpeeds(state: DownloadState): void {
-  state.speedBytesPerSec = 0
-  for (const chunk of state.chunks) chunk.speedBytesPerSec = 0
-  for (const network of state.networks) network.speedBytesPerSec = 0
-}
-
-/** Waits, but returns early if the signal aborts (pause/cancel shouldn't wait out a retry backoff). */
-function delay(ms: number, signal: AbortSignal): Promise<void> {
-  return new Promise((resolve) => {
-    if (signal.aborted) {
-      resolve()
-      return
-    }
-    const onAbort = (): void => {
-      clearTimeout(timer)
-      resolve()
-    }
-    const timer = setTimeout(() => {
-      signal.removeEventListener('abort', onAbort)
-      resolve()
-    }, ms)
-    signal.addEventListener('abort', onAbort, { once: true })
-  })
-}
-
-function newStream(id: number, networkId: string): ChunkState {
+function newHttpNetwork(iface: NetworkInterfaceInfo, enabled: boolean): HttpDownloadNetwork {
   return {
-    id,
-    interfaceId: networkId,
-    rangeStart: 0,
-    rangeEnd: null,
-    bytesDownloaded: 0,
-    speedBytesPerSec: 0,
-    status: 'pending'
-  }
-}
-
-function newNetwork(iface: NetworkInterfaceInfo, enabled: boolean): DownloadNetwork {
-  return {
+    transfer: 'http',
     id: iface.id,
     label: iface.displayName,
     kind: iface.kind,
@@ -399,52 +163,88 @@ function newNetwork(iface: NetworkInterfaceInfo, enabled: boolean): DownloadNetw
   }
 }
 
-/** A runtime for `state`, with nothing running. */
-function newRuntime(
-  state: DownloadState,
-  requestPayload: StartDownloadRequest,
-  file: DownloadFile,
-  blocks: BlockState[]
-): DownloadRuntime {
+function newTorrentNetwork(iface: NetworkInterfaceInfo, enabled: boolean): TorrentDownloadNetwork {
   return {
-    state,
-    requestPayload,
-    chunkRuntimes: new Map(),
-    workers: new Map(),
-    stop: new AbortController(),
-    reconciled: new Map(),
-    file,
-    publishing: false,
-    speedSamplesByChunk: new Map(),
-    pushScheduled: false,
-    blocks,
-    totalBlocks: state.totalBlocks ?? blocks.length,
-    persistenceChain: Promise.resolve(),
-    removed: false,
-    acceptedVersions: [requestedVersion(requestPayload)],
-    refreshesByBlock: new Map(),
-    avoidNetworkByBlock: new Map(),
-    attempts: new Map(),
-    hedgesByBlock: new Map(),
-    traffic: new Map(),
-    holdUntil: new Map(),
-    concurrency: concurrencyFor(requestPayload),
-    sentUpdates: 0,
-    sentBlocks: []
+    ...newHttpNetwork(iface, enabled),
+    transfer: 'torrent',
+    bytesUploaded: 0,
+    uploadSpeedBytesPerSec: 0
   }
 }
 
-function requestedVersion(request: StartDownloadRequest): FileVersion {
-  return { etag: request.etag, lastModified: request.lastModified, totalBytes: request.totalBytes }
+/** A block that needs nothing more: in, or skipped (see BlockStatus). */
+const isDone = (unit: DownloadUnitState): boolean =>
+  unit.status === 'completed' || unit.status === 'skipped'
+
+const unitsOf = (runtime: DownloadRuntime): DownloadUnitState[] =>
+  runtime.kind === 'http' ? runtime.blocks : runtime.pieces
+
+/** Marks the pieces of `torrent` that none of the `chosen` files needs (null: all are) as
+ * skipped. Their bytes, all together. */
+function skipUnchosen(
+  blocks: import('../../shared/types').TorrentPieceState[],
+  torrent: TorrentInfo,
+  chosen: Set<number> | null
+): number {
+  if (!chosen) return 0
+  const wanted = wantedPieces(torrent.files, torrent.pieceLength, chosen)
+  let skipped = 0
+  for (const block of blocks) {
+    if (wanted[block.index] || block.rangeEnd === null) continue
+    block.status = 'skipped'
+    skipped += block.rangeEnd - block.rangeStart + 1
+  }
+  return skipped
 }
 
-// How much of the already-downloaded file to re-fetch and compare when a server labels a
-// response with an ETag or Last-Modified this download hasn't seen before.
-const SAMPLE_BYTES = 16 * 1024
-const MAX_SAMPLES = 8
-/** A sample must come from a server presenting the new label; behind a load balancer the next
- * request may land on another one, so take a few tries at reaching it. */
-const SAMPLE_TRIES = 4
+/** The files not `chosen`, as the torrent names them. */
+function unchosenPaths(torrent: TorrentInfo, chosen: Set<number> | null): string[] {
+  return chosen
+    ? torrent.files.filter((_, index) => !chosen.has(index)).map((file) => file.path)
+    : []
+}
+
+const isNotFound = (error: unknown): boolean =>
+  (error as NodeJS.ErrnoException | null)?.code === 'ENOENT'
+
+/** A manifest this version writes, for the download in folder `id`. */
+function isCurrentManifest(value: unknown, id: string): value is PersistedDownload {
+  const manifest = value as Partial<PersistedDownload> | null
+  return manifest?.version === 7 && manifest.state?.id === id
+}
+
+/**
+ * Where a saved download that can't be restored kept its partial data beside its destination:
+ * only what is unmistakably Plexo's, so that a damaged manifest can never point it at a real file.
+ * - A `<name>.plexo` staging file, or a torrent's `<name>.plexo/` staging folder.
+ * - rc.1–rc.9 (manifest version 2) claimed the final name itself as an empty file, until the
+ *   download's parts were joined into it: taken while it is still empty and the download
+ *   unfinished, never once it holds anything.
+ */
+async function partialLeftovers(persisted: unknown): Promise<string[]> {
+  const manifest = persisted as {
+    version?: unknown
+    partialPath?: unknown
+    state?: { status?: unknown; destinationPath?: unknown }
+  } | null
+  const leftovers: string[] = []
+  const partial = manifest?.partialPath
+  if (typeof partial === 'string' && isAbsolute(partial)) {
+    if (partial.endsWith('.plexo')) leftovers.push(partial)
+    else if (dirname(partial).endsWith('.plexo')) leftovers.push(dirname(partial))
+  }
+  const placeholder = manifest?.state?.destinationPath
+  if (
+    manifest?.version === 2 &&
+    manifest.state?.status !== 'completed' &&
+    typeof placeholder === 'string' &&
+    isAbsolute(placeholder)
+  ) {
+    const found = await lstat(placeholder).catch(() => null)
+    if (found?.isFile() && found.size === 0) leftovers.push(placeholder)
+  }
+  return leftovers
+}
 
 function formatGigabytes(bytes: number): string {
   return `${(bytes / 1024 ** 3).toFixed(2)} GB`
@@ -470,12 +270,79 @@ export class DownloadManager {
   private seenAddresses = new Map<string, string[]>()
   /** The powerSaveBlocker keeping the computer awake while a download runs (see keepAwake). */
   private awakeBlocker: number | null = null
+  /** How many downloads may run at once; the rest wait, queued (see pump). */
+  private downloadsAtOnce = DOWNLOADS_AT_ONCE.default
+  /** Speed and data limits, for every download together. */
+  readonly limits = new Limits(() => this.limitsChanged())
 
   constructor(
     private getWindow: () => BrowserWindow | null,
     private networks: NetworkMonitor
   ) {
-    this.initialization = this.restorePersistedDownloads()
+    this.initialization = Promise.all([
+      this.restorePersistedDownloads(),
+      this.limits.loaded,
+      loadSettings().then((settings) => this.applySettings(settings))
+    ]).then(() => {})
+  }
+
+  /** Takes up what the user set: how many run at once, and the limits. One running past a
+   * lowered count is left to finish; a raised one starts the next ones in the queue. */
+  applySettings(settings: AppSettings): void {
+    this.downloadsAtOnce = settings.downloadsAtOnce ?? DOWNLOADS_AT_ONCE.default
+    this.limits.configure(settings)
+    this.limitsChanged()
+    this.pump()
+  }
+
+  /** A network ran out of data, or a limit changed: each download's networks are looked at
+   * again, so one at its limit stops being used, and one no longer at it is used again. */
+  async resetNetworkUsage(id: string): Promise<void> {
+    await this.limits.resetUsage(id)
+    this.limitsChanged()
+  }
+
+  private limitsChanged(): void {
+    for (const runtime of this.runtimes.values()) {
+      const { status } = runtime.state
+      if (status !== 'downloading' && status !== 'paused' && status !== 'queued') continue
+      this.reconcile(runtime)
+      this.scheduleUpdate(runtime)
+    }
+  }
+
+  private runningCount(): number {
+    let running = 0
+    for (const runtime of this.runtimes.values()) {
+      if (runtime.state.status === 'downloading') running++
+    }
+    return running
+  }
+
+  /** Starts queued downloads, first queued first, while fewer than downloadsAtOnce run. Called
+   * whenever one might have room: a run ended, a queued one went, the count went up. */
+  private pump(): void {
+    if (this.suspending) return
+    const queued = [...this.runtimes.values()]
+      .filter((runtime) => runtime.state.status === 'queued')
+      .sort((a, b) => (a.state.queuedAt ?? 0) - (b.state.queuedAt ?? 0))
+    for (const runtime of queued) {
+      if (this.runningCount() >= this.downloadsAtOnce) return
+      this.begin(runtime)
+    }
+  }
+
+  /** Puts a download in the queue: at its end, or at its front when the user asked for it. */
+  private enqueue(runtime: DownloadRuntime, front: boolean): void {
+    const places = [...this.runtimes.values()]
+      .filter((other) => other !== runtime && other.state.status === 'queued')
+      .map((other) => other.state.queuedAt ?? 0)
+    runtime.state.status = 'queued'
+    // Time spent waiting isn't time spent downloading (begin adds it to totalPausedMs).
+    runtime.state.pausedAt ??= Date.now()
+    runtime.state.queuedAt = front
+      ? Math.min(Date.now(), ...places) - 1
+      : Math.max(Date.now(), ...places.map((place) => place + 1))
   }
 
   private downloadsRoot(): string {
@@ -490,6 +357,83 @@ export class DownloadManager {
     return join(this.downloadDir(id), 'manifest.json')
   }
 
+  /** Where a torrent download keeps its .torrent, beside its manifest. */
+  private torrentFilePath(id: string): string {
+    return join(this.downloadDir(id), 'metadata.torrent')
+  }
+
+  private runtimeFields(): RuntimeFields {
+    return {
+      publishing: false,
+      pushScheduled: false,
+      persistenceChain: Promise.resolve(),
+      removed: false,
+      sentUpdates: 0,
+      sentUnits: [],
+      speedSampledAt: 0,
+      bestSpeedSeen: 0
+    }
+  }
+
+  private newHttpRuntime(
+    state: HttpDownloadState,
+    requestPayload: StartHttpDownloadRequest,
+    file: DownloadFile,
+    blocks: HttpBlockState[]
+  ): HttpDownloadRuntime {
+    const target: HttpTransferTarget = {
+      state,
+      requestPayload,
+      stop: new AbortController(),
+      file,
+      blocks,
+      speedSamplesByStream: new Map<number, SpeedSample[]>()
+    }
+    const host: TransferHost = {
+      networks: this.networks,
+      limits: this.limits,
+      reconcile: () => this.reconcile(runtime),
+      failDownload: (message, discard) => this.failDownload(runtime, message, discard),
+      failNetwork: (network, message) => this.failNetwork(runtime, network, message),
+      scheduleUpdate: () => this.scheduleUpdate(runtime)
+    }
+    const runtime: HttpDownloadRuntime = Object.assign(target, this.runtimeFields(), {
+      kind: 'http' as const,
+      transfer: new HttpTransfer(target, host)
+    })
+    return runtime
+  }
+
+  private newTorrentRuntime(
+    state: TorrentDownloadState,
+    requestPayload: StartTorrentDownloadRequest,
+    file: TorrentDestination,
+    pieces: TorrentDownloadState['pieces'],
+    torrentFile: Uint8Array
+  ): TorrentDownloadRuntime {
+    const target: TorrentTransferTarget = {
+      state,
+      requestPayload,
+      stop: new AbortController(),
+      file,
+      pieces,
+      speedSamplesByPeer: new Map<number, SpeedSample[]>()
+    }
+    const host: TransferHost = {
+      networks: this.networks,
+      limits: this.limits,
+      reconcile: () => this.reconcile(runtime),
+      failDownload: (message, discard) => this.failDownload(runtime, message, discard),
+      failNetwork: (network, message) => this.failNetwork(runtime, network, message),
+      scheduleUpdate: () => this.scheduleUpdate(runtime)
+    }
+    const runtime: TorrentDownloadRuntime = Object.assign(target, this.runtimeFields(), {
+      kind: 'torrent' as const,
+      transfer: new TorrentTransfer(target, host, torrentFile, file.path)
+    })
+    return runtime
+  }
+
   private async restorePersistedDownloads(): Promise<void> {
     let entries: string[]
     try {
@@ -501,260 +445,461 @@ export class DownloadManager {
     const restored: DownloadRuntime[] = []
     await Promise.all(
       entries.map(async (id) => {
+        await rm(`${this.manifestPath(id)}.tmp`, { force: true }).catch(() => {})
+        let persisted: unknown
         try {
-          await rm(`${this.manifestPath(id)}.tmp`, { force: true })
-          const persisted = JSON.parse(
-            await readFile(this.manifestPath(id), 'utf-8')
-          ) as PersistedDownload
-          if (persisted.state.id !== id) return
-          const blocks =
-            persisted.version === 5
-              ? restoreBlocks(persisted.state, persisted)
-              : persisted.version === 4
-                ? persisted.state.blocks
-                : undefined
-          if (!blocks) return
-          const state: DownloadState = {
-            ...persisted.state,
-            // Saved before downloads listed their networks: the ones it ran on, all in use.
-            networks:
-              (persisted.state.networks as DownloadNetwork[] | undefined) ??
-              (persisted.activeInterfaces ?? []).map((iface) => newNetwork(iface, true)),
-            // Streams are only for a run; a resumed download starts its own.
-            chunks: [],
-            blocks
+          persisted = JSON.parse(await readFile(this.manifestPath(id), 'utf-8'))
+        } catch (error) {
+          // No manifest, or a garbled one: nothing can bring it back. Any other read error (a
+          // drive not mounted, a permission) may pass, and is left for the next launch.
+          if (error instanceof SyntaxError || isNotFound(error)) {
+            await this.discardUnrestorable(id, undefined)
           }
-          if (state.status === 'downloading') {
-            state.status = 'paused'
-            state.pausedAt = persisted.savedAt || Date.now()
-          }
-          clearSpeeds(state)
-          for (const block of blocks) {
-            if (block.status === 'downloading') block.status = 'pending'
-          }
-
-          const file = new DownloadFile(persisted.partialPath)
-          if (state.status === 'paused') {
-            const size = await file.size().catch(() => -1)
-            const publishedPath = persisted.publicationPath ?? state.destinationPath
-            const published = await stat(publishedPath).catch(() => null)
-            const publishedSize = published?.size ?? -1
-            const expected = state.totalBytes || state.bytesDownloaded
-            const sameFile =
-              !!published &&
-              (size >= 0
-                ? await stat(file.path)
-                    .then(
-                      (partial) => partial.dev === published.dev && partial.ino === published.ino
-                    )
-                    .catch(() => false)
-                : persisted.publicationIdentity?.dev === published.dev &&
-                  persisted.publicationIdentity?.ino === published.ino)
-            if (
-              blocks.every((block) => block.status === 'completed') &&
-              publishedSize === expected &&
-              sameFile
-            ) {
-              state.status = 'completed'
-              state.destinationPath = publishedPath
-              state.fileName = basename(publishedPath)
-              state.error = undefined
-              state.completedAt ??= persisted.savedAt
-              if (size >= 0) await file.discard()
-            } else if (size < 0) {
-              state.status = 'error'
-              state.error =
-                'The partial download file is missing. Remove this download and start again.'
-              state.resumable = false
-            } else {
-              for (const block of blocks) {
-                const length = block.rangeEnd === null ? 0 : block.rangeEnd - block.rangeStart + 1
-                if (
-                  block.rangeStart + block.bytesDownloaded > size ||
-                  (block.status === 'completed' && block.bytesDownloaded !== length)
-                ) {
-                  block.status = 'pending'
-                  block.bytesDownloaded = 0
-                  block.bytesByInterface = {}
-                }
-              }
-              state.bytesDownloaded = blocks.reduce((sum, block) => sum + block.bytesDownloaded, 0)
-            }
-          }
-
-          const runtime = newRuntime(state, persisted.requestPayload, file, blocks)
-          runtime.publicationPath = persisted.publicationPath
-          runtime.publicationIdentity = persisted.publicationIdentity
-          this.recomputeAggregates(runtime)
-          restored.push(runtime)
+          return
+        }
+        // Another version's, which this one doesn't read: rc.1–rc.9 kept parts in a folder of
+        // their own (manifest version 2), later ones a different layout. Cleared, not kept forever.
+        if (!isCurrentManifest(persisted, id)) return this.discardUnrestorable(id, persisted)
+        try {
+          const runtime = await this.restoreOne(id, persisted)
+          if (runtime) restored.push(runtime)
+          else await this.discardUnrestorable(id, persisted)
         } catch {
-          // Ignore incomplete or corrupt manifests; other downloads can still be restored.
+          // As above: left for a launch where it can be read.
         }
       })
     )
 
-    // Plexo only ever tracks one current download — getCurrentDownload() always returns
-    // whichever restored runtime started most recently. Any other one restored alongside it is
-    // an orphan (most likely left over from before concurrent starts were blocked): nothing
-    // would ever look at it again, so left in `runtimes` it would sit there forever, invisibly
-    // failing every future start() with "a download is already in progress".
+    // Two writing one partial file would scramble it: of any that share one, the newest is kept
+    // and the others go, the file left to it.
     restored.sort((a, b) => b.state.startedAt - a.state.startedAt)
-    const [current, ...orphans] = restored
-
+    const claimed = new Set<string>()
+    const kept = restored.filter((runtime) => {
+      if (claimed.has(runtime.file.path)) return false
+      claimed.add(runtime.file.path)
+      return true
+    })
     await Promise.all(
-      orphans.map((runtime) =>
-        this.removePersistedDownload(runtime, runtime.file.path !== current?.file.path)
-      )
+      restored
+        .filter((runtime) => !kept.includes(runtime))
+        .map((runtime) => this.removePersistedDownload(runtime, false))
     )
 
-    if (current) {
-      if (current.state.status === 'completed' && current.publicationIdentity) {
-        const published = await stat(current.state.destinationPath).catch(() => null)
-        if (
-          published?.dev === current.publicationIdentity.dev &&
-          published.ino === current.publicationIdentity.ino
-        ) {
-          await current.file.discard().catch(() => {})
+    await Promise.all(
+      kept.map(async (runtime) => {
+        if (runtime.state.status === 'completed' && runtime.publicationIdentity) {
+          const published = await stat(runtime.state.destinationPath).catch(() => null)
+          if (
+            published?.dev === runtime.publicationIdentity.dev &&
+            published.ino === runtime.publicationIdentity.ino
+          ) {
+            await runtime.file.discardLeftover().catch(() => {})
+          }
         }
-      }
-      this.runtimes.set(current.state.id, current)
-      await this.persistNow(current)
-    }
+        this.runtimes.set(runtime.state.id, runtime)
+        // Finished before the relaunch (or found to be): history keeps it from here.
+        if (runtime.state.status === 'completed') await this.moveToHistory(runtime)
+        else await this.persistNow(runtime)
+      })
+    )
   }
 
-  /** A snapshot of the current download: an update with every block in it. */
-  async getCurrentDownload(): Promise<DownloadUpdate | null> {
+  /** A finished download leaves the list of running ones for history, with its work units: a
+   * download that is done needs none of them. Its saved state goes only once history has it. */
+  private async moveToHistory(runtime: DownloadRuntime): Promise<void> {
+    let entry: FinishedDownload
+    if (runtime.kind === 'http') {
+      const { blocks: omittedBlocks, streams: omittedStreams, ...state } = runtime.state
+      void omittedBlocks
+      void omittedStreams
+      entry = { ...state, unitsWritten: state.totalBlocks }
+    } else {
+      const { pieces, peers: omittedPeers, ...state } = runtime.state
+      void omittedPeers
+      const written = pieces.filter((piece) => piece.status !== 'skipped').length
+      const files = await this.torrentFiles(state.id)
+      entry = {
+        ...state,
+        unitsWritten: written,
+        downloadedFiles: files
+          .filter((file) => file.chosen)
+          .map((file) =>
+            state.folder ? file.path.split(/[\\/]/).slice(1).join(sep) : basename(file.path)
+          )
+      }
+    }
+    try {
+      await addToHistory(structuredClone(entry))
+    } catch {
+      // Kept as it is, to be moved on the next launch.
+      return
+    }
+    this.runtimes.delete(runtime.state.id)
+    await this.removePersistedDownload(runtime, false)
+    this.historyChanged()
+  }
+
+  private historyChanged(): void {
+    const window = this.getWindow()
+    if (window && !window.isDestroyed()) window.webContents.send(IpcChannels.historyChanged)
+  }
+
+  /** Forgets every finished download. Their files are the user's: they stay. */
+  async clearHistory(): Promise<void> {
     await this.initialization
-    const latest = [...this.runtimes.values()].sort(
-      (a, b) => b.state.startedAt - a.state.startedAt
-    )[0]
-    if (!latest) return null
-    const { blocks, ...state } = latest.state
-    return structuredClone({ seq: latest.sentUpdates, state, blocks: blocks ?? latest.blocks })
+    await Promise.allSettled(
+      [...this.runtimes.values()]
+        .filter((runtime) => runtime.state.status === 'completed')
+        .map((runtime) => runtime.runPromise)
+    )
+    await removeFromHistory()
+    this.historyChanged()
   }
 
-  /** Plexo shows one download at a time (see useAppStore's currentDownload) — starting a second
-   * one while one is already running or paused would silently race it for disk I/O and
-   * scramble the renderer's single-download view as updates from both interleave. */
-  private hasActiveDownload(): boolean {
-    for (const runtime of this.runtimes.values()) {
-      if (runtime.state.status === 'downloading' || runtime.state.status === 'paused') {
-        return true
+  /** A saved download as this version writes it, restored paused — or null when it never can
+   * be: its progress doesn't fit its plan, or a torrent's .torrent is gone. */
+  private async restoreOne(
+    id: string,
+    persisted: PersistedDownload
+  ): Promise<DownloadRuntime | null> {
+    const { requestPayload } = persisted
+    const saved: SavedBlocks = { progress: persisted.progress, complete: persisted.complete }
+    let state: DownloadState
+    let runtime: DownloadRuntime
+    if (persisted.state.kind === 'torrent' && requestPayload.kind === 'torrent') {
+      const torrentFile = await readFile(this.torrentFilePath(id)).catch((error: unknown) => {
+        if (isNotFound(error)) return null
+        throw error
+      })
+      if (!torrentFile) return null
+      const probe = await describeTorrent(torrentFile, requestPayload.url)
+      if (probe.kind !== 'torrent') return null
+      const { torrent } = probe
+      const old = persisted.state
+      const pieces = restorePieces(old, saved)
+      if (!pieces) return null
+      const chosen = chosenFiles(requestPayload.selectedFiles, torrent.files.length)
+      state = {
+        ...old,
+        networks: old.networks.map((network) => ({ ...network, uploadSpeedBytesPerSec: 0 })),
+        peers: [],
+        pieces,
+        totalPieces: pieces.length,
+        pieceLength: torrent.pieceLength,
+        // Its pieces no chosen file needs are skipped again.
+        skippedBytes: skipUnchosen(pieces, torrent, chosen),
+        uploadSpeedBytesPerSec: 0
+      }
+      runtime = this.newTorrentRuntime(
+        state,
+        requestPayload,
+        new TorrentDestination(
+          persisted.partialPath,
+          state.totalBytes,
+          unchosenPaths(torrent, chosen),
+          torrent.files.map((file) => file.path)
+        ),
+        pieces,
+        torrentFile
+      )
+    } else if (persisted.state.kind === 'http' && requestPayload.kind === 'http') {
+      const old = persisted.state
+      const blocks = restoreBlocks(old, saved)
+      if (!blocks) return null
+      state = { ...old, streams: [], blocks, totalBlocks: blocks.length }
+      runtime = this.newHttpRuntime(
+        state,
+        requestPayload,
+        new DownloadFile(persisted.partialPath),
+        blocks
+      )
+    } else {
+      return null
+    }
+    const units = unitsOf(runtime)
+    // Nothing starts by itself after a relaunch: running or waiting, it comes back paused.
+    if (state.status === 'downloading' || state.status === 'queued') {
+      state.status = 'paused'
+      state.pausedAt = persisted.savedAt || Date.now()
+      state.queuedAt = undefined
+    }
+    clearSpeeds(state)
+    for (const unit of units) {
+      if (unit.status === 'downloading') unit.status = 'pending'
+      if (unit.kind === 'torrent') unit.provisionalBytes = 0
+    }
+
+    const file = runtime.file
+    if (state.status === 'paused') {
+      const size = await file.size().catch(() => -1)
+      const publishedPath = persisted.publicationPath ?? state.destinationPath
+      const published = await stat(publishedPath).catch(() => null)
+      // A torrent's folder of files: its identity below is what tells it's this download's.
+      const publishedSize = published?.isDirectory() ? state.totalBytes : (published?.size ?? -1)
+      const expected = state.totalBytes || state.bytesDownloaded
+      const sameFile =
+        !!published &&
+        (size >= 0
+          ? await stat(file.path)
+              .then((partial) => partial.dev === published.dev && partial.ino === published.ino)
+              .catch(() => false)
+          : persisted.publicationIdentity?.dev === published.dev &&
+            persisted.publicationIdentity?.ino === published.ino)
+      if (units.every(isDone) && publishedSize === expected && sameFile) {
+        state.status = 'completed'
+        state.destinationPath = publishedPath
+        state.fileName = basename(publishedPath)
+        state.error = undefined
+        state.completedAt ??= persisted.savedAt
+        if (size >= 0) await file.discardLeftover()
+      } else if (size < 0) {
+        state.status = 'error'
+        state.error = 'The partial download file is missing. Remove this download and start again.'
+        state.resumable = false
+      } else {
+        for (const unit of units) {
+          const length = unit.rangeEnd === null ? 0 : unit.rangeEnd - unit.rangeStart + 1
+          if (
+            unit.rangeStart + unit.bytesDownloaded > size ||
+            (unit.status === 'completed' && unit.bytesDownloaded !== length)
+          ) {
+            unit.status = 'pending'
+            unit.bytesDownloaded = 0
+            unit.bytesByInterface = {}
+          }
+        }
+        state.bytesDownloaded = units.reduce((sum, unit) => sum + unit.bytesDownloaded, 0)
       }
     }
-    return false
+
+    runtime.publicationPath = persisted.publicationPath
+    runtime.publicationIdentity = persisted.publicationIdentity
+    // A resumed download's last minute starts when it does, not where it stopped before the
+    // relaunch; a finished one keeps its chart.
+    if (state.status !== 'completed') state.speedHistory = undefined
+    recomputeAggregates(state, units)
+    return runtime
+  }
+
+  /**
+   * Clears a saved download that can't be restored, rather than keep it forever: its folder here
+   * (manifest, a saved .torrent, an old version's parts/ folder), and its partial data beside the
+   * destination when that is unmistakably Plexo's (see partialLeftovers).
+   */
+  private async discardUnrestorable(id: string, persisted: unknown): Promise<void> {
+    for (const path of await partialLeftovers(persisted)) {
+      await rm(path, { recursive: true, force: true }).catch(() => {})
+    }
+    await rm(this.downloadDir(id), { recursive: true, force: true }).catch(() => {})
+  }
+
+  /** A snapshot of every download: updates with every work unit in them, oldest first. */
+  async listDownloads(): Promise<DownloadUpdate[]> {
+    await this.initialization
+    return [...this.runtimes.values()]
+      .sort((a, b) => a.state.startedAt - b.state.startedAt)
+      .map((runtime) => {
+        if (runtime.kind === 'http') {
+          const { blocks, ...state } = runtime.state
+          return structuredClone({ seq: runtime.sentUpdates, state, blocks })
+        }
+        const { pieces, ...state } = runtime.state
+        return structuredClone({ seq: runtime.sentUpdates, state, pieces })
+      })
   }
 
   async start(requestPayload: StartDownloadRequest): Promise<string> {
     await this.initialization
-    if (this.hasActiveDownload()) {
-      throw new Error('A download is already in progress — finish or remove it first.')
-    }
 
     const available = await this.networks.refresh()
     const selected = available.filter((iface) => requestPayload.interfaceIds.includes(iface.id))
     if (selected.length === 0) {
-      throw new Error('Select at least one network interface')
+      throw new Error('Select at least one network')
     }
-    const target = new URL(requestPayload.url)
-    // A selected network that can't reach the host's address family starts switched off.
-    const usable = compatibleInterfaces(
-      selected,
-      await resolveTargetWithin(targetHost(target), testKnobs.stallTimeoutMs)
-    )
-    if (usable.length === 0) throw new NoCompatibleRouteError(targetHost(target))
-
     await ensureDirectory(requestPayload.destinationDir)
-    await ensureDiskSpace(requestPayload.destinationDir, requestPayload.totalBytes)
-
-    const plan = planDownload({
-      totalBytes: requestPayload.totalBytes,
-      splittable: requestPayload.supportsRanges,
-      networkCount: usable.length,
-      maxBlockBytes: testKnobs.blockBytes // 8 MB outside tests
-    })
-
-    // Claimed on disk, not just picked, so a second download of the same file
-    // name can't pick it too and overwrite this one at publish time. Done
-    // before anything else is created, so a destination we can't write to
-    // leaves nothing behind.
-    const destinationPath = await reserveDestinationPath(
-      requestPayload.destinationDir,
-      requestPayload.suggestedFileName
-    )
-
     const id = randomUUID()
-    const file = new DownloadFile(`${destinationPath}.plexo`)
-
-    // The UI caps how many cells it renders separately (see BlockGrid), by bucketing these
-    // blocks rather than by shrinking their count here.
-    const blocks = planBlocks(requestPayload.totalBytes, plan.blockSizeBytes)
-
-    // The computer's other networks are listed too, switched off, for the user to turn on.
-    const networks = available.map((iface) => newNetwork(iface, usable.includes(iface)))
-    // Unsplittable: one network carries it (IdleScreen lets only one be picked).
-    if (!splittable(requestPayload)) {
-      for (const network of networks) network.enabled &&= network.id === usable[0].id
-      for (const network of networks) network.status = network.enabled ? 'on' : 'off'
+    let runtime: DownloadRuntime
+    if (requestPayload.kind === 'torrent') {
+      const torrentFile = probedTorrentFile(requestPayload.infoHash)
+      if (!torrentFile) throw new Error('Add the torrent again to start downloading.')
+      const torrentProbe = await describeTorrent(torrentFile, requestPayload.url)
+      if (torrentProbe.kind !== 'torrent') throw new Error('Invalid torrent metadata')
+      const torrent = torrentProbe.torrent
+      const totalBytes = torrent.files.reduce((sum, entry) => sum + entry.length, 0)
+      const chosen = chosenFiles(requestPayload.selectedFiles, torrent.files.length)
+      const pieces = planPieces(totalBytes, torrent.pieceLength)
+      const skippedBytes = skipUnchosen(pieces, torrent, chosen)
+      await ensureDiskSpace(requestPayload.destinationDir, totalBytes - skippedBytes)
+      const folder = torrent.files[0].path.includes(sep)
+      const file = await TorrentDestination.create(
+        requestPayload.destinationDir,
+        requestPayload.suggestedFileName,
+        folder,
+        totalBytes,
+        unchosenPaths(torrent, chosen),
+        torrent.files.map((file) => file.path)
+      )
+      const destinationPath = file.path
+      await ensureDirectory(this.downloadDir(id))
+      await writeFile(this.torrentFilePath(id), torrentFile)
+      const state: TorrentDownloadState = {
+        id,
+        kind: 'torrent',
+        files: { chosen: chosen?.size ?? torrent.files.length, total: torrent.files.length },
+        folder,
+        url: requestPayload.url,
+        fileName: basename(destinationPath),
+        destinationPath,
+        totalBytes,
+        skippedBytes,
+        bytesDownloaded: 0,
+        speedBytesPerSec: 0,
+        bytesUploaded: 0,
+        uploadSpeedBytesPerSec: 0,
+        status: 'downloading',
+        networks: available.map((iface) => newTorrentNetwork(iface, selected.includes(iface))),
+        peers: [],
+        peakPeers: 0,
+        pieces,
+        totalPieces: pieces.length,
+        pieceLength: torrent.pieceLength,
+        startedAt: Date.now()
+      }
+      runtime = this.newTorrentRuntime(state, requestPayload, file, pieces, torrentFile)
+    } else {
+      const target = new URL(requestPayload.url)
+      const usable = compatibleInterfaces(
+        selected,
+        await resolveTargetWithin(targetHost(target), testKnobs.stallTimeoutMs)
+      )
+      if (usable.length === 0) throw new NoCompatibleRouteError(targetHost(target))
+      const blockSizeBytes = planDownload({
+        totalBytes: requestPayload.totalBytes,
+        splittable: requestPayload.supportsRanges,
+        networkCount: usable.length,
+        maxBlockBytes: testKnobs.blockBytes
+      }).blockSizeBytes
+      const blocks = planBlocks(requestPayload.totalBytes, blockSizeBytes)
+      await ensureDiskSpace(requestPayload.destinationDir, requestPayload.totalBytes)
+      const destinationPath = await reserveDestinationPath(
+        requestPayload.destinationDir,
+        requestPayload.suggestedFileName
+      )
+      const networks = available.map((iface) => newHttpNetwork(iface, usable.includes(iface)))
+      if (!splittable(requestPayload)) {
+        for (const network of networks) network.enabled &&= network.id === usable[0].id
+        for (const network of networks) network.status = network.enabled ? 'on' : 'off'
+      }
+      const state: HttpDownloadState = {
+        id,
+        kind: 'http',
+        url: requestPayload.url,
+        fileName: basename(destinationPath),
+        destinationPath,
+        totalBytes: requestPayload.totalBytes,
+        bytesDownloaded: 0,
+        speedBytesPerSec: 0,
+        status: 'downloading',
+        networks,
+        streams: [],
+        peakStreams: 0,
+        blocks,
+        totalBlocks: blocks.length,
+        blockSizeBytes,
+        startedAt: Date.now()
+      }
+      runtime = this.newHttpRuntime(
+        state,
+        requestPayload,
+        new DownloadFile(`${destinationPath}.plexo`),
+        blocks
+      )
     }
-
-    const state: DownloadState = {
-      id,
-      url: requestPayload.url,
-      fileName: basename(destinationPath),
-      destinationPath,
-      totalBytes: requestPayload.totalBytes,
-      bytesDownloaded: 0,
-      speedBytesPerSec: 0,
-      status: 'downloading',
-      networks,
-      chunks: [],
-      peakStreams: 0,
-      blocks,
-      totalBlocks: blocks.length,
-      blockSizeBytes: plan.blockSizeBytes,
-      startedAt: Date.now()
-    }
-
-    const runtime = newRuntime(state, requestPayload, file, blocks)
+    // Decided only now: other starts may have taken the room while this one was set up.
+    const room = this.runningCount() < this.downloadsAtOnce
+    if (!room) this.enqueue(runtime, false)
     this.runtimes.set(id, runtime)
     await this.persistNow(runtime)
     this.pushUpdate(runtime)
-
-    runtime.runPromise = this.run(runtime)
+    if (room) this.launch(runtime)
 
     return id
   }
 
+  /** Runs the download, and once the run ends makes room for the next one queued. */
+  private launch(runtime: DownloadRuntime): void {
+    runtime.runPromise = this.run(runtime).finally(() => this.pump())
+  }
+
   async pause(id: string): Promise<void> {
     const runtime = this.runtimes.get(id)
+    if (runtime?.state.status === 'queued') {
+      runtime.state.status = 'paused'
+      runtime.state.queuedAt = undefined
+      runtime.state.pausedAt ??= Date.now()
+      this.pushUpdate(runtime)
+      await this.persistNow(runtime)
+      return
+    }
     if (!runtime || runtime.state.status !== 'downloading' || runtime.publishing) return
 
     runtime.state.status = 'paused'
     runtime.state.pausedAt = Date.now()
     clearSpeeds(runtime.state)
-    for (const chunk of runtime.state.chunks) {
-      if (chunk.status !== 'completed') {
-        chunk.status = 'paused'
-      }
-      chunk.currentBlockIndex = undefined
-      chunk.hedge = undefined
-    }
-    for (const block of runtime.blocks) {
-      if (block.status === 'downloading') {
-        block.status = 'pending'
+    if (runtime.kind === 'http') {
+      for (const stream of runtime.state.streams) {
+        if (stream.status !== 'completed') {
+          stream.status = 'paused'
+        }
+        stream.currentBlockIndex = undefined
+        stream.hedge = undefined
       }
     }
-    runtime.avoidNetworkByBlock.clear()
+    for (const unit of unitsOf(runtime)) {
+      if (unit.status === 'downloading') {
+        unit.status = 'pending'
+      }
+      if (unit.kind === 'torrent') unit.provisionalBytes = 0
+    }
+    runtime.transfer.reset()
     this.stopRun(runtime)
     this.pushUpdate(runtime)
     await runtime.runPromise
     await this.persistNow(runtime)
   }
 
+  /** Gives a download whose link stopped working (a signed link ran out, say) a fresh link to the
+   * same file, and resumes it from where it stopped. The file must be as big as before; whether
+   * its bytes are the same is checked as on any resume (see HttpTransfer's version check). */
+  async relink(id: string, url: string): Promise<void> {
+    const runtime = this.runtimes.get(id)
+    if (runtime?.kind !== 'http') throw new Error('Only web downloads support replacing a link.')
+    const { status, resumable, totalBytes } = runtime.state
+    if (status !== 'error' && status !== 'paused') {
+      throw new Error('Pause the download before replacing its link.')
+    }
+    if (resumable === false) throw new Error('This download can’t resume. Start it again.')
+    const probe = await probeUrl(url)
+    if (probe.kind !== 'http') throw new Error('That isn’t a link to a file')
+    if ((probe.totalBytes ?? 0) !== totalBytes) {
+      throw new Error(
+        `That link is to a different file: ${formatGigabytes(probe.totalBytes ?? 0)}, not ${formatGigabytes(totalBytes)}`
+      )
+    }
+    if (splittable(runtime.requestPayload) && !probe.supportsRanges) {
+      throw new Error(
+        'This server doesn’t support resuming downloads. Try another link to the same file.'
+      )
+    }
+    runtime.requestPayload.url = probe.finalUrl
+    runtime.state.url = probe.finalUrl
+    await this.persistNow(runtime)
+    this.resume(id)
+  }
+
   resume(id: string): void {
     const runtime = this.runtimes.get(id)
-    if (!runtime) return
+    if (!runtime || runtime.cancelPromise) return
     const { status, resumable } = runtime.state
     if (status !== 'paused' && !(status === 'error' && resumable !== false)) return
 
@@ -779,12 +924,32 @@ export class DownloadManager {
       this.pushUpdate(runtime)
       return
     }
-    if (runtime.state.status !== 'paused' && runtime.state.status !== 'error') return
+    if (
+      runtime.cancelPromise ||
+      (runtime.state.status !== 'paused' && runtime.state.status !== 'error')
+    )
+      return
     const { networks } = runtime.state
     // Switched back on, then off again while the paused run wound down: it stays paused.
     if (byNetwork && !networks.some((network) => network.enabled)) return
 
+    if (this.runningCount() >= this.downloadsAtOnce) {
+      // Asked for by name, so it goes next.
+      this.enqueue(runtime, true)
+      runtime.state.error = undefined
+      runtime.state.resumable = undefined
+      runtime.pausedForNoNetwork = undefined
+      this.pushUpdate(runtime)
+      return
+    }
+    this.begin(runtime)
+  }
+
+  /** Starts a run of a paused, failed or queued download, from where it stopped. */
+  private begin(runtime: DownloadRuntime): void {
+    const { networks } = runtime.state
     runtime.state.status = 'downloading'
+    runtime.state.queuedAt = undefined
     runtime.state.error = undefined
     runtime.state.resumable = undefined
     runtime.pausedForNoNetwork = undefined
@@ -811,22 +976,28 @@ export class DownloadManager {
         (runtime.state.totalPausedMs || 0) + (Date.now() - runtime.state.pausedAt)
       runtime.state.pausedAt = undefined
     }
-    for (const block of runtime.blocks) {
-      if (block.status !== 'completed') {
-        block.status = 'pending'
+    for (const unit of unitsOf(runtime)) {
+      if (unit.status === 'downloading') {
+        unit.status = 'pending'
       }
+      if (unit.kind === 'torrent') unit.provisionalBytes = 0
     }
-    for (const chunk of runtime.state.chunks) {
-      if (chunk.status !== 'completed') {
-        chunk.status = 'pending'
+    if (runtime.kind === 'http') {
+      for (const stream of runtime.state.streams) {
+        if (stream.status !== 'completed') {
+          stream.status = 'pending'
+        }
+        runtime.speedSamplesByStream.delete(stream.id)
+        stream.speedBytesPerSec = 0
       }
-      runtime.speedSamplesByChunk.delete(chunk.id)
-      chunk.speedBytesPerSec = 0
+    } else {
+      runtime.state.peers.length = 0
+      runtime.speedSamplesByPeer.clear()
     }
-    runtime.avoidNetworkByBlock.clear()
+    runtime.transfer.reset()
     this.pushUpdate(runtime)
 
-    runtime.runPromise = this.run(runtime)
+    this.launch(runtime)
   }
 
   /** Switches one of a download's networks on or off, running or paused. Switching off the last
@@ -834,13 +1005,19 @@ export class DownloadManager {
   async setNetworkEnabled(id: string, networkId: string, enabled: boolean): Promise<void> {
     const runtime = this.runtimes.get(id)
     const status = runtime?.state.status
-    if (!runtime || (status !== 'downloading' && status !== 'paused')) return
+    if (
+      !runtime ||
+      runtime.cancelPromise ||
+      (status !== 'downloading' && status !== 'paused' && status !== 'queued')
+    ) {
+      return
+    }
     const { networks } = runtime.state
     const network = networks.find((entry) => entry.id === networkId)
     if (!network || network.enabled === enabled) return
     const wasLast = !enabled && !networks.some((other) => other !== network && other.enabled)
     // A download that can't be split runs over one network: switching one on switches it over.
-    if (enabled && !splittable(runtime.requestPayload)) {
+    if (enabled && runtime.kind === 'http' && !splittable(runtime.requestPayload)) {
       for (const other of networks) other.enabled = false
     }
     network.enabled = enabled
@@ -882,10 +1059,9 @@ export class DownloadManager {
 
     for (const runtime of this.runtimes.values()) {
       const { status } = runtime.state
-      if (status !== 'downloading' && status !== 'paused') continue
+      if (status !== 'downloading' && status !== 'paused' && status !== 'queued') continue
       this.reconcile(runtime)
-      this.wake(
-        runtime,
+      runtime.transfer.wake(
         (id) => changed.has(id),
         (id) => moved.has(id)
       )
@@ -900,45 +1076,8 @@ export class DownloadManager {
     const now = Date.now()
     for (const runtime of this.runtimes.values()) {
       if (runtime.state.status !== 'downloading') continue
-      for (const traffic of runtime.traffic.values()) traffic.aliveAt = now
-      for (const self of runtime.chunkRuntimes.values()) {
-        self.warmSince = now
-        self.slowSince = null
-      }
-      this.wake(
-        runtime,
-        () => true,
-        () => true
-      )
+      runtime.transfer.systemResumed(now)
     }
-  }
-
-  /**
-   * Gets streams going again now, rather than when their backoff runs out: what held them back
-   * has changed. The ones `reconnect` picks also drop their sockets, and what they were fetching
-   * is taken up again on a new one: a refresh, so nothing is lost and no retry is counted.
-   */
-  private wake(
-    runtime: DownloadRuntime,
-    pick: (networkId: string) => boolean,
-    reconnect: (networkId: string) => boolean
-  ): void {
-    for (const chunk of runtime.state.chunks) {
-      const self = runtime.chunkRuntimes.get(chunk.id)
-      if (!self || self.retiring || !pick(chunk.interfaceId)) continue
-      self.failures = 0
-      if (reconnect(chunk.interfaceId)) {
-        if (self.attempt) this.abortAttempt(self.attempt, 'refresh')
-        self.connection.reconnect()
-      }
-      self.nudge.abort()
-    }
-  }
-
-  /** Waits out a backoff; cut short when the stream stops, or is woken (see wake). */
-  private async backOff(self: ChunkRuntime, ms: number): Promise<void> {
-    await delay(ms, AbortSignal.any([self.wait, self.nudge.signal]))
-    if (self.nudge.signal.aborted) self.nudge = new AbortController()
   }
 
   /** Keeps the computer from sleeping while a download runs, which would stop it — as
@@ -959,39 +1098,119 @@ export class DownloadManager {
     }
   }
 
+  /** A torrent download's files, read from its .torrent: they never change, so they're asked
+   * for when shown rather than sent with every update. */
+  async torrentFiles(id: string): Promise<TorrentFileEntry[]> {
+    const request = this.runtimes.get(id)?.requestPayload
+    if (request?.kind !== 'torrent') return []
+    const torrentFile = await readFile(this.torrentFilePath(id))
+    const probe = await describeTorrent(torrentFile, request.url)
+    if (probe.kind !== 'torrent') return []
+    const { files } = probe.torrent
+    const chosen = chosenFiles(request.selectedFiles, files.length)
+    return files.map((file, index) => ({ ...file, chosen: !chosen || chosen.has(index) }))
+  }
+
   async cancel(id: string): Promise<void> {
     const runtime = this.runtimes.get(id)
+    if (runtime?.cancelPromise) return runtime.cancelPromise
     if (
       !runtime ||
       runtime.publishing ||
       (runtime.state.status !== 'downloading' &&
         runtime.state.status !== 'paused' &&
+        runtime.state.status !== 'queued' &&
         runtime.state.status !== 'error')
     )
       return
 
-    runtime.state.status = 'cancelled'
-    clearSpeeds(runtime.state)
-    for (const chunk of runtime.state.chunks) chunk.status = 'cancelled'
-    this.stopRun(runtime)
-    this.pushUpdate(runtime, false)
-    await runtime.runPromise
-    await runtime.file.discard()
-    await this.removePersistedDownload(runtime)
+    runtime.cancelPromise = this.cancelRuntime(runtime)
+    try {
+      await runtime.cancelPromise
+    } finally {
+      runtime.cancelPromise = undefined
+    }
   }
 
-  async remove(id: string): Promise<void> {
-    const runtime = this.runtimes.get(id)
+  private async cancelRuntime(runtime: DownloadRuntime): Promise<void> {
+    try {
+      // Stop writing first, but keep the item visible until its files and manifest are gone.
+      await this.pause(runtime.state.id)
+      if (runtime.state.status !== 'error') {
+        runtime.state.status = 'paused'
+        runtime.state.queuedAt = undefined
+        runtime.state.pausedAt ??= Date.now()
+      }
+      clearSpeeds(runtime.state)
+      this.stopRun(runtime)
+      this.pushUpdate(runtime, false)
+      await runtime.runPromise?.catch(() => {})
+      await runtime.file.discard()
+      await this.removePersistedDownload(runtime, false)
+      runtime.state.status = 'cancelled'
+      if (runtime.kind === 'http') {
+        for (const stream of runtime.state.streams) stream.status = 'cancelled'
+      }
+      this.pushUpdate(runtime, false)
+    } catch (error) {
+      runtime.removed = false
+      runtime.state.status = 'error'
+      runtime.state.error = error instanceof Error ? error.message : String(error)
+      // Cleanup may have removed only some files: retry cancellation rather than resuming them.
+      runtime.state.resumable = false
+      this.pushUpdate(runtime, false)
+      await this.persistNow(runtime)
+      throw error
+    } finally {
+      // A queued one never ran, so no run's end makes room after it.
+      this.pump()
+    }
+  }
+
+  /** Removes a download, cancelling one under way. A finished one's file stays where it is,
+   * unless `trashFile`: then it goes to the Trash, where the user can still get it back. The
+   * path is the download's own, never one the window names. */
+  async remove(id: string, trashFile = false): Promise<void> {
+    await this.initialization
+    let runtime = this.runtimes.get(id)
+    if (runtime?.state.status === 'completed') {
+      // Completion is shown before history is saved. Let that move finish before choosing
+      // whether to remove a live runtime or a history entry, including for torrent file removal.
+      await runtime.runPromise?.catch(() => {})
+      runtime = this.runtimes.get(id)
+    }
     if (
       runtime &&
       (runtime.state.status === 'downloading' ||
         runtime.state.status === 'paused' ||
+        runtime.state.status === 'queued' ||
         runtime.state.status === 'error')
     ) {
       await this.cancel(id)
     }
-    this.runtimes.delete(id)
-    if (runtime) await this.removePersistedDownload(runtime)
+    if (runtime) {
+      if (trashFile && runtime.state.status === 'completed') {
+        const owned =
+          runtime.kind === 'torrent'
+            ? (await this.torrentFiles(id))
+                .filter((file) => file.chosen)
+                .map((file) => file.path.split(/[\\/]/).slice(1).join(sep))
+            : undefined
+        await trashDownload(runtime.state, owned)
+      }
+      this.runtimes.delete(id)
+      await this.removePersistedDownload(runtime)
+      if (runtime.state.status === 'completed') {
+        await removeFromHistory([id])
+        this.historyChanged()
+      }
+      return
+    }
+    // A finished one, from history.
+    const entry = trashFile ? await findInHistory(id) : undefined
+    if (entry && !entry.missing) await trashDownload(entry)
+    await removeFromHistory([id])
+    this.historyChanged()
   }
 
   async suspendAll(): Promise<void> {
@@ -1003,6 +1222,7 @@ export class DownloadManager {
         else await this.persistNow(runtime)
       })
     )
+    await this.limits.save()
   }
 
   /**
@@ -1012,32 +1232,46 @@ export class DownloadManager {
    */
   private async run(runtime: DownloadRuntime): Promise<void> {
     if (runtime.stop.signal.aborted) runtime.stop = new AbortController()
-    runtime.reconciled.clear()
+    runtime.transfer.reset()
     const { signal } = runtime.stop
     this.reconcile(runtime)
+    // One watcher per stream for its whole life. Racing every stream each tick would pile a
+    // handler per tick onto each one still running, held until it ends.
+    const watched = new WeakSet<Promise<void>>()
+    let wake: { resolve: () => void; reject: (error: unknown) => void } | null = null
 
     while (
       runtime.state.status === 'downloading' &&
-      runtime.blocks.some((block) => block.status !== 'completed')
+      unitsOf(runtime).some((unit) => !isDone(unit))
     ) {
-      await Promise.race([delay(TICK_MS, signal), ...runtime.workers.values()])
+      await new Promise<void>((resolve, reject) => {
+        wake = { resolve, reject }
+        for (const worker of runtime.transfer.running()) {
+          if (watched.has(worker)) continue
+          watched.add(worker)
+          worker.then(
+            () => wake?.resolve(),
+            (error) => wake?.reject(error)
+          )
+        }
+        void delay(TICK_MS, signal).then(resolve)
+      })
       if ((runtime.state.status as DownloadStatus) !== 'downloading') break
       const now = Date.now()
       const speed = runtime.state.speedBytesPerSec
       updateSpeeds(runtime, now)
       if (runtime.state.speedBytesPerSec !== speed) this.scheduleUpdate(runtime)
-      this.refreshStuckConnections(runtime, now)
-      this.reconcile(runtime)
-      this.adjustStreams(runtime, runtime.concurrency?.tick(this.concurrencySnapshot(runtime)))
-      // Each refusal is counted once.
-      for (const self of runtime.chunkRuntimes.values()) {
-        self.refused = false
-        self.served = false
+      runtime.bestSpeedSeen = Math.max(runtime.bestSpeedSeen, runtime.state.speedBytesPerSec)
+      if (now - runtime.speedSampledAt >= 1000) {
+        runtime.speedSampledAt = now
+        sampleSpeeds(runtime.state)
+        this.scheduleUpdate(runtime)
       }
+      runtime.transfer.tick(now)
     }
     // The last blocks are in, or the run was stopped: its streams wind down.
     runtime.stop.abort()
-    await Promise.all(runtime.workers.values())
+    await Promise.all(runtime.transfer.running())
 
     if (runtime.state.status !== 'downloading') {
       // Paused, errored, or cancelled — nothing left to do right now. An error keeps what it has
@@ -1051,7 +1285,7 @@ export class DownloadManager {
 
     runtime.publishing = true
     try {
-      if (runtime.blocks.some((block) => block.status !== 'completed')) {
+      if (unitsOf(runtime).some((unit) => !isDone(unit))) {
         throw new Error('Download is incomplete — refusing to publish the file')
       }
       await this.persistNow(runtime)
@@ -1069,24 +1303,33 @@ export class DownloadManager {
       runtime.state.fileName = basename(publishedPath)
       runtime.state.status = 'completed'
       runtime.state.completedAt = Date.now()
-      runtime.state.bytesDownloaded = runtime.state.totalBytes || runtime.state.bytesDownloaded
+      // Done before it held a speed for long: the best it showed.
+      if (runtime.bestSpeedSeen > 0) runtime.state.peakSpeedBytesPerSec ??= runtime.bestSpeedSeen
+      runtime.state.bytesDownloaded =
+        runtime.state.totalBytes -
+          (runtime.state.kind === 'torrent' ? runtime.state.skippedBytes : 0) ||
+        runtime.state.bytesDownloaded
       await this.persistNow(runtime)
-      await runtime.file.discard().catch(() => {})
-      this.notify('Download Complete', `${runtime.state.fileName} has finished downloading.`)
+      await runtime.file.discardLeftover().catch(() => {})
+      this.notify('Download complete', `${runtime.state.fileName} has finished downloading.`)
     } catch (error) {
       runtime.state.status = 'error'
       runtime.state.error = error instanceof Error ? error.message : String(error)
-      this.notify('Download Failed', `${runtime.state.fileName}: ${runtime.state.error}`)
+      this.notify(
+        'Download failed',
+        `${runtime.state.fileName}: ${describeError(runtime.state.error)}`
+      )
     }
     runtime.publishing = false
 
     this.pushUpdate(runtime)
+    if (runtime.state.status === 'completed') await this.moveToHistory(runtime)
   }
 
   /** Stops the current run: every stream, and the run's own wait. */
   private stopRun(runtime: DownloadRuntime): void {
     runtime.stop.abort()
-    for (const self of runtime.chunkRuntimes.values()) self.controller.abort()
+    runtime.transfer.abort()
   }
 
   /** Ends the download in an error. What it has downloaded stays for a resume, unless
@@ -1096,7 +1339,7 @@ export class DownloadManager {
     runtime.state.status = 'error'
     runtime.state.error = message
     runtime.state.resumable = !discard
-    this.notify('Download Failed', `${runtime.state.fileName}: ${message}`)
+    this.notify('Download failed', `${runtime.state.fileName}: ${describeError(message)}`)
     this.stopRun(runtime)
   }
 
@@ -1108,12 +1351,6 @@ export class DownloadManager {
     this.reconcile(runtime)
   }
 
-  private network(runtime: DownloadRuntime, id: string): DownloadNetwork {
-    const network = runtime.state.networks.find((entry) => entry.id === id)
-    if (!network) throw new Error(`Unknown network ${id}`)
-    return network
-  }
-
   /**
    * Brings the download's networks up to date with the computer's, and each network's streams in
    * line with what it can do now. Runs every tick and whenever something changes — a network
@@ -1123,14 +1360,7 @@ export class DownloadManager {
    * Networks: every one on the computer is listed; one that turns up mid-download starts off,
    * for the user to switch on. A network the download never used is dropped once it goes.
    *
-   * Streams, while the download runs:
-   * - A network that has just come into use (on) starts a set of them (see startingStreams);
-   *   from there concurrency.ts sizes it.
-   * - One that can't reach the server (unreachable) keeps a single stream trying, to find out
-   *   when it can again.
-   * - One that is off, offline or failed runs none. Retiring a stream costs nothing: what it
-   *   wrote stays, and whoever takes its block next resumes from there.
-   * A download that can't be split runs one stream, on the first network able to carry it.
+   * Streams, while the download runs, are the transfer's (see HttpTransfer.reconcile).
    */
   private reconcile(runtime: DownloadRuntime): void {
     const { state } = runtime
@@ -1138,16 +1368,28 @@ export class DownloadManager {
     // Until the monitor has looked, nothing is known to be gone.
     const known = present !== null
     if (known) {
-      state.networks = state.networks.filter(
-        (network) =>
-          network.enabled ||
-          network.bytesDownloaded > 0 ||
-          present.some((iface) => iface.id === network.id) ||
-          state.chunks.some((chunk) => chunk.interfaceId === network.id)
-      )
+      if (state.kind === 'http') {
+        state.networks = state.networks.filter(
+          (network) =>
+            network.enabled ||
+            network.bytesDownloaded > 0 ||
+            present.some((iface) => iface.id === network.id) ||
+            state.streams.some((stream) => stream.interfaceId === network.id)
+        )
+      } else {
+        state.networks = state.networks.filter(
+          (network) =>
+            network.enabled ||
+            network.bytesDownloaded > 0 ||
+            network.bytesUploaded > 0 ||
+            present.some((iface) => iface.id === network.id) ||
+            state.peers.some((peer) => peer.interfaceId === network.id)
+        )
+      }
       for (const iface of present) {
         if (!state.networks.some((network) => network.id === iface.id)) {
-          state.networks.push(newNetwork(iface, false))
+          if (state.kind === 'http') state.networks.push(newHttpNetwork(iface, false))
+          else state.networks.push(newTorrentNetwork(iface, false))
         }
       }
     }
@@ -1162,9 +1404,11 @@ export class DownloadManager {
         ? 'off'
         : !iface && known
           ? 'offline'
-          : network.status === 'off' || network.status === 'offline'
-            ? 'on'
-            : network.status
+          : this.limits.limitReached(network.id)
+            ? 'limit'
+            : network.status === 'off' || network.status === 'offline' || network.status === 'limit'
+              ? 'on'
+              : network.status
       if (status !== network.status) {
         network.status = status
         network.error = undefined
@@ -1178,197 +1422,7 @@ export class DownloadManager {
       return
     }
 
-    const canSplit = splittable(runtime.requestPayload)
-    const usable = state.networks.filter(
-      (network) => network.status === 'on' || network.status === 'unreachable'
-    )
-    const running = canSplit ? usable : usable.slice(0, 1)
-    const joining = running.filter(
-      (network) =>
-        network.status === 'on' &&
-        (runtime.reconciled.get(network.id) !== 'on' ||
-          this.liveStreams(runtime, network.id).length === 0)
-    )
-    const starting = canSplit
-      ? startingStreams(
-          runtime.blocks.filter((block) => block.status === 'pending').length,
-          joining.length,
-          testStreamsPerNetwork() ?? pickedStreams(runtime.requestPayload)
-        )
-      : 1
-
-    const now = Date.now()
-    const toStart: ChunkState[] = []
-    for (const network of state.networks) {
-      const live = this.liveStreams(runtime, network.id)
-      const target = !running.includes(network)
-        ? 0
-        : network.status === 'unreachable'
-          ? 1
-          : joining.includes(network)
-            ? Math.max(live.length, starting)
-            : live.length
-      if (joining.includes(network)) this.traffic(runtime, network.id).aliveAt = now
-      if (live.length > target) this.retireStreams(runtime, network.id, live.length - target)
-      // Streams kept from before a pause start again.
-      for (const chunk of live.slice(0, target)) {
-        if (!runtime.workers.has(chunk.id)) toStart.push(chunk)
-      }
-      if (target > live.length) {
-        toStart.push(...this.addStreams(runtime, network.id, target - live.length))
-      }
-      runtime.reconciled.set(network.id, network.status)
-    }
-    // Each stream claims a block the moment it starts, so every network gets its first before
-    // any gets a second: a small file shouldn't all go to whichever network came first.
-    this.startStreams(
-      runtime,
-      interleave(toStart, (chunk) => chunk.interfaceId)
-    )
-  }
-
-  /** A network's streams that aren't on their way out. */
-  private liveStreams(runtime: DownloadRuntime, networkId: string): ChunkState[] {
-    return runtime.state.chunks.filter(
-      (chunk) => chunk.interfaceId === networkId && !runtime.chunkRuntimes.get(chunk.id)?.retiring
-    )
-  }
-
-  private traffic(
-    runtime: DownloadRuntime,
-    networkId: string
-  ): { received: number; aliveAt: number } {
-    let traffic = runtime.traffic.get(networkId)
-    if (!traffic) runtime.traffic.set(networkId, (traffic = { received: 0, aliveAt: 0 }))
-    return traffic
-  }
-
-  private startStreams(runtime: DownloadRuntime, chunks: ChunkState[]): void {
-    for (const chunk of chunks) {
-      runtime.workers.set(
-        chunk.id,
-        this.runWorker(runtime, chunk).finally(() => {
-          runtime.workers.delete(chunk.id)
-          if (runtime.chunkRuntimes.get(chunk.id)?.retiring) this.removeStream(runtime, chunk)
-        })
-      )
-    }
-    if (chunks.length > 0) this.scheduleUpdate(runtime)
-  }
-
-  private adjustStreams(runtime: DownloadRuntime, actions: Action[] | undefined): void {
-    for (const action of actions ?? []) {
-      if (action.kind === 'add') {
-        this.startStreams(runtime, this.addStreams(runtime, action.networkId, action.count))
-      } else {
-        this.retireStreams(runtime, action.networkId, action.count)
-      }
-    }
-  }
-
-  /**
-   * Reconnects a connection that isn't carrying its weight. Reconnecting is cheap — the block
-   * resumes from the staging file — and a fresh connection usually lands somewhere healthy.
-   *
-   * - Silent: nothing received for SILENT_AFTER_MS while the file is demonstrably being served
-   *   to others. Judged by the clock alone, so it also catches a network that has yet to
-   *   deliver a byte and therefore has no speed to be compared with.
-   * - Crawling: under SLOW_RATIO of its network's reference speed for SLOW_FOR_MS. The reference
-   *   is the median of what connections on the same network are doing now and did on their last
-   *   finished block — its own included, which covers the tail (everyone else is done) and a
-   *   network with a single connection. Networks are never compared with each other: cellular
-   *   is expected to be slower than Wi-Fi.
-   *
-   * Reconnecting only swaps one connection for another, and stops after a couple of tries; what
-   * can finish a block whose connections all crawl is a hedge (see scheduler.ts).
-   */
-  private refreshStuckConnections(runtime: DownloadRuntime, now: number): void {
-    // Without ranges a reconnect restarts the whole file from byte 0.
-    if (!runtime.requestPayload.supportsRanges) return
-
-    let unreachable = false
-    for (const chunk of runtime.state.chunks) {
-      const self = runtime.chunkRuntimes.get(chunk.id)
-      const attempt = self?.attempt
-      if (!self || !attempt || attempt.abortReason) continue
-
-      const silent = this.isSilent(runtime, attempt, now)
-      // A refresh isn't a failure, so no failed request would say that the network can't get
-      // through; a connection gone silent with the rest of its network says it instead, as soon
-      // as SILENT_AFTER_MS rather than once a connect or stall timeout has run out.
-      if (silent && this.markUnreachable(runtime, this.network(runtime, attempt.networkId), now)) {
-        unreachable = true
-      }
-      // Silent while its network's other connections are served: the server took the connection
-      // and left it waiting, which is how some turn away one too many (see concurrency.ts).
-      if (silent) self.refused = true
-
-      const index = attempt.block.index
-      const refreshes = runtime.refreshesByBlock.get(index) ?? 0
-      // A hedge is optional work: it is only ever dropped, never counted against its block.
-      const isPrimary = attempt.kind === 'primary'
-      if (isPrimary && refreshes >= MAX_REFRESHES_PER_BLOCK) continue
-
-      if (silent || (isPrimary && this.isCrawling(runtime, chunk, self, now))) {
-        if (isPrimary) runtime.refreshesByBlock.set(index, refreshes + 1)
-        this.abortAttempt(attempt, 'refresh')
-      }
-    }
-    if (unreachable) this.reconcile(runtime)
-  }
-
-  /** Marks a network in use that has received nothing for SILENT_AFTER_MS as unable to reach the
-   * server. Whether it did. */
-  private markUnreachable(
-    runtime: DownloadRuntime,
-    network: DownloadNetwork,
-    now: number
-  ): boolean {
-    if (network.status !== 'on') return false
-    if (now - this.traffic(runtime, network.id).aliveAt < SILENT_AFTER_MS) return false
-    network.status = 'unreachable'
-    return true
-  }
-
-  private isSilent(runtime: DownloadRuntime, attempt: Attempt, now: number): boolean {
-    if (attempt.networkReceived > 0 || now - attempt.startedAt < SILENT_AFTER_MS) return false
-    // Until something has arrived, a quiet origin is just a slow one — nothing to blame this
-    // connection for.
-    return runtime.blocks.some(
-      (block) => block.index !== attempt.block.index && block.bytesDownloaded > 0
-    )
-  }
-
-  private isCrawling(
-    runtime: DownloadRuntime,
-    chunk: ChunkState,
-    self: ChunkRuntime,
-    now: number
-  ): boolean {
-    const warm = (connection: ChunkRuntime): boolean => now - connection.warmSince >= SLOW_WARMUP_MS
-    if (!warm(self)) return false
-
-    const reference: number[] = []
-    for (const other of runtime.state.chunks) {
-      if (other.interfaceId !== chunk.interfaceId) continue
-      const peer = runtime.chunkRuntimes.get(other.id)
-      if (!peer) continue
-      if (peer.lastBlockSpeed > 0) reference.push(peer.lastBlockSpeed)
-      if (other !== chunk && peer.attempt && warm(peer)) reference.push(other.speedBytesPerSec)
-    }
-
-    if (reference.length === 0 || chunk.speedBytesPerSec >= median(reference) * SLOW_RATIO) {
-      self.slowSince = null
-      return false
-    }
-    self.slowSince ??= now
-    return now - self.slowSince >= SLOW_FOR_MS
-  }
-
-  private abortAttempt(attempt: Attempt, reason: AbortReason): void {
-    if (attempt.abortReason) return
-    attempt.abortReason = reason
-    attempt.abort.abort()
+    runtime.transfer.reconcile()
   }
 
   private notify(title: string, body: string): void {
@@ -1387,678 +1441,6 @@ export class DownloadManager {
     } catch {
       // Best-effort notification
     }
-  }
-
-  // --- attempts ---------------------------------------------------------------------------------
-  //
-  // A stream's life is a loop: ask the scheduler for work, run it as an attempt, then apply what
-  // became of it. Everything that changes the download's state happens in the synchronous stretches
-  // between awaits, so a stream never sees another's half-finished change.
-
-  /** Where an attempt has got to in its block. */
-  private attemptPosition(attempt: Attempt): number {
-    return (attempt.startOffset ?? 0) + attempt.received
-  }
-
-  /** How far the block's other attempts have got: what is safe to keep counted when one lets go. */
-  private otherAttemptsPosition(runtime: DownloadRuntime, attempt: Attempt): number {
-    let furthest = 0
-    for (const other of runtime.attempts.get(attempt.block.index) ?? []) {
-      if (other !== attempt) furthest = Math.max(furthest, this.attemptPosition(other))
-    }
-    return furthest
-  }
-
-  /** The stream holds no block: it says so, rather than keeping the last one's numbers on show. */
-  private goIdle(chunk: ChunkState): void {
-    chunk.status = 'pending'
-    chunk.currentBlockIndex = undefined
-    chunk.hedge = undefined
-    chunk.speedBytesPerSec = 0
-  }
-
-  private beginAttempt(
-    runtime: DownloadRuntime,
-    chunk: ChunkState,
-    self: ChunkRuntime,
-    work: Work
-  ): Attempt {
-    const { block } = work
-    const attempt: Attempt = {
-      kind: work.kind,
-      block,
-      streamId: chunk.id,
-      networkId: chunk.interfaceId,
-      startOffset: null,
-      received: 0,
-      networkReceived: 0,
-      lastNetworkAt: 0,
-      startedAt: Date.now(),
-      // Whoever held this block before now is the one whose tail bytes a truncation would
-      // discard — captured before the lease overwrites the field.
-      previousWriter: block.interfaceId,
-      abort: new AbortController(),
-      abortReason: null,
-      response: null
-    }
-
-    if (work.kind === 'primary') {
-      block.status = 'downloading'
-      block.interfaceId = chunk.interfaceId
-      runtime.avoidNetworkByBlock.delete(block.index)
-    } else {
-      runtime.hedgesByBlock.set(block.index, (runtime.hedgesByBlock.get(block.index) ?? 0) + 1)
-    }
-    const inFlight = runtime.attempts.get(block.index)
-    if (inFlight) inFlight.push(attempt)
-    else runtime.attempts.set(block.index, [attempt])
-    self.attempt = attempt
-
-    chunk.status = 'downloading'
-    chunk.hedge = work.kind === 'hedge' ? true : undefined
-    chunk.rangeStart = block.rangeStart
-    chunk.rangeEnd = block.rangeEnd
-    chunk.currentBlockIndex = block.index
-    return attempt
-  }
-
-  /** Takes the attempt off the books. Safe to repeat. */
-  private endAttempt(runtime: DownloadRuntime, self: ChunkRuntime, attempt: Attempt): void {
-    const inFlight = runtime.attempts.get(attempt.block.index)
-    if (inFlight) {
-      const position = inFlight.indexOf(attempt)
-      if (position >= 0) inFlight.splice(position, 1)
-      if (inFlight.length === 0) runtime.attempts.delete(attempt.block.index)
-    }
-    if (self.attempt === attempt) self.attempt = null
-  }
-
-  /** Sends the request and reports how it ended. Never throws. */
-  private async executeAttempt(
-    runtime: DownloadRuntime,
-    chunk: ChunkState,
-    self: ChunkRuntime,
-    attempt: Attempt
-  ): Promise<AttemptOutcome> {
-    const { block } = attempt
-    try {
-      if (attempt.kind === 'primary') {
-        // A failed range leaves its written prefix in the staging file. Without range support,
-        // the server can only restart from byte zero.
-        attempt.startOffset = runtime.requestPayload.supportsRanges ? block.bytesDownloaded : 0
-        // What another attempt has already secured stays counted.
-        const keep = Math.max(attempt.startOffset, this.otherAttemptsPosition(runtime, attempt))
-        if (retractBlock(block, keep, attempt.previousWriter) > 0) this.recomputeAggregates(runtime)
-      } else {
-        attempt.startOffset = block.bytesDownloaded
-      }
-
-      const length = block.rangeEnd === null ? null : block.rangeEnd - block.rangeStart + 1
-      if (length !== null && attempt.startOffset >= length) {
-        // The staging file already holds the whole block.
-        return attempt.kind === 'primary'
-          ? { type: 'completed' }
-          : { type: 'aborted', reason: 'lost' }
-      }
-
-      attempt.startedAt = Date.now()
-      await downloadChunk({
-        url: runtime.requestPayload.url,
-        rangeStart: block.rangeStart + attempt.startOffset,
-        rangeEnd: block.rangeEnd,
-        connection: self.connection,
-        createDestination: () => runtime.file.writer(block.rangeStart + (attempt.startOffset ?? 0)),
-        signal: AbortSignal.any([self.controller.signal, attempt.abort.signal]),
-        acceptedVersions: runtime.acceptedVersions,
-        onResponse: (info) => (attempt.response = info),
-        onNetworkProgress: (bytesThisRun) => {
-          const delta = bytesThisRun - attempt.networkReceived
-          if (delta > 0) {
-            attempt.networkReceived = bytesThisRun
-            attempt.lastNetworkAt = Date.now()
-            this.onNetworkProgress(runtime, chunk, self, delta)
-          }
-        },
-        onProgress: (bytesThisRun) => {
-          const delta = bytesThisRun - attempt.received
-          if (delta > 0) {
-            attempt.received = bytesThisRun
-            this.onAttemptProgress(runtime, chunk, attempt)
-          }
-        }
-      })
-      return { type: 'completed' }
-    } catch (error) {
-      const status = runtime.state.status as DownloadStatus
-      if (self.controller.signal.aborted || status !== 'downloading') return { type: 'stopped' }
-      if (attempt.abortReason) return { type: 'aborted', reason: attempt.abortReason }
-      return { type: 'failed', error }
-    }
-  }
-
-  private onNetworkProgress(
-    runtime: DownloadRuntime,
-    chunk: ChunkState,
-    self: ChunkRuntime,
-    deltaBytes: number
-  ): void {
-    const now = Date.now()
-    self.receivedBytes += deltaBytes
-    self.served = true
-    const traffic = this.traffic(runtime, chunk.interfaceId)
-    traffic.received += deltaBytes
-    traffic.aliveAt = now
-    const network = this.network(runtime, chunk.interfaceId)
-    if (network.status === 'unreachable') {
-      // Through again: the next reconcile gives it back its streams.
-      network.status = 'on'
-      self.failures = 0
-    }
-    let samples = runtime.speedSamplesByChunk.get(chunk.id)
-    if (!samples) {
-      samples = []
-      runtime.speedSamplesByChunk.set(chunk.id, samples)
-    }
-    chunk.speedBytesPerSec = pushSpeedSample(samples, self.receivedBytes, now)
-    updateSpeeds(runtime, now)
-    this.scheduleUpdate(runtime)
-  }
-
-  private onAttemptProgress(runtime: DownloadRuntime, chunk: ChunkState, attempt: Attempt): void {
-    // Only what gets the block further than it already was counts as progress: a racing attempt
-    // re-fetches bytes the other already has.
-    const gained = advanceBlock(attempt.block, attempt.networkId, this.attemptPosition(attempt))
-    chunk.bytesDownloaded += gained
-    this.network(runtime, attempt.networkId).bytesDownloaded += gained
-
-    // This runs on every completed writer callback, so it folds the delta in rather than re-summing
-    // every block — that sum is O(blocks), and a large file has thousands of them. The other
-    // callers of recomputeAggregates are rare enough to afford the full pass, and each one
-    // re-derives the true total, so any drift here cannot accumulate.
-    runtime.state.bytesDownloaded += gained
-    this.scheduleUpdate(runtime)
-  }
-
-  /** Applies what became of an attempt to the download. 'stop' ends the stream. */
-  private async finishAttempt(
-    runtime: DownloadRuntime,
-    chunk: ChunkState,
-    self: ChunkRuntime,
-    attempt: Attempt,
-    outcome: AttemptOutcome
-  ): Promise<'continue' | 'stop'> {
-    debug('attempt', {
-      block: attempt.block.index,
-      stream: chunk.id,
-      network: attempt.networkId,
-      kind: attempt.kind,
-      outcome: outcome.type === 'aborted' ? `aborted:${outcome.reason}` : outcome.type,
-      networkBytes: attempt.networkReceived,
-      writtenBytes: attempt.received,
-      ms: Date.now() - attempt.startedAt,
-      ...attempt.response
-    })
-
-    switch (outcome.type) {
-      case 'completed':
-        return this.finishCompleted(runtime, chunk, self, attempt)
-      case 'stopped':
-        return this.finishStopped(runtime, chunk, self, attempt)
-      case 'aborted':
-        return this.finishAborted(runtime, chunk, self, attempt, outcome.reason)
-      case 'failed':
-        return this.finishFailed(runtime, chunk, self, attempt, outcome.error)
-    }
-  }
-
-  private finishCompleted(
-    runtime: DownloadRuntime,
-    chunk: ChunkState,
-    self: ChunkRuntime,
-    attempt: Attempt
-  ): 'continue' {
-    const { block } = attempt
-
-    // Another attempt already finished this block: these bytes are surplus.
-    if (block.status === 'completed') {
-      this.letGo(runtime, chunk, self, attempt, false)
-      return 'continue'
-    }
-
-    this.endAttempt(runtime, self, attempt)
-    block.status = 'completed'
-    block.interfaceId = attempt.networkId
-    if (block.rangeEnd !== null) {
-      // Progress events can lag the final write, so square the block up to its exact size and
-      // credit the shortfall to the network that finished it.
-      const blockBytes = block.rangeEnd - block.rangeStart + 1
-      chunk.bytesDownloaded += advanceBlock(block, attempt.networkId, blockBytes)
-      self.lastBlockSpeed =
-        (attempt.networkReceived /
-          Math.max(1, (attempt.lastNetworkAt || Date.now()) - attempt.startedAt)) *
-        1000
-    }
-    self.failures = 0
-    self.strikes = 0
-    // Whoever is still racing for the block has lost.
-    for (const rival of runtime.attempts.get(block.index) ?? []) this.abortAttempt(rival, 'lost')
-    this.recomputeAggregates(runtime)
-    this.scheduleUpdate(runtime)
-    return 'continue'
-  }
-
-  /** The stream was stopped while its request was in flight. */
-  private finishStopped(
-    runtime: DownloadRuntime,
-    chunk: ChunkState,
-    self: ChunkRuntime,
-    attempt: Attempt
-  ): 'stop' {
-    // Whatever stopped it — a pause, a cancel, retirement — the block goes back as any other
-    // attempt's would, and one another attempt has finished stays finished.
-    this.letGo(runtime, chunk, self, attempt, false)
-    chunk.status = runtime.state.status === 'paused' ? 'paused' : 'cancelled'
-    return 'stop'
-  }
-
-  private async finishAborted(
-    runtime: DownloadRuntime,
-    chunk: ChunkState,
-    self: ChunkRuntime,
-    attempt: Attempt,
-    reason: AbortReason
-  ): Promise<'continue'> {
-    // 'lost': another attempt decided the block, so its state is no longer this one's to touch.
-    // 'refresh': not a failure — no retry counted, no backoff. Whoever takes the block next
-    // resumes it from the staging file on a new connection.
-    this.letGo(runtime, chunk, self, attempt, reason === 'refresh' && attempt.networkReceived === 0)
-    if (reason === 'refresh' && attempt.kind === 'primary') {
-      // A moment before this stream asks again, so that a connection already proven fast, if
-      // there is one, gets to the block before this one does.
-      this.scheduleUpdate(runtime)
-      await delay(REFRESH_HANDOFF_MS, self.wait)
-      self.warmSince = Date.now()
-      self.slowSince = null
-    }
-    return 'continue'
-  }
-
-  private async finishFailed(
-    runtime: DownloadRuntime,
-    chunk: ChunkState,
-    self: ChunkRuntime,
-    attempt: Attempt,
-    error: unknown
-  ): Promise<'continue' | 'stop'> {
-    const message = error instanceof Error ? error.message : String(error)
-    const network = this.network(runtime, attempt.networkId)
-    const deliveredNothing = attempt.networkReceived === 0
-
-    if (error instanceof RemoteChangedError) {
-      const verdict =
-        error.check.kind === 'size'
-          ? 'different'
-          : await this.confirmSameBytes(runtime, self.connection, error.seen)
-      // The check takes a moment; the download may have been paused or stopped meanwhile.
-      if ((runtime.state.status as DownloadStatus) !== 'downloading') {
-        return this.finishStopped(runtime, chunk, self, attempt)
-      }
-      if (verdict === 'same') {
-        // Same bytes under another label — accept it and fetch again straight away; nothing from
-        // the rejected response was written.
-        if (compareVersion(runtime.acceptedVersions, error.seen).kind !== 'same') {
-          runtime.acceptedVersions.push(error.seen)
-        }
-        this.letGo(runtime, chunk, self, attempt, false)
-        return 'continue'
-      }
-      if (verdict === 'different') {
-        // Every other worker would hit the same new version, so stop them all now rather than
-        // let each burn through its retries first. What's on disk is of the old version: no use.
-        this.failDownload(runtime, message, true)
-        return this.finishStopped(runtime, chunk, self, attempt)
-      }
-      // 'unknown' — nothing to compare yet, or the check itself failed: retry like any other
-      // failed request. Nothing wrong was written either way.
-    }
-
-    if (error instanceof NoCompatibleRouteError) {
-      // A redirect can move this worker to a host its network cannot reach, and no retry over
-      // it will change that. Its block goes back to the queue for another network.
-      this.letGo(runtime, chunk, self, attempt, deliveredNothing)
-      this.failNetwork(runtime, network, message)
-      return 'stop'
-    }
-
-    // What the server's answer says about the network: a connection failing while the whole
-    // network has gone quiet means the network can't reach the server — dropped, or connected
-    // with no way through. It stops being used, bar one stream that keeps trying (see reconcile).
-    if (error instanceof ConnectionError && this.markUnreachable(runtime, network, Date.now())) {
-      this.reconcile(runtime)
-    }
-
-    // A hedge is optional work: its failure isn't retried, and what it did write stays.
-    if (attempt.kind === 'hedge') {
-      this.letGo(runtime, chunk, self, attempt, deliveredNothing)
-      return 'continue'
-    }
-
-    // A network that can't get through retries as a matter of course: that's not news.
-    if (network.status === 'on') network.retries += 1
-    // What arrived before it failed shows the network works, and what was written shows the
-    // server does: the count in a row starts over, and so does the backoff.
-    if (attempt.networkReceived > 0) self.failures = 0
-    if (attempt.received > 0) {
-      self.strikes = 0
-      self.busySince = null
-    }
-    self.failures += 1
-    // Back to the queue, so any available worker can pick it up.
-    this.letGo(runtime, chunk, self, attempt, deliveredNothing)
-
-    // A connection that failed is the network's doing, and is tried again for as long as the
-    // network is there. A server that answered wrongly gets MAX_CHUNK_RETRIES in a row, and one
-    // that answered busy is waited out for SERVER_BUSY_FOR_MS as well; then this stream gives up,
-    // and once all its network's have, so does the network.
-    const now = Date.now()
-    // The server turning a request away: the stream count takes it as a limit (see
-    // concurrency.ts).
-    if (error instanceof HttpStatusError && [403, 429, 503].includes(error.status)) {
-      self.refused = true
-    }
-    const busy = error instanceof HttpStatusError && error.transient
-    if (busy) self.busySince ??= now
-    const waitingOut = busy && now - (self.busySince ?? now) < SERVER_BUSY_FOR_MS
-    if (!(error instanceof ConnectionError) && ++self.strikes > MAX_CHUNK_RETRIES && !waitingOut) {
-      self.retiring = true
-      if (this.liveStreams(runtime, network.id).length === 0) {
-        this.failNetwork(runtime, network, message)
-      }
-      return 'stop'
-    }
-
-    let wait = retryDelayMs(self.failures)
-    if (network.status === 'unreachable') wait = Math.min(wait, UNREACHABLE_RETRY_MS)
-    if (error instanceof HttpStatusError && error.transient && error.retryAfterMs !== null) {
-      // Asked of whoever sent it — this network's address, to the server — not of this one
-      // request: none of the network's streams sends another until then.
-      const asked = Math.min(error.retryAfterMs, RETRY_AFTER_MAX_MS)
-      wait = Math.max(wait, asked)
-      runtime.holdUntil.set(
-        network.id,
-        Math.max(runtime.holdUntil.get(network.id) ?? 0, now + asked)
-      )
-    }
-
-    chunk.status = 'retrying'
-    this.scheduleUpdate(runtime)
-    await this.backOff(self, wait)
-    const statusAfterDelay = runtime.state.status as DownloadStatus
-    if (self.controller.signal.aborted || statusAfterDelay !== 'downloading') {
-      chunk.status = statusAfterDelay === 'paused' ? 'paused' : 'cancelled'
-      chunk.speedBytesPerSec = 0
-      return 'stop'
-    }
-    this.goIdle(chunk)
-    self.warmSince = Date.now()
-    self.slowSince = null
-    return 'continue'
-  }
-
-  /**
-   * The stream stops working on the attempt's block without having finished it. A primary hands
-   * the block back to the queue; a hedge just drops out. Either way what it wrote stays counted.
-   * When the attempt delivered nothing, its network is remembered (see scheduler.ts).
-   */
-  private letGo(
-    runtime: DownloadRuntime,
-    chunk: ChunkState,
-    self: ChunkRuntime,
-    attempt: Attempt,
-    deliveredNothing: boolean
-  ): void {
-    this.endAttempt(runtime, self, attempt)
-    const { block } = attempt
-    // A block another attempt has finished stays finished.
-    if (attempt.kind === 'primary' && block.status === 'downloading') block.status = 'pending'
-    if (deliveredNothing) runtime.avoidNetworkByBlock.set(block.index, attempt.networkId)
-    this.goIdle(chunk)
-  }
-
-  private concurrencySnapshot(runtime: DownloadRuntime): Snapshot {
-    const inUse = runtime.state.networks.filter((network) => network.status === 'on')
-    const networks = inUse.map(({ id }) => {
-      let streams = 0
-      let answered = 0
-      let refused = 0
-      let served = 0
-      for (const chunk of this.liveStreams(runtime, id)) {
-        const self = runtime.chunkRuntimes.get(chunk.id)
-        streams++
-        if (self && self.receivedBytes > 0) answered++
-        if (self?.refused) refused++
-        if (self?.served) served++
-      }
-      return { id, streams, answered, refused, served }
-    })
-    // A new stream takes a waiting block the moment it starts.
-    const waiting = runtime.blocks.filter((block) => block.status === 'pending').length
-    return { now: Date.now(), networks, spareWork: waiting }
-  }
-
-  /** New streams on `networkId`, put on the download's list for the caller to start. */
-  private addStreams(runtime: DownloadRuntime, networkId: string, count: number): ChunkState[] {
-    let id = Math.max(-1, ...runtime.state.chunks.map((chunk) => chunk.id))
-    const added = Array.from({ length: count }, () => newStream(++id, networkId))
-    runtime.state.chunks.push(...added)
-    runtime.state.peakStreams = Math.max(
-      runtime.state.peakStreams ?? 0,
-      runtime.state.chunks.length
-    )
-    debug('streams', { network: networkId, added: count })
-    this.scheduleUpdate(runtime)
-    return added
-  }
-
-  /** Stops `count` streams on `networkId` for good. Stopping partway through a block
-   * costs nothing: what it wrote stays, and whoever takes the block next resumes from there. */
-  private retireStreams(runtime: DownloadRuntime, networkId: string, count: number): void {
-    if (count < 1) return
-    // Streams the server just refused go first (see concurrency.ts), then ones whose last
-    // request failed, then the newest.
-    const rank = (chunk: ChunkState): number => {
-      const self = runtime.chunkRuntimes.get(chunk.id)
-      return self?.refused ? 2 : (self?.failures ?? 0) > 0 ? 1 : 0
-    }
-    const order = this.liveStreams(runtime, networkId).sort(
-      (a, b) => rank(b) - rank(a) || b.id - a.id
-    )
-    for (const chunk of order.slice(0, count)) {
-      const self = runtime.chunkRuntimes.get(chunk.id)
-      if (self && runtime.workers.has(chunk.id)) {
-        // Its worker takes it off the list once it has stopped.
-        self.retiring = true
-        self.controller.abort()
-      } else {
-        this.removeStream(runtime, chunk)
-      }
-    }
-    debug('streams', { network: networkId, retired: count })
-  }
-
-  /** Takes a retired stream off the list. */
-  private removeStream(runtime: DownloadRuntime, chunk: ChunkState): void {
-    runtime.chunkRuntimes.delete(chunk.id)
-    runtime.speedSamplesByChunk.delete(chunk.id)
-    const index = runtime.state.chunks.indexOf(chunk)
-    if (index < 0) return
-    runtime.state.chunks.splice(index, 1)
-    this.scheduleUpdate(runtime)
-  }
-
-  private async runWorker(runtime: DownloadRuntime, chunk: ChunkState): Promise<void> {
-    const controller = new AbortController()
-    const self: ChunkRuntime = {
-      controller,
-      wait: AbortSignal.any([controller.signal, runtime.stop.signal]),
-      nudge: new AbortController(),
-      connection: new StreamConnection(() => this.networks.find(chunk.interfaceId), {
-        timeoutMs: testKnobs.stallTimeoutMs,
-        connectTimeoutMs: testKnobs.connectTimeoutMs
-      }),
-      attempt: null,
-      warmSince: Date.now(),
-      slowSince: null,
-      lastBlockSpeed: 0,
-      receivedBytes: 0,
-      failures: 0,
-      strikes: 0,
-      busySince: null,
-      refused: false,
-      served: false,
-      retiring: false
-    }
-    runtime.chunkRuntimes.set(chunk.id, self)
-
-    try {
-      while (runtime.state.status === 'downloading') {
-        if (controller.signal.aborted || self.retiring) break
-
-        // The server asked this network to hold off: no new request over it until then. Each
-        // stream comes back a little apart from the others.
-        const holdFor = (runtime.holdUntil.get(chunk.interfaceId) ?? 0) - Date.now()
-        if (holdFor > 0) {
-          this.goIdle(chunk)
-          chunk.status = 'retrying'
-          this.scheduleUpdate(runtime)
-          await this.backOff(self, holdFor + Math.random() * Math.min(1000, holdFor / 10))
-          continue
-        }
-
-        // Taken atomically: nothing between choosing the work and registering it can yield.
-        const work = pickWork(
-          {
-            blocks: runtime.blocks,
-            streams: runtime.state.chunks,
-            attempts: runtime.attempts,
-            avoid: runtime.avoidNetworkByBlock,
-            hedgesUsed: runtime.hedgesByBlock
-          },
-          {
-            id: chunk.id,
-            networkId: chunk.interfaceId,
-            speedBytesPerSec: self.lastBlockSpeed || undefined
-          },
-          Date.now(),
-          SCHEDULER_POLICY
-        )
-        if (!work) {
-          this.goIdle(chunk)
-          // While blocks are still in flight, stay available in case one fails and is handed back,
-          // or turns out to be slow enough to be worth racing.
-          if (runtime.blocks.some((b) => b.status === 'pending' || b.status === 'downloading')) {
-            this.scheduleUpdate(runtime)
-            await delay(IDLE_POLL_MS, self.wait)
-            continue
-          }
-          chunk.status = 'completed'
-          this.scheduleUpdate(runtime)
-          break
-        }
-
-        const attempt = this.beginAttempt(runtime, chunk, self, work)
-        this.scheduleUpdate(runtime)
-        const outcome = await this.executeAttempt(runtime, chunk, self, attempt)
-        let next: 'continue' | 'stop'
-        try {
-          next = await this.finishAttempt(runtime, chunk, self, attempt, outcome)
-        } finally {
-          this.endAttempt(runtime, self, attempt)
-        }
-        if (next === 'stop') break
-      }
-    } finally {
-      // Its sockets would otherwise stay open, kept alive for requests that will never come.
-      self.connection.close()
-    }
-
-    this.scheduleUpdate(runtime)
-  }
-
-  /**
-   * Settles whether a server labelling the file differently (new ETag or Last-Modified, same
-   * size) is serving the same bytes — load-balanced servers often disagree on labels for
-   * identical files — or a new version. Re-fetches a spread of bytes this download already has
-   * on disk, from a server presenting the new label, and compares them.
-   *
-   * 'unknown' when there's nothing on disk to compare yet or the samples couldn't be fetched;
-   * the caller then treats the response as an ordinary failed request and retries.
-   */
-  private async confirmSameBytes(
-    runtime: DownloadRuntime,
-    connection: StreamConnection,
-    seen: FileVersion
-  ): Promise<'same' | 'different' | 'unknown'> {
-    if (compareVersion(runtime.acceptedVersions, seen).kind === 'same') return 'same'
-
-    // Every byte on disk came from an accepted version: mismatched responses are rejected
-    // before anything is written.
-    const withData = runtime.blocks.filter((block) => block.bytesDownloaded > 0)
-    const step = Math.max(1, withData.length / MAX_SAMPLES)
-    const picks = Array.from(
-      { length: Math.min(MAX_SAMPLES, withData.length) },
-      (_, i) => withData[Math.floor(i * step)]
-    )
-
-    let compared = 0
-    for (const block of picks) {
-      let local: Buffer
-      try {
-        local = await runtime.file.read(
-          block.rangeStart,
-          Math.min(SAMPLE_BYTES, block.bytesDownloaded)
-        )
-      } catch {
-        continue
-      }
-      if (local.length === 0) continue
-
-      for (let tries = 0; tries < SAMPLE_TRIES; tries++) {
-        try {
-          const remote = await fetchRange(
-            runtime.requestPayload.url,
-            block.rangeStart,
-            block.rangeStart + local.length - 1,
-            connection
-          )
-          // A reply from a server still presenting an accepted label proves nothing here.
-          if (compareVersion([seen], remote.version).kind !== 'same') continue
-          if (!remote.body.equals(local)) return 'different'
-          compared += 1
-          break
-        } catch {
-          return 'unknown'
-        }
-      }
-    }
-    return compared > 0 ? 'same' : 'unknown'
-  }
-
-  /** Re-derives the byte counts from the blocks: the download's, and each network's. */
-  private recomputeAggregates(runtime: DownloadRuntime): void {
-    let total = 0
-    const byNetwork = new Map<string, number>()
-    for (const block of runtime.blocks) {
-      total += block.bytesDownloaded
-      for (const [id, bytes] of Object.entries(block.bytesByInterface)) {
-        byNetwork.set(id, (byNetwork.get(id) ?? 0) + bytes)
-      }
-    }
-    runtime.state.bytesDownloaded = total
-    for (const network of runtime.state.networks) {
-      network.bytesDownloaded = byNetwork.get(network.id) ?? 0
-    }
-    updateSpeeds(runtime)
   }
 
   private scheduleUpdate(runtime: DownloadRuntime): void {
@@ -2084,29 +1466,42 @@ export class DownloadManager {
     window.webContents.send(IpcChannels.downloadUpdated, this.takeUpdate(runtime))
   }
 
-  /** What the window hasn't been sent yet: the download's state, and the blocks that moved. */
+  /** What the window hasn't been sent yet: the download's state, and the work units that moved. */
   private takeUpdate(runtime: DownloadRuntime): DownloadUpdate {
-    const { blocks: all, ...state } = runtime.state
-    const sent = runtime.sentBlocks
-    const blocks: BlockState[] = []
-    for (const block of all ?? runtime.blocks) {
-      const last = sent[block.index]
-      // bytesByInterface only ever changes along with bytesDownloaded (see blockProgress.ts).
+    if (runtime.kind === 'http') {
+      const changed = this.changedUnits(runtime, runtime.blocks)
+      const { blocks: omittedBlocks, ...state } = runtime.state
+      void omittedBlocks
+      return structuredClone({ seq: ++runtime.sentUpdates, state, blocks: changed })
+    }
+    const changed = this.changedUnits(runtime, runtime.pieces)
+    const { pieces: omittedPieces, ...state } = runtime.state
+    void omittedPieces
+    return structuredClone({ seq: ++runtime.sentUpdates, state, pieces: changed })
+  }
+
+  private changedUnits<T extends DownloadUnitState>(runtime: DownloadRuntime, units: T[]): T[] {
+    const sent = runtime.sentUnits
+    const changed: T[] = []
+    for (const unit of units) {
+      const last = sent[unit.index]
       if (
-        last?.status === block.status &&
-        last.interfaceId === block.interfaceId &&
-        last.bytesDownloaded === block.bytesDownloaded
+        last?.status === unit.status &&
+        last.interfaceId === unit.interfaceId &&
+        last.bytesDownloaded === unit.bytesDownloaded &&
+        last.provisionalBytes === (unit.kind === 'torrent' ? unit.provisionalBytes : undefined)
       ) {
         continue
       }
-      sent[block.index] = {
-        status: block.status,
-        interfaceId: block.interfaceId,
-        bytesDownloaded: block.bytesDownloaded
+      sent[unit.index] = {
+        status: unit.status,
+        interfaceId: unit.interfaceId,
+        bytesDownloaded: unit.bytesDownloaded,
+        provisionalBytes: unit.kind === 'torrent' ? unit.provisionalBytes : undefined
       }
-      blocks.push(block)
+      changed.push(unit)
     }
-    return structuredClone({ seq: ++runtime.sentUpdates, state, blocks })
+    return changed
   }
 
   private schedulePersistence(runtime: DownloadRuntime): void {
@@ -2131,12 +1526,23 @@ export class DownloadManager {
         const dir = this.downloadDir(runtime.state.id)
         const path = this.manifestPath(runtime.state.id)
         const temporaryPath = `${path}.tmp`
-        const { blocks, ...state } = runtime.state
+        let state: PersistedState
+        if (runtime.kind === 'http') {
+          const { blocks: omittedBlocks, streams: omittedStreams, ...rest } = runtime.state
+          void omittedBlocks
+          void omittedStreams
+          state = rest
+        } else {
+          const { pieces: omittedPieces, peers: omittedPeers, ...rest } = runtime.state
+          void omittedPieces
+          void omittedPeers
+          state = rest
+        }
         const persisted: PersistedDownload = {
-          version: 5,
+          version: 7,
           savedAt: Date.now(),
           state: structuredClone(state),
-          ...saveBlocks(blocks ?? runtime.blocks),
+          ...saveBlocks(unitsOf(runtime)),
           partialPath: runtime.file.path,
           publicationPath: runtime.publicationPath,
           publicationIdentity: runtime.publicationIdentity,
@@ -2162,7 +1568,13 @@ export class DownloadManager {
     runtime.removed = true
     if (runtime.persistenceTimer) clearTimeout(runtime.persistenceTimer)
     await runtime.persistenceChain.catch(() => {})
-    if (discardPartial) await runtime.file.discard().catch(() => {})
+    // A finished download is the user's now: only what's left of it goes.
+    if (discardPartial) {
+      const file = runtime.file
+      await (runtime.state.status === 'completed' ? file.discardLeftover() : file.discard()).catch(
+        () => {}
+      )
+    }
     await rm(this.downloadDir(runtime.state.id), { recursive: true, force: true })
   }
 }

@@ -22,7 +22,7 @@ const overB = (request: Pick<LoggedRequest, 'from'>): boolean => request.from !=
 const network = (state: DownloadState, id: string): DownloadState['networks'][number] | undefined =>
   state.networks.find((entry) => entry.id === id)
 const streamsOn = (state: DownloadState, id: string): number =>
-  state.chunks.filter((chunk) => chunk.interfaceId === id).length
+  state.kind === 'http' ? state.streams.filter((stream) => stream.interfaceId === id).length : 0
 const settle = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms))
 
 test('the only network drops for a while: the download waits, then picks up where it was @smoke', async ({
@@ -35,17 +35,17 @@ test('the only network drops for a while: the download waits, then picks up wher
 
   await setNetworks(plexo, {})
   await plexo.waitUntil((state) => network(state, 'a')?.status === 'offline')
-  const gone = (await plexo.current())!
+  const gone = (await plexo.currentHttp())!
   // Far longer than a stream's retries used to last before the download failed and its
   // progress was thrown away (five of them, 20 ms apart and doubling, in these tests).
   await settle(1500)
-  const waited = (await plexo.current())!
+  const waited = (await plexo.currentHttp())!
   expect(waited.status).toBe('downloading')
-  expect(waited.chunks).toHaveLength(0)
+  expect(waited.streams).toHaveLength(0)
   expect(waited.bytesDownloaded, 'nothing it had was lost').toBe(gone.bytesDownloaded)
 
   await setNetworks(plexo, { a: NETWORKS['a'] })
-  await plexo.waitForStatus('completed')
+  await plexo.waitForHttpStatus('completed')
 })
 
 test.describe('two networks @smoke', () => {
@@ -64,7 +64,7 @@ test.describe('two networks @smoke', () => {
     const goneAt = origin.log.length
 
     await setNetworks(plexo, NETWORKS)
-    await plexo.waitForStatus('completed')
+    await plexo.waitForHttpStatus('completed')
     expect(origin.log.slice(goneAt).some(overB), 'b carried more once it was back').toBe(true)
   })
 
@@ -76,7 +76,7 @@ test.describe('two networks @smoke', () => {
     const origin = await serve({ size: 128 * BLOCK, bytesPerSecond: 256 * 1024 })
     const id = await plexo.start(origin.url(), origin.sha256, { connections: 2 })
     await plexo.waitUntil((state) => state.bytesDownloaded > 0)
-    expect(network((await plexo.current())!, 'b')).toBeUndefined()
+    expect(network((await plexo.currentHttp())!, 'b')).toBeUndefined()
 
     await setNetworks(plexo, NETWORKS)
     const listed = await plexo.waitUntil((state) => network(state, 'b') !== undefined)
@@ -135,13 +135,13 @@ test.describe('two networks @smoke', () => {
     await plexo.api.setDownloadNetwork(id, 'a', true)
     await plexo.api.setDownloadNetwork(id, 'a', false)
     await settle(1000)
-    const left = (await plexo.current())!
+    const left = (await plexo.currentHttp())!
     expect(left.status).toBe('paused')
     expect(network(left, 'a')?.enabled).toBe(false)
 
     // …and switching it on once more still resumes it.
     await plexo.api.setDownloadNetwork(id, 'a', true)
-    await plexo.waitForStatus('completed')
+    await plexo.waitForHttpStatus('completed')
   })
 
   test('resumed with none on, it picks a network that is still there', async ({ plexo, serve }) => {
@@ -162,7 +162,7 @@ test.describe('two networks @smoke', () => {
     const resumed = await plexo.waitUntil((state) => state.status === 'downloading')
     expect(network(resumed, 'a')?.enabled).toBe(true)
     expect(network(resumed, 'b')?.enabled).toBe(false)
-    await plexo.waitForStatus('completed')
+    await plexo.waitForHttpStatus('completed')
   })
 })
 
@@ -192,8 +192,8 @@ test.describe('a network that can’t reach the server @smoke', () => {
     await plexo.waitUntil(
       (state) => network(state, 'b')?.status === 'on' && streamsOn(state, 'b') === 2
     )
-    await plexo.waitForStatus('completed')
-    expect(network((await plexo.current())!, 'b')!.bytesDownloaded).toBeGreaterThan(0)
+    await plexo.waitForHttpStatus('completed')
+    expect(network((await plexo.currentHttp())!, 'b')!.bytesDownloaded).toBeGreaterThan(0)
   })
 })
 
@@ -212,8 +212,10 @@ test.describe('a network that changes address', () => {
       overB(request) && request.range && request.range.end !== 0 ? { cutAfter: 0 } : 'ok'
     )
     await plexo.start(origin.url(), origin.sha256, { networks: ['a', 'b'], connections: 2 })
-    await plexo.waitUntil((state) =>
-      state.chunks.some((chunk) => chunk.interfaceId === 'b' && chunk.status === 'retrying')
+    await plexo.waitUntil(
+      (state) =>
+        state.kind === 'http' &&
+        state.streams.some((stream) => stream.interfaceId === 'b' && stream.status === 'retrying')
     )
 
     // A new DHCP lease, say: b is now reached at another address, which gets through.
@@ -240,12 +242,12 @@ test.describe('the computer wakes from sleep', () => {
     )
     await plexo.start(origin.url(), origin.sha256, { connections: 2 })
     await plexo.waitUntil((state) => state.bytesDownloaded >= 15 * BLOCK)
-    expect((await plexo.current())!.status).toBe('downloading')
+    expect((await plexo.currentHttp())!.status).toBe('downloading')
 
     await plexo.evaluateMain((electron) => {
       electron.powerMonitor.emit('resume')
     }, null)
-    await plexo.waitForStatus('completed', 5000)
+    await plexo.waitForHttpStatus('completed', 5000)
     expect(stalled, 'the block was asked for again').toBeGreaterThan(1)
   })
 })

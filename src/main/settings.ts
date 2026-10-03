@@ -1,11 +1,12 @@
 import { rm } from 'node:fs/promises'
 import { isAbsolute, join } from 'node:path'
 import { app, nativeTheme } from 'electron'
-import type {
-  AppSettings,
-  NetworkPreference,
-  NetworkPreferences,
-  ThemeSource
+import {
+  DOWNLOADS_AT_ONCE,
+  type AppSettings,
+  type NetworkPreference,
+  type NetworkPreferences,
+  type ThemeSource
 } from '../shared/types'
 import { readJson, updateJson } from './jsonFile'
 
@@ -17,10 +18,15 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
 
-/** Keeps only string customName/colorId fields (what every reader downstream assumes, e.g.
+/** A rate or an amount of bytes: a positive whole number, or nothing. */
+function byteCount(value: unknown): number | undefined {
+  return Number.isSafeInteger(value) && (value as number) > 0 ? (value as number) : undefined
+}
+
+/** Keeps only fields of the right type (what every reader downstream assumes, e.g.
  * NetworkEditPopover's `customName?.trim()`), entry by entry, rather than discarding every
- * network over one bad entry. An entry left with neither field is dropped, so resetting a
- * network removes it from the file. */
+ * network over one bad entry. An entry left with no field is dropped, so resetting a network
+ * removes it from the file. */
 function sanitizeNetworkPreferences(parsed: unknown): NetworkPreferences {
   if (!isRecord(parsed)) return {}
 
@@ -30,7 +36,20 @@ function sanitizeNetworkPreferences(parsed: unknown): NetworkPreferences {
     const preference: NetworkPreference = {}
     if (typeof value.customName === 'string') preference.customName = value.customName
     if (typeof value.colorId === 'string') preference.colorId = value.colorId
-    if (preference.customName || preference.colorId) result[id] = preference
+    if (value.off === true) preference.off = true
+    preference.speedLimit = byteCount(value.speedLimit)
+    preference.dataLimit = byteCount(value.dataLimit)
+    if (
+      value.dataLimitPeriod === 'day' ||
+      value.dataLimitPeriod === 'week' ||
+      value.dataLimitPeriod === 'month'
+    ) {
+      preference.dataLimitPeriod = value.dataLimitPeriod
+    }
+    for (const key of Object.keys(preference) as (keyof NetworkPreference)[]) {
+      if (preference[key] === undefined) delete preference[key]
+    }
+    if (Object.keys(preference).length > 0) result[id] = preference
   }
   return result
 }
@@ -41,7 +60,7 @@ function sanitizeNetworkPreferences(parsed: unknown): NetworkPreferences {
 function sanitizeSettings(parsed: unknown): AppSettings {
   if (!isRecord(parsed)) return {}
 
-  const { themeSource, dismissedUpdateVersion, destinationDir } = parsed
+  const { themeSource, dismissedUpdateVersion, destinationDir, downloadsAtOnce } = parsed
   const settings: AppSettings = {}
   // 'system' was once an option — dropping it falls back to the OS appearance (loadThemeSource).
   if (themeSource === 'light' || themeSource === 'dark') settings.themeSource = themeSource
@@ -51,9 +70,21 @@ function sanitizeSettings(parsed: unknown): AppSettings {
   if (typeof destinationDir === 'string' && isAbsolute(destinationDir)) {
     settings.destinationDir = destinationDir
   }
+  if (
+    Number.isInteger(downloadsAtOnce) &&
+    (downloadsAtOnce as number) >= DOWNLOADS_AT_ONCE.min &&
+    (downloadsAtOnce as number) <= DOWNLOADS_AT_ONCE.max
+  ) {
+    settings.downloadsAtOnce = downloadsAtOnce as number
+  }
   if (parsed.networkPreferences !== undefined) {
     settings.networkPreferences = sanitizeNetworkPreferences(parsed.networkPreferences)
   }
+  const speedLimit = byteCount(parsed.speedLimit)
+  if (speedLimit !== undefined) settings.speedLimit = speedLimit
+  const slowModeSpeed = byteCount(parsed.slowModeSpeed)
+  if (slowModeSpeed !== undefined) settings.slowModeSpeed = slowModeSpeed
+  if (parsed.slowMode === true) settings.slowMode = true
   return settings
 }
 

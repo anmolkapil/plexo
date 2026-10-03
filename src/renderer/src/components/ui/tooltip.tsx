@@ -1,5 +1,6 @@
 import { Tooltip as TooltipPrimitive } from '@base-ui/react/tooltip'
 import { cn } from 'cn'
+import { TITLE_BAR_HEIGHT } from '../../theme'
 
 function TooltipProvider({
   delay = 0,
@@ -36,6 +37,8 @@ function TooltipContent({
         alignOffset={alignOffset}
         side={side}
         sideOffset={sideOffset}
+        // Flips below rather than open under the title bar and its window controls.
+        collisionPadding={{ top: TITLE_BAR_HEIGHT + 4, right: 5, bottom: 5, left: 5 }}
         className="isolate z-50"
       >
         <TooltipPrimitive.Popup

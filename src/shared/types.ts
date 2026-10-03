@@ -21,7 +21,7 @@ export interface NetworkInterfaceInfo {
   mac?: string
 }
 
-export interface ProbeResult {
+interface ProbeResultBase {
   requestedUrl: string
   /** URL after following redirects — this is what the download should actually fetch. */
   finalUrl: string
@@ -35,18 +35,49 @@ export interface ProbeResult {
   lastModified: string | null
 }
 
-export type DownloadStatus = 'downloading' | 'paused' | 'completed' | 'error' | 'cancelled'
+export interface HttpProbeResult extends ProbeResultBase {
+  kind: 'http'
+}
 
-/** A stream's state. `pending` means it is waiting for work: it holds no block, either because
+export interface TorrentProbeResult extends ProbeResultBase {
+  kind: 'torrent'
+  torrent: TorrentInfo
+}
+
+export type ProbeResult = HttpProbeResult | TorrentProbeResult
+
+export interface TorrentInfo {
+  infoHash: string
+  pieceLength: number
+  /** Where each file will be written, relative to the destination folder, already checked to be
+   * safe (see main/download/torrent/paths.ts). */
+  files: { path: string; length: number }[]
+}
+
+/** One of a torrent download's files, for listing them while it runs. */
+export interface TorrentFileEntry {
+  /** As TorrentInfo's: relative to the destination folder, the torrent's own folder first. */
+  path: string
+  length: number
+  /** Chosen to be downloaded. */
+  chosen: boolean
+}
+
+/** `queued`: waiting for one of the downloads running at once to end (see
+ * AppSettings.downloadsAtOnce). */
+export type DownloadStatus =
+  'queued' | 'downloading' | 'paused' | 'completed' | 'error' | 'cancelled'
+
+/** An HTTP stream's state. `pending` means it is waiting for work: it holds no block, either because
  * none is free for it right now or because it hasn't started. `downloading` always means it is
  * fetching one (`currentBlockIndex` says which). A stream that fails for good leaves the list;
  * what went wrong is its network's to report (see DownloadNetwork). */
-export type ChunkStatus =
+export type HttpStreamStatus =
   'pending' | 'downloading' | 'retrying' | 'paused' | 'completed' | 'cancelled'
 
 /** One connection to the server, through one network. Streams come and go as the download
  * runs; what a network has done is kept on its DownloadNetwork. */
-export interface ChunkState {
+export interface HttpStreamState {
   id: number
   /** The network it runs on: a DownloadNetwork's id. */
   interfaceId: string
@@ -56,7 +87,7 @@ export interface ChunkState {
   /** New bytes it has delivered. */
   bytesDownloaded: number
   speedBytesPerSec: number
-  status: ChunkStatus
+  status: HttpStreamStatus
   /** The block this stream is fetching. Unset whenever it holds none (idle, retrying, paused, done). */
   currentBlockIndex?: number
   /** True while this stream is racing another stream for `currentBlockIndex`, because that one
@@ -64,13 +95,29 @@ export interface ChunkState {
   hedge?: boolean
 }
 
-export type BlockStatus = 'pending' | 'downloading' | 'completed'
+/** A live BitTorrent peer connection. A peer does not own a piece: it may contribute blocks to
+ * several pieces, and several peers may contribute to one piece. */
+export interface TorrentPeerState {
+  /** Unique in the download, in the order its peers connected: "Peer #(id + 1)". */
+  id: number
+  interfaceId: string
+  status: 'connected' | 'receiving'
+  /** The client it runs, as its peer id names it ("qBittorrent 4.6.2"); null when unknown. */
+  client: string | null
+  bytesDownloaded: number
+  speedBytesPerSec: number
+  bytesUploaded: number
+  uploadSpeedBytesPerSec: number
+}
 
-export interface BlockState {
+export type HttpBlockStatus = 'pending' | 'downloading' | 'completed'
+/** `skipped`: a piece that none of the files chosen for this torrent needs. */
+export type TorrentPieceStatus = HttpBlockStatus | 'skipped'
+
+interface WorkUnitState {
   index: number
   rangeStart: number
   rangeEnd: number | null
-  status: BlockStatus
   /** The network currently leasing this block (or the last one to touch it). Only meaningful
    * as "who is working on it now" — for who actually *delivered* the bytes, read
    * `bytesByInterface`, since a block can be started on one network and finished on another
@@ -83,6 +130,21 @@ export interface BlockState {
   bytesByInterface: Record<string, number>
 }
 
+export interface HttpBlockState extends WorkUnitState {
+  kind: 'http'
+  status: HttpBlockStatus
+}
+
+export interface TorrentPieceState extends WorkUnitState {
+  kind: 'torrent'
+  status: TorrentPieceStatus
+  /** Bytes received in this run but not yet hash-verified. This is live activity, not durable
+   * progress, and may fall back to zero after a failed verification. */
+  provisionalBytes: number
+}
+
+export type DownloadUnitState = HttpBlockState | TorrentPieceState
+
 /**
  * - on: in use.
  * - off: the user switched it off. A network that turns up mid-download starts off.
@@ -91,11 +153,13 @@ export interface BlockState {
  *   trying, and the rest follow once it gets through.
  * - failed: the server kept refusing requests over it (`error` says how). Switching it off and
  *   on, reconnecting it, or resuming tries again.
+ * - limit: it has used up its data for the chosen period (NetworkPreference.dataLimit). It's used again
+ *   once the period ends or the limit is raised.
  */
-export type NetworkStatus = 'on' | 'off' | 'offline' | 'unreachable' | 'failed'
+export type NetworkStatus = 'on' | 'off' | 'offline' | 'unreachable' | 'failed' | 'limit'
 
 /** A network as one download sees it: whether the user has it on, and how it is doing. */
-export interface DownloadNetwork {
+interface DownloadNetworkBase {
   /** A NetworkInterfaceInfo id. */
   id: string
   /** Its name and kind as the OS last reported them. */
@@ -112,7 +176,19 @@ export interface DownloadNetwork {
   retries: number
 }
 
-export interface DownloadState {
+export interface HttpDownloadNetwork extends DownloadNetworkBase {
+  transfer: 'http'
+}
+
+export interface TorrentDownloadNetwork extends DownloadNetworkBase {
+  transfer: 'torrent'
+  bytesUploaded: number
+  uploadSpeedBytesPerSec: number
+}
+
+export type DownloadNetwork = HttpDownloadNetwork | TorrentDownloadNetwork
+
+interface DownloadStateBase {
   id: string
   url: string
   fileName: string
@@ -122,47 +198,105 @@ export interface DownloadState {
   bytesDownloaded: number
   speedBytesPerSec: number
   status: DownloadStatus
-  /** Every network on this computer, and any the download used that has since gone, in the
-   * order it first saw them. */
-  networks: DownloadNetwork[]
-  chunks: ChunkState[]
-  /** The most streams it has run at once. */
-  peakStreams?: number
-  blocks?: BlockState[]
-  totalBlocks?: number
-  blockSizeBytes?: number
   error?: string
   /** For an error: whether resuming can pick up where it stopped. False when the progress was
    * thrown away, e.g. the file changed on the server. */
   resumable?: boolean
   startedAt: number
+  /** While queued: its place in the queue, lowest first. */
+  queuedAt?: number
   pausedAt?: number
   totalPausedMs?: number
   completedAt?: number
+  /** Each network's speed, by network id, sampled once a second over the last minute it ran.
+   * Every series is as long as the others, so they line up in time. */
+  speedHistory?: Record<string, number[]>
+  /** The best combined speed held for a few seconds, so it only ever rises; unset until it has
+   * run that long. A download done sooner gets the best speed it showed. */
+  peakSpeedBytesPerSec?: number
   /** The update this state is as of (see DownloadUpdate). */
   seq?: number
+}
+
+export interface HttpDownloadState extends DownloadStateBase {
+  kind: 'http'
+  networks: HttpDownloadNetwork[]
+  streams: HttpStreamState[]
+  peakStreams: number
+  blocks: HttpBlockState[]
+  totalBlocks: number
+  blockSizeBytes: number
+}
+
+export interface TorrentDownloadState extends DownloadStateBase {
+  kind: 'torrent'
+  networks: TorrentDownloadNetwork[]
+  peers: TorrentPeerState[]
+  peakPeers: number
+  pieces: TorrentPieceState[]
+  totalPieces: number
+  pieceLength: number
+  files: { chosen: number; total: number }
+  /** Its files come in the torrent's folder (`fileName`), rather than as one file. */
+  folder: boolean
+  /** Of `totalBytes`, the bytes of pieces that no chosen file needs. */
+  skippedBytes: number
+  bytesUploaded: number
+  uploadSpeedBytesPerSec: number
+}
+
+export type DownloadState = HttpDownloadState | TorrentDownloadState
+
+/** A finished download as history keeps it: its state without the work units and connections,
+ * which only a running download needs. */
+export type FinishedDownload = (
+  Omit<HttpDownloadState, 'blocks' | 'streams'> | Omit<TorrentDownloadState, 'pieces' | 'peers'>
+) & {
+  /** The blocks or pieces it was written in (a torrent's: those its chosen files needed). */
+  unitsWritten: number
+  /** Set when listed: its file or folder is no longer where it was saved. */
+  missing?: boolean
+  /** Chosen torrent files relative to its destination folder, retained for safe file removal. */
+  downloadedFiles?: string[]
 }
 
 /** What the main process sends as a download changes: everything but its blocks, and only the
  * blocks that changed since it last sent. A download can have tens of thousands of blocks, and
  * copying every one several times a second would cost the process that carries every byte. A
  * snapshot is the same with every block in it. */
-export interface DownloadUpdate {
-  /** Counts what the main process has sent for the download. A snapshot has the count it was
-   * taken at. */
+export interface HttpDownloadUpdate {
   seq: number
-  state: Omit<DownloadState, 'blocks'>
-  blocks: BlockState[]
+  state: Omit<HttpDownloadState, 'blocks'>
+  blocks: HttpBlockState[]
 }
+
+export interface TorrentDownloadUpdate {
+  seq: number
+  state: Omit<TorrentDownloadState, 'pieces'>
+  pieces: TorrentPieceState[]
+}
+
+export type DownloadUpdate = HttpDownloadUpdate | TorrentDownloadUpdate
 
 /** User customization for one physical network, keyed by NetworkInterfaceInfo.id — lets a
  * cryptic OS device name (e.g. "feth0") get a real label, and a color distinct from its
  * kind's default. Persisted in the main process, independent of any single download. */
+export type DataLimitPeriod = 'day' | 'week' | 'month'
+
 export interface NetworkPreference {
   customName?: string
   /** One of the app's curated swatch ids (see NETWORK_COLOR_SWATCHES) — not a raw hex, so every
    * swatch is guaranteed to have a legible on-solid text color already picked out for it. */
   colorId?: string
+  /** Left out of new downloads by default (see the title bar's networks). A download can still
+   * be started on it. */
+  off?: boolean
+  /** Bytes a second all downloads together may take over it. */
+  speedLimit?: number
+  /** Bytes Plexo may receive in the chosen calendar period. */
+  dataLimit?: number
+  /** Defaults to month for existing settings. Weeks start Monday in local time. */
+  dataLimitPeriod?: DataLimitPeriod
 }
 
 export type NetworkPreferences = Record<string, NetworkPreference>
@@ -185,7 +319,17 @@ export interface AppSettings {
   destinationDir?: string
   /** User customizations (name/color) per network interface id. */
   networkPreferences?: NetworkPreferences
+  /** How many downloads run at once; the rest wait in the queue. */
+  downloadsAtOnce?: number
+  /** Bytes a second every download together may take, over every network; unset: no limit. */
+  speedLimit?: number
+  /** While on, slowModeSpeed stands in for speedLimit: a one-click lower limit for calls. */
+  slowMode?: boolean
+  slowModeSpeed?: number
 }
+
+export const DOWNLOADS_AT_ONCE = { default: 2, min: 1, max: 8 }
+export const DEFAULT_SLOW_MODE_SPEED = 2 * 1024 ** 2
 
 /** Everything the renderer needs for its first paint, read synchronously by the preload so no
  * saved value flashes in over a default a moment after launch. */
@@ -194,11 +338,15 @@ export interface InitialState {
   downloadsDir: string
   themeSource: ThemeSource
   networkPreferences: NetworkPreferences
+  downloadsAtOnce: number
+  speedLimit?: number
+  slowMode: boolean
+  slowModeSpeed: number
   /** The last folder picked, if it still exists — otherwise the renderer uses downloadsDir. */
   destinationDir?: string
 }
 
-export interface StartDownloadRequest {
+interface StartDownloadRequestBase {
   url: string
   destinationDir: string
   suggestedFileName: string
@@ -209,6 +357,20 @@ export interface StartDownloadRequest {
   interfaceIds: string[]
   etag: string | null
   lastModified: string | null
+}
+
+export interface StartHttpDownloadRequest extends StartDownloadRequestBase {
+  kind: 'http'
   /** Streams per network the user picked; left out, the count is decided automatically. */
   streamsPerNetwork?: number
 }
+
+export interface StartTorrentDownloadRequest extends StartDownloadRequestBase {
+  kind: 'torrent'
+  /** The download starts from the .torrent retained when this info hash was probed. */
+  infoHash: string
+  /** For a torrent: the files to download, as indexes into its probe's `files`. Left out: all. */
+  selectedFiles?: number[]
+}
+
+export type StartDownloadRequest = StartHttpDownloadRequest | StartTorrentDownloadRequest

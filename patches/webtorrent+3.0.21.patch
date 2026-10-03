@@ -1,0 +1,25 @@
+diff --git a/node_modules/webtorrent/index.js b/node_modules/webtorrent/index.js
+index 8d3d156..08e8cf7 100644
+--- a/node_modules/webtorrent/index.js
++++ b/node_modules/webtorrent/index.js
+@@ -82,6 +82,7 @@ export default class WebTorrent extends EventEmitter {
+     this.natPmp = opts.natPmp ?? true
+     this.torrents = []
+     this.maxConns = Number(opts.maxConns) || 55
++    this._connect = typeof opts.connect === 'function' ? opts.connect : null
+     this.utp = WebTorrent.UTP_SUPPORT && opts.utp !== false
+     this.seedOutgoingConnections = opts.seedOutgoingConnections ?? true
+ 
+diff --git a/node_modules/webtorrent/lib/torrent.js b/node_modules/webtorrent/lib/torrent.js
+index 771a87f..1eafb73 100644
+--- a/node_modules/webtorrent/lib/torrent.js
++++ b/node_modules/webtorrent/lib/torrent.js
+@@ -2122,7 +2122,7 @@ export default class Torrent extends EventEmitter {
+       const utpServer = this.client._utpServer
+       peer.conn = utpServer ? utpServer.connect(opts.port, opts.host) : utp.connect(opts.port, opts.host)
+     } else {
+-      peer.conn = net.connect(opts)
++      peer.conn = this.client._connect ? this.client._connect(opts) : net.connect(opts)
+     }
+ 
+     const conn = peer.conn
