@@ -9,6 +9,7 @@
       content="A free, open-source download manager that combines your internet connections to download files and torrents faster."
     />
     <title>Plexo — Combine your networks. Download faster.</title>
+    <link rel="icon" href="favicon.svg" type="image/svg+xml" />
     <link rel="stylesheet" href="landing.css" />
     <script src="downloads.js" defer></script>
     <script src="landing.js" defer></script>
@@ -178,7 +179,7 @@
             <a
               href="https://github.com/anmolkapil/plexo"
               aria-label="Plexo on GitHub"
-              class="gh-btn"
+              class="gh-btn github-button"
               style="
                 width: 44px;
                 height: 44px;
@@ -200,10 +201,16 @@
                 place-items: center;
               "
             >
-              <svg width="20" height="20" viewBox="0 0 24 24" aria-hidden="true">
+              <svg
+                width="24"
+                height="24"
+                viewBox="0 0 24 24"
+                fill="currentColor"
+                shape-rendering="geometricPrecision"
+                aria-hidden="true"
+              >
                 <path
-                  fill="currentColor"
-                  d="M12 .5C5.65.5.5 5.65.5 12a11.5 11.5 0 0 0 7.86 10.92c.58.1.79-.25.79-.56v-2c-3.2.7-3.87-1.37-3.87-1.37-.52-1.33-1.28-1.69-1.28-1.69-1.04-.71.08-.7.08-.7 1.15.08 1.76 1.19 1.76 1.19 1.03 1.76 2.69 1.25 3.35.96.1-.75.4-1.25.73-1.54-2.55-.29-5.24-1.28-5.24-5.68 0-1.26.45-2.28 1.19-3.09-.12-.29-.52-1.46.11-3.05 0 0 .97-.31 3.17 1.18a11 11 0 0 1 5.77 0c2.2-1.49 3.17-1.18 3.17-1.18.63 1.59.23 2.76.11 3.05.74.81 1.19 1.83 1.19 3.09 0 4.41-2.69 5.39-5.25 5.67.41.36.78 1.06.78 2.14v3.17c0 .31.21.67.8.56A11.5 11.5 0 0 0 23.5 12C23.5 5.65 18.35.5 12 .5Z"
+                  d="M12 2.4a9.6 9.6 0 0 0-3.04 18.71c.48.09.66-.21.66-.46v-1.87c-2.69.58-3.25-1.14-3.25-1.14-.44-1.12-1.08-1.42-1.08-1.42-.88-.6.07-.59.07-.59.97.07 1.48 1 1.48 1 .87 1.48 2.27 1.05 2.82.8.09-.62.34-1.05.61-1.29-2.14-.24-4.4-1.07-4.4-4.75 0-1.05.38-1.91 1-2.58-.1-.24-.43-1.22.09-2.54 0 0 .81-.26 2.64.98A9.2 9.2 0 0 1 12 6.93c.82 0 1.63.11 2.4.32 1.83-1.24 2.64-.98 2.64-.98.52 1.32.19 2.3.09 2.54.62.67 1 1.53 1 2.58 0 3.69-2.26 4.5-4.41 4.74.35.3.65.88.65 1.78v2.74c0 .25.18.55.66.46A9.6 9.6 0 0 0 12 2.4Z"
                 ></path>
               </svg>
             </a>
@@ -2275,24 +2282,9 @@
                     color: #a1a1a8;
                   "
                 >
-                  It splits each file into chunks and downloads them over every network you've
-                  switched on at the same time, then joins the chunks back into one file.
-                </p>
-              </details>
-
-              <details class="faq-item" name="faq">
-                <summary>Is Plexo stable yet?<span aria-hidden="true">+</span></summary>
-                <p
-                  style="
-                    margin: 0 0 24px;
-                    max-width: 720px;
-                    font-size: 16px;
-                    line-height: 1.65;
-                    color: #a1a1a8;
-                  "
-                >
-                  Not yet. Plexo is in pre-release, so expect bugs and rough edges. If something
-                  breaks, please report it on GitHub.
+                  Plexo splits a download into smaller chunks, downloads those chunks over all the
+                  connections you've selected, then puts them back together as one file. This lets
+                  one download use the combined capacity of your available connections.
                 </p>
               </details>
 
@@ -2307,29 +2299,15 @@
                     color: #a1a1a8;
                   "
                 >
-                  Wi-Fi, Ethernet and a USB-tethered phone can work together. Switch on the
-                  connections you want Plexo to use.
-                </p>
-              </details>
-
-              <details class="faq-item" name="faq">
-                <summary>Is Plexo really free?<span aria-hidden="true">+</span></summary>
-                <p
-                  style="
-                    margin: 0 0 24px;
-                    max-width: 720px;
-                    font-size: 16px;
-                    line-height: 1.65;
-                    color: #a1a1a8;
-                  "
-                >
-                  Yes. Plexo is free and open source, and the code is on GitHub.
+                  You can combine active connections available on your computer, such as Wi-Fi,
+                  Ethernet, and a phone connected through USB tethering. Each connection needs to
+                  provide a separate route to the internet.
                 </p>
               </details>
 
               <details class="faq-item" name="faq">
                 <summary>
-                  Will it eat through my mobile data?<span aria-hidden="true">+</span>
+                  Why does my computer warn me when I open Plexo?<span aria-hidden="true">+</span>
                 </summary>
                 <p
                   style="
@@ -2340,14 +2318,21 @@
                     color: #a1a1a8;
                   "
                 >
-                  Downloads sent through your phone count toward its data plan. Set a data budget or
-                  speed limit for that network, or switch it off.
+                  Plexo isn't code-signed yet, so macOS and Windows may show a security warning the
+                  first time you open it. Follow the first-launch steps under Downloads for your
+                  system. You only need to do this once, and the full source code is available on
+                  GitHub. Code-signing licenses cost money; if you'd like to help remove these
+                  warnings, consider
+                  <a href="https://github.com/sponsors/anmolkapil">sponsoring Plexo</a> so the
+                  project can cover them.
                 </p>
               </details>
 
               <details class="faq-item" name="faq">
                 <summary>
-                  Does it work with every site and torrent?<span aria-hidden="true">+</span>
+                  Can Plexo combine internet speed for my whole device?<span aria-hidden="true"
+                    >+</span
+                  >
                 </summary>
                 <p
                   style="
@@ -2358,14 +2343,32 @@
                     color: #a1a1a8;
                   "
                 >
-                  Plexo supports direct file links, magnet links and .torrent files. Combining
-                  connections for a direct download depends on the server supporting range requests.
+                  No. Plexo combines connections only for downloads started inside Plexo. It isn't a
+                  VPN and doesn't change how browsers, games, streaming apps, or other software use
+                  the internet.
+                </p>
+              </details>
+
+              <details class="faq-item" name="faq">
+                <summary>Is Plexo stable?<span aria-hidden="true">+</span></summary>
+                <p
+                  style="
+                    margin: 0 0 24px;
+                    max-width: 720px;
+                    font-size: 16px;
+                    line-height: 1.65;
+                    color: #a1a1a8;
+                  "
+                >
+                  Plexo is currently a pre-release. The core download flow works, but you may still
+                  encounter bugs or rough edges. If something goes wrong, please report it on
+                  GitHub.
                 </p>
               </details>
 
               <details class="faq-item" name="faq">
                 <summary>
-                  Why does my Mac or PC warn me when I open Plexo?<span aria-hidden="true">+</span>
+                  How do I use Android USB tethering on a Mac?<span aria-hidden="true">+</span>
                 </summary>
                 <p
                   style="
@@ -2376,10 +2379,14 @@
                     color: #a1a1a8;
                   "
                 >
-                  Plexo isn't code-signed yet, so macOS and Windows show a warning the first time
-                  you open it. Follow the first-launch steps under Downloads for your system — you
-                  only need to do it once. The full source code is on GitHub if you'd like to check
-                  it.
+                  macOS doesn't support Android USB tethering by itself. Install
+                  <a href="https://github.com/XiaoMiku01/TetherKit">TetherKit</a>, connect your
+                  phone by USB, then turn on <strong>USB tethering</strong> in your phone's hotspot
+                  and tethering settings. Once macOS shows it as a network connection, Plexo can use
+                  it. Follow the
+                  <a href="https://github.com/anmolkapil/plexo#using-a-usb-tethered-android-phone"
+                    >full Android USB tethering tutorial</a
+                  >.
                 </p>
               </details>
             </div>
@@ -2485,7 +2492,8 @@
                   Plexo is free and open source.
                   <span style="color: #a1a1a8"
                     >If it helps you, support the project by starring it, sharing it, reporting
-                    problems, or suggesting what to build next.</span
+                    problems, or sponsoring the code-signing licenses needed to remove the macOS and
+                    Windows security warnings.</span
                   >
                 </p>
                 <div
@@ -2590,9 +2598,10 @@
                   ></span>
                   <span
                     style="flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px"
-                    ><span style="font-size: 17px; font-weight: 500; color: #ededef">Donate</span
+                    ><span style="font-size: 17px; font-weight: 500; color: #ededef"
+                      >Sponsor Plexo</span
                     ><span style="font-size: 14px; line-height: 1.5; color: #a1a1a8"
-                      >Support development and help keep Plexo free.</span
+                      >Help fund code signing and keep Plexo free.</span
                     ></span
                   >
                   <svg

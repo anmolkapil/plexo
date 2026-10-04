@@ -150,6 +150,35 @@ a {
   border-color: rgba(255, 255, 255, 0.35) !important;
   transform: translateY(-1px);
 }
+.github-button {
+  flex: 0 0 44px;
+  box-sizing: border-box;
+  border: 1px solid rgba(255, 255, 255, 0.24) !important;
+  border-radius: 9999px !important;
+  background: linear-gradient(
+    145deg,
+    rgba(255, 255, 255, 0.18),
+    rgba(255, 255, 255, 0.07) 52%,
+    rgba(255, 255, 255, 0.035)
+  ) !important;
+  box-shadow: 0 8px 22px -10px rgba(0, 0, 0, 0.85) !important;
+  backdrop-filter: blur(14px) saturate(140%) !important;
+  -webkit-backdrop-filter: blur(14px) saturate(140%) !important;
+}
+.github-button svg {
+  width: 24px;
+  height: 24px;
+  overflow: visible;
+}
+.github-button:hover {
+  border-color: rgba(255, 255, 255, 0.32) !important;
+  background: linear-gradient(
+    145deg,
+    rgba(255, 255, 255, 0.24),
+    rgba(255, 255, 255, 0.1) 55%,
+    rgba(255, 255, 255, 0.05)
+  ) !important;
+}
 .srow {
   transition: background 0.2s;
 }
@@ -747,6 +776,21 @@ summary:focus-visible,
 .faq-item[open]::details-content {
   block-size: auto;
   opacity: 1;
+}
+.faq-item p a {
+  color: #f58a45;
+  font-weight: 500;
+  text-decoration-line: underline;
+  text-decoration-color: rgba(245, 138, 69, 0.55);
+  text-decoration-thickness: 1px;
+  text-underline-offset: 3px;
+  transition:
+    color 0.2s ease,
+    text-decoration-color 0.2s ease;
+}
+.faq-item p a:hover {
+  color: #ffab72;
+  text-decoration-color: currentColor;
 }
 .downloads {
   position: relative;
