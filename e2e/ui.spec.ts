@@ -47,8 +47,8 @@ test.describe('a torrent through the UI', () => {
           [files[0], files[2]].map((data) => ({ path: (data as { name?: string }).name!, data }))
         )
       )
+      // Started: its own screen opens.
       await page.getByRole('button', { name: 'Download' }).click()
-      await page.getByRole('button', { name: 'Open Trio' }).click()
 
       // Running: its connections are peers, and its blocks pieces.
       const peers = page.getByRole('button', { name: /^\d+ peers?/ }).first()
@@ -140,9 +140,7 @@ test.describe('UI journeys @smoke', () => {
     await expect
       .poll(async () => JSON.parse(await readFile(manifestPath, 'utf-8')).requestPayload)
       .toMatchObject({ streamsPerNetwork: 8 })
-    // Added to the list; its own screen is a click away.
-    await page.getByRole('button', { name: /^Open / }).click()
-
+    // Started: its own screen opens.
     await page.getByRole('button', { name: 'Pause' }).click()
     await expect(page.getByRole('button', { name: 'Resume' })).toBeVisible()
     await expect(page.getByRole('columnheader', { name: 'Progress', exact: true })).toBeVisible()
@@ -180,7 +178,6 @@ test.describe('UI journeys @smoke', () => {
     const reached = origin.hold(6 * BLOCK)
     await page.getByRole('button', { name: 'Download' }).click()
     await reached
-    await page.getByRole('button', { name: /^Open / }).click()
     await page.getByRole('button', { name: 'Cancel download…' }).click()
     await page.getByRole('button', { name: 'Cancel download', exact: true }).click()
     origin.release()
@@ -369,6 +366,7 @@ test('a link just started is not offered again from the clipboard', async ({
   await page.getByRole('button', { name: 'Download', exact: true }).click()
   await expect(link).toBeHidden()
 
+  await page.getByRole('button', { name: 'Downloads', exact: true }).click()
   await plexo.newDownload()
   // Answered after the dialog's own read, so that one has been applied (or skipped) by now.
   await page.evaluate(() => window.plexo.readClipboardText())

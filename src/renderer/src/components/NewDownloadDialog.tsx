@@ -273,7 +273,7 @@ function NewDownloadForm({ onDone }: { onDone: () => void }): React.JSX.Element 
         etag: probe.result.etag,
         lastModified: probe.result.lastModified
       }
-      await window.plexo.startDownload(
+      const id = await window.plexo.startDownload(
         probe.result.kind === 'torrent'
           ? {
               ...common,
@@ -287,8 +287,13 @@ function NewDownloadForm({ onDone }: { onDone: () => void }): React.JSX.Element 
               streamsPerNetwork: streamsChoice === 'auto' ? undefined : streamsChoice
             }
       )
-      // Started: the link is spent, so the next download starts from an empty one.
-      useAppStore.setState({ startedUrl: url.trim(), draftUrl: '' })
+      // Started: the link is spent, so the next download starts from an empty one. Its own
+      // screen opens, unless it was only added to the queue.
+      useAppStore.setState({
+        startedUrl: url.trim(),
+        draftUrl: '',
+        ...(full ? {} : { view: { name: 'download', id } as const })
+      })
       onDone()
     } catch (error) {
       setStartError(describeError(error))
