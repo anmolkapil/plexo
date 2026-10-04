@@ -1,6 +1,6 @@
 import { createRequire } from 'node:module'
 import { resolve } from 'node:path'
-import { _electron as electron, expect, test, type Page } from '@playwright/test'
+import { _electron as electron, expect, test, type Locator, type Page } from '@playwright/test'
 
 // M. The download page: what each file is called, which one a visitor is offered, and that the
 // page says so. The logic lives in docs/downloads.js; the page is checked by loading the real
@@ -467,7 +467,8 @@ test.describe('the download page', () => {
   test('navbar highlights the section currently in view', async () => {
     const { page, close } = await openPage(BROWSERS.chromeWindows)
     try {
-      const currentLink = (section: string) => page.locator(`.navlinks a[href="#${section}"]`)
+      const currentLink = (section: string): Locator =>
+        page.locator(`.navlinks a[href="#${section}"]`)
 
       await expect(page.locator('.navlinks [aria-current="location"]')).toHaveCount(0)
       await page

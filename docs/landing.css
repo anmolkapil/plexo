@@ -377,25 +377,19 @@ a {
   animation: plexoFlow 1s linear infinite;
   transition: opacity 0.4s;
 }
-.flow-w {
-  stroke: #f36712;
-}
-.flow-u {
-  stroke: #ededef;
-}
 .flow.off {
   animation-play-state: paused;
   opacity: 0.16;
 }
 .flow-out {
   fill: none;
-  stroke: #f7f4ef;
+  stroke: #ededef;
   stroke-width: 6.5;
   stroke-linecap: round;
   transition: opacity 0.4s;
 }
 .flow-arrow {
-  fill: #f7f4ef;
+  fill: #ededef;
   transition: opacity 0.4s;
 }
 .flow-out.off {
@@ -408,12 +402,12 @@ a {
 }
 .combine-ring {
   fill: none;
-  stroke: #f7f4ef;
+  stroke: #ededef;
   stroke-opacity: 0.25;
   stroke-width: 1.5;
 }
 .combine-dot {
-  fill: #f7f4ef;
+  fill: #ededef;
 }
 .area {
   transition:
@@ -424,14 +418,14 @@ a {
   opacity: 0.18;
 }
 .area-wifi {
-  fill: rgba(78, 168, 154, 0.62);
+  fill: rgba(243, 103, 18, 0.62);
 }
 .area-usb {
-  fill: rgba(216, 164, 76, 0.62);
+  fill: rgba(200, 200, 206, 0.5);
 }
 .cline {
   fill: none;
-  stroke: #f7f4ef;
+  stroke: #ededef;
   stroke-width: 2;
   vector-effect: non-scaling-stroke;
   transition: d 0.5s linear;
@@ -601,42 +595,42 @@ summary:focus-visible,
   border-color: #f36712;
 }
 .flow-wifi {
-  stroke: #4ea89a;
+  stroke: #f36712;
 }
 .flow-usb {
-  stroke: #d8a44c;
+  stroke: #c8c8ce;
 }
 .source-wifi,
 .legend-wifi {
-  fill: #4ea89a;
-  background: #4ea89a;
+  fill: #f36712;
+  background: #f36712;
 }
 .source-usb,
 .legend-usb {
-  fill: #d8a44c;
-  background: #d8a44c;
+  fill: #c8c8ce;
+  background: #c8c8ce;
 }
 #wifi-diagram-speed,
 #wifi-speed {
-  color: #7fc9bb;
+  color: #ff8a3d;
 }
 #usb-diagram-speed,
 #usb-speed {
-  color: #e8bb6d;
+  color: #ededef;
 }
 #wifi-contribution {
-  background: #4ea89a !important;
+  background: #f36712 !important;
 }
 #usb-contribution {
-  background: #d8a44c !important;
+  background: #c8c8ce !important;
 }
 .wifi-row .n-name > span:first-child {
-  background: #4ea89a !important;
-  box-shadow: 0 0 12px rgba(78, 168, 154, 0.65) !important;
+  background: #f36712 !important;
+  box-shadow: 0 0 12px rgba(243, 103, 18, 0.65) !important;
 }
 .usb-row .n-name > span:first-child {
-  background: #d8a44c !important;
-  box-shadow: 0 0 12px rgba(216, 164, 76, 0.55) !important;
+  background: #c8c8ce !important;
+  box-shadow: 0 0 12px rgba(200, 200, 206, 0.45) !important;
 }
 .demo-paused .flow,
 .demo-paused .flow-out {
@@ -653,9 +647,9 @@ summary:focus-visible,
   margin: 0;
   appearance: none;
   box-sizing: border-box;
-  border: 1px solid #3a3f44;
+  border: 1px solid #ffffff29;
   border-radius: 4px;
-  background: #242729;
+  background: #ffffff08;
   cursor: pointer;
   touch-action: manipulation;
   transition:
@@ -679,20 +673,20 @@ summary:focus-visible,
 }
 .network-toggle:checked {
   border: 0;
-  background: #4ea89a;
-  color: #10201d;
+  background: #f36712;
+  color: #0a0a0b;
 }
 .network-toggle:checked::after {
   opacity: 1;
   transform: rotate(-45deg) scale(1);
 }
 .network-toggle:focus-visible {
-  outline: 2px solid rgba(247, 244, 239, 0.75);
+  outline: 2px solid rgba(237, 237, 239, 0.75);
   outline-offset: 3px;
 }
 .usb-row .network-toggle:checked {
-  background: #d8a44c;
-  color: #221806;
+  background: #c8c8ce;
+  color: #0a0a0b;
 }
 #demo-motion {
   padding: 10px 14px;
@@ -709,7 +703,7 @@ summary:focus-visible,
   justify-content: center;
   gap: 10px;
   margin: 12px 0 0;
-  color: #b0b0b7;
+  color: #a1a1a8;
   font-size: 13px;
 }
 .faq-item {
@@ -1439,7 +1433,7 @@ summary:focus-visible,
   padding: 16px 18px;
   border: 1px solid rgba(255, 255, 255, 0.07);
   border-radius: 16px;
-  background: #18181a;
+  background: #17171a;
 }
 #install-dialog {
   width: min(900px, calc(100vw - 32px));
