@@ -728,7 +728,7 @@ const DownloadRow = memo(function DownloadRow({
               ))}
             </div>
           )}
-          <div className={`truncate font-mono text-[11.5px] leading-none ${tone}`}>{detail}</div>
+          <div className={`truncate font-mono text-[11.5px] leading-tight ${tone}`}>{detail}</div>
         </div>
       </button>
       {action?.icon ? (
