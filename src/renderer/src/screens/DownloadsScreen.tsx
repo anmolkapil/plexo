@@ -1,4 +1,4 @@
-import type { DownloadState, FinishedDownload } from '@shared/types'
+import type { DownloadState, FinishedDownload, NetworkPreferences } from '@shared/types'
 import { ChevronRight, Pause, Play, Plus, RotateCw, X, type LucideIcon } from 'lucide-react'
 import { cn } from 'cn'
 import { memo, useCallback, useEffect, useState } from 'react'
@@ -143,6 +143,7 @@ export function DownloadsScreen(): React.JSX.Element {
   )
   // Stable, with the colors resolved once here, so a finished row skips every progress push.
   const networkVisual = useNetworkVisuals()
+  const networkPreferences = useAppStore((store) => store.networkPreferences)
   const selectRow = useCallback((id: string, on: boolean) => toggle([id], on), [toggle])
   const openRow = useCallback((id: string) => setView({ name: 'download', id }), [setView])
   const fixRow = useCallback((item: Item) => {
@@ -432,6 +433,7 @@ export function DownloadsScreen(): React.JSX.Element {
                   networkVisual={
                     isFinished(item) || item.status === 'completed' ? undefined : networkVisual
                   }
+                  networkPreferences={networkPreferences}
                   onSelect={selectRow}
                   onOpen={openRow}
                   onFix={fixRow}
@@ -556,6 +558,7 @@ const DownloadRow = memo(function DownloadRow({
   now,
   selected,
   networkVisual,
+  networkPreferences,
   onSelect,
   onOpen,
   onFix,
@@ -564,8 +567,10 @@ const DownloadRow = memo(function DownloadRow({
   item: Item
   now: number
   selected: boolean
-  /** Colors its progress bar; a finished row has none. */
+  /** Colors its progress bar and network dots; a finished row has none. */
   networkVisual?: ResolveNetworkVisual
+  /** The default networks (the networks menu), to tell a download set otherwise. */
+  networkPreferences: NetworkPreferences
   onSelect: (id: string, on: boolean) => void
   onOpen: (id: string) => void
   onFix: (item: Item) => void
@@ -601,7 +606,6 @@ const DownloadRow = memo(function DownloadRow({
         detail = [
           wanted > 0 && `${percent}%`,
           sizes,
-          formatSpeed(download.speedBytesPerSec),
           download.timeLeftSeconds !== undefined && formatEta(download.timeLeftSeconds)
         ]
           .filter(Boolean)
@@ -662,6 +666,25 @@ const DownloadRow = memo(function DownloadRow({
               color: networkVisual(network.id, network.kind, network.label).solid
             }))
 
+  // Set apart from the default networks: which it's on, at a glance. One on the defaults says
+  // nothing new, so it shows none.
+  const dots =
+    !finished &&
+    networkVisual &&
+    !isFinished(item) &&
+    item.networks.some(
+      (network) => network.enabled === Boolean(networkPreferences[network.id]?.off)
+    )
+      ? item.networks.map((network) => {
+          const visual = networkVisual(network.id, network.kind, network.label)
+          return { id: network.id, on: network.enabled, color: visual.solid, name: visual.name }
+        })
+      : null
+  const speed =
+    !finished && !isFinished(item) && item.status === 'downloading'
+      ? formatSpeed(item.speedBytesPerSec)
+      : null
+
   return (
     <div
       data-selected={selected || undefined}
@@ -691,6 +714,31 @@ const DownloadRow = memo(function DownloadRow({
               {item.fileName}
             </span>
             {item.kind === 'torrent' && <TorrentBadge />}
+            {(dots || speed) && (
+              <div className="ml-auto flex shrink-0 items-center gap-2.5 pl-2">
+                {dots && (
+                  <span
+                    role="img"
+                    aria-label={`On ${dots
+                      .filter((dot) => dot.on)
+                      .map((dot) => dot.name)
+                      .join(', ')}`}
+                    className="flex items-center gap-1 rounded-full border border-border px-1.5 py-1"
+                  >
+                    {dots.map((dot) => (
+                      <span
+                        key={dot.id}
+                        className={cn('size-1.5 rounded-full', !dot.on && 'bg-muted-foreground/30')}
+                        style={dot.on ? { background: dot.color } : undefined}
+                      />
+                    ))}
+                  </span>
+                )}
+                {speed && (
+                  <span className="font-mono text-[12.5px] font-medium tabular-nums">{speed}</span>
+                )}
+              </div>
+            )}
           </div>
           {segments.length > 0 && (
             <div
