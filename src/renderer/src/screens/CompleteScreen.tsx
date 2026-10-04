@@ -55,7 +55,8 @@ export function CompleteScreen({
         : download.totalBlocks
   const files = isTorrent && download.files.total > 1 ? download.files : null
 
-  const handleReveal = (): void => void window.plexo.revealInFolder(download.destinationPath)
+  // Gone since the list was read: main sends history again, marking it missing here.
+  const handleReveal = (): void => void window.plexo.revealDownload(download.id)
 
   return (
     <div className="flex h-full flex-col bg-background">

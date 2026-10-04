@@ -186,9 +186,7 @@ export function registerIpcHandlers(getWindow: () => BrowserWindow | null): Down
 
   handle('readClipboardText', async () => clipboard.readText())
 
-  handle('revealInFolder', async (_event, filePath) => {
-    shell.showItemInFolder(filePath)
-  })
+  handle('revealDownload', async (_event, id) => manager.reveal(id))
 
   handle('startDownload', async (_event, request) => manager.start(request))
 

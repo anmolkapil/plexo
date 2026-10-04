@@ -14,7 +14,7 @@ export function getHomeDir(): string {
 // (or if something outside the app is creating them as fast as we try).
 const MAX_NAME_ATTEMPTS = 10_000
 
-async function pathExists(path: string): Promise<boolean> {
+export async function pathExists(path: string): Promise<boolean> {
   try {
     await lstat(path)
     return true

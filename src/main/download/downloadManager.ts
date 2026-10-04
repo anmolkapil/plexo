@@ -4,7 +4,7 @@ import { randomUUID } from 'node:crypto'
 import { lstat, readFile, readdir, rename, rm, stat, statfs, writeFile } from 'node:fs/promises'
 import { basename, dirname, isAbsolute, join, sep } from 'node:path'
 import type { BrowserWindow } from 'electron'
-import { app, Notification, powerSaveBlocker } from 'electron'
+import { app, Notification, powerSaveBlocker, shell } from 'electron'
 import { IpcChannels } from '../../shared/ipc-channels'
 import {
   DOWNLOADS_AT_ONCE,
@@ -34,7 +34,7 @@ import { addToHistory, findInHistory, removeFromHistory } from './history'
 import { testKnobs } from '../testKnobs'
 import { DownloadFile } from './downloadFile'
 import { HttpTransfer, splittable } from './httpTransfer'
-import { ensureDirectory, reserveDestinationPath } from './paths'
+import { ensureDirectory, pathExists, reserveDestinationPath } from './paths'
 import { planBlocks, planDownload, planPieces } from './plan'
 import { restoreBlocks, restorePieces, saveBlocks, type SavedBlocks } from './savedProgress'
 import { chosenFiles, wantedPieces } from './torrent/files'
@@ -1210,6 +1210,21 @@ export class DownloadManager {
     if (entry && !entry.missing) await trashDownload(entry)
     await removeFromHistory([id])
     this.historyChanged()
+  }
+
+  /** Shows a download's file in its folder: by the download's own path, never one the window
+   * names, and only once it's checked to be there — the window's view of that can be old (the
+   * file moved or deleted since). When it isn't, the window is told to look again, and the
+   * history it gets marks it missing. */
+  async reveal(id: string): Promise<boolean> {
+    const download = this.runtimes.get(id)?.state ?? (await findInHistory(id))
+    const path = download?.destinationPath
+    if (path && (await pathExists(path).catch(() => false))) {
+      shell.showItemInFolder(path)
+      return true
+    }
+    this.historyChanged()
+    return false
   }
 
   async suspendAll(): Promise<void> {

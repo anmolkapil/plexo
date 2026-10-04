@@ -26,6 +26,10 @@ export function useDownloadEvents(): void {
       clearTimeout(reload)
       reload = setTimeout(loadHistory, 150)
     })
+    // A finished file can only be moved or deleted while Plexo is in the background: listing
+    // again on coming back keeps "moved or deleted" true to the disk, as browsers do when their
+    // downloads list is opened.
+    window.addEventListener('focus', loadHistory)
 
     void window.plexo
       .listDownloads()
@@ -38,6 +42,7 @@ export function useDownloadEvents(): void {
     return () => {
       disposed = true
       clearTimeout(reload)
+      window.removeEventListener('focus', loadHistory)
       unsubscribe()
       unsubscribeHistory()
     }

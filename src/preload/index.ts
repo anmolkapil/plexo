@@ -34,7 +34,7 @@ const plexoApi = {
   /** Where a file dropped on the window is on disk ('' for one that isn't a file). */
   pathForFile: (file: File) => webUtils.getPathForFile(file),
   readClipboardText: () => invoke('readClipboardText'),
-  revealInFolder: (filePath: string) => invoke('revealInFolder', filePath),
+  revealDownload: (id: string) => invoke('revealDownload', id),
   startDownload: (request: IpcContract['startDownload']['args'][0]) =>
     invoke('startDownload', request),
   listDownloads: () => invoke('listDownloads'),
