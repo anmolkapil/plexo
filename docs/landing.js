@@ -722,7 +722,7 @@
   $('share-button').addEventListener('click', async () => {
     const url =
       location.protocol === 'file:' || ['localhost', '127.0.0.1'].includes(location.hostname)
-        ? 'https://anmolkapil.github.io/plexo/'
+        ? 'https://getplexo.app/'
         : location.origin + location.pathname
     try {
       if (navigator.share)
