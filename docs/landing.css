@@ -1630,8 +1630,12 @@ a:focus-visible {
 }
 
 #mobile-menu {
-  width: 100%;
+  position: absolute;
+  top: 100%;
+  left: 16px;
+  right: 16px;
   max-width: 780px;
+  margin: 8px auto 0;
 }
 
 #mobile-menu .menu-panel {

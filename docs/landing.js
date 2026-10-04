@@ -53,7 +53,7 @@
           revealObserver.unobserve(entry.target)
         })
       },
-      { rootMargin: '0px 0px -8% 0px', threshold: 0.08 }
+      { threshold: 0.08 }
     )
     revealTargets.forEach((target) => revealObserver.observe(target))
   } else {
