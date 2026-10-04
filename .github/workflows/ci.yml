@@ -67,3 +67,27 @@ jobs:
           name: playwright-report
           path: playwright-report
           retention-days: 14
+
+  windows-torrent:
+    name: Windows torrent engine
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      # Deliberately don't install native binaries: importing the TCP torrent engine must work
+      # without node-datachannel, just as it must in the Windows installer.
+      - name: Install dependencies without native binaries
+        run: npm ci --ignore-scripts
+
+      - name: Apply dependency patches
+        run: npx patch-package
+
+      - name: Check torrent engine without WebRTC
+        run: npx playwright test e2e/torrentNative.spec.ts
+        env:
+          PLEXO_E2E_SKIP_BUILD: '1'

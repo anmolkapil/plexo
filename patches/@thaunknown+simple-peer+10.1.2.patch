@@ -1,0 +1,13 @@
+diff --git a/node_modules/@thaunknown/simple-peer/lite.js b/node_modules/@thaunknown/simple-peer/lite.js
+--- a/node_modules/@thaunknown/simple-peer/lite.js
++++ b/node_modules/@thaunknown/simple-peer/lite.js
+@@ -1,6 +1,8 @@
+ /*! simple-peer. MIT License. Feross Aboukhadijeh <https://feross.org/opensource> */
+ import debug from 'debug'
+-import { RTCPeerConnection, RTCSessionDescription, RTCIceCandidate } from 'webrtc-polyfill'
++// Plexo binds TCP peers to selected networks; WebRTC peers bypass that hook.
++// Avoid loading the unused native polyfill when importing the torrent engine.
++const { RTCPeerConnection, RTCSessionDescription, RTCIceCandidate } = globalThis
+ import { Duplex } from 'streamx'
+ import errCode from 'err-code'
+ import { randomBytes, arr2hex, text2arr } from 'uint8-util'

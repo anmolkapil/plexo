@@ -59,6 +59,8 @@ export async function storeNamed(name: string, onWritten: (path: string) => void
  * A webtorrent client set up for Plexo:
  * - uTP is off: its UDP sockets can't be pinned to a network the way `connect` pins TCP ones.
  * - Web seeds are off: webtorrent fetches them over HTTP itself, again past `connect`.
+ * - WebRTC is off: those peers bypass the TCP hook too. The simple-peer patch also removes
+ *   its eager native polyfill import, so loading the engine doesn't need node-datachannel.
  * - No port mapping (UPnP, NAT-PMP) and no local peer discovery: nothing beyond the peers.
  */
 export async function createClient(
@@ -68,6 +70,7 @@ export async function createClient(
   return new Client({
     utp: false,
     webSeeds: false,
+    tracker: { wrtc: false },
     natUpnp: false,
     natPmp: false,
     lsd: false,
