@@ -6,10 +6,7 @@ import type { TorrentDownloadNetwork, TorrentPeerState } from '../../../shared/t
 import { connectRoute } from '../../network/deviceBinding'
 import { routesFor, type NetworkRoute } from '../../network/routes'
 import {
-  calculateCurrentSpeed,
-  pushSpeedSample,
   recomputeAggregates,
-  type SpeedSample,
   type Transfer,
   type TransferHost,
   type TorrentTransferTarget
@@ -33,8 +30,6 @@ const addressOf = (host: string, port: number): string =>
 
 interface Peer {
   state: TorrentPeerState
-  /** Everything it has sent, what its speed is measured from. */
-  received: number
 }
 
 /**
@@ -68,10 +63,6 @@ export class TorrentTransfer implements Transfer {
   private reach = new Map<string, { dials: number; answeredAt: number }>()
   /** Bytes of each piece not verified yet, by network. */
   private unverified = new Map<number, Record<string, number>>()
-  /** By network: what it has sent to peers, sampled for its upload speed. */
-  private uploadSamples = new Map<string, SpeedSample[]>()
-  /** By peer: what it has sent, sampled independently from its network. */
-  private uploadSamplesByPeer = new Map<number, SpeedSample[]>()
 
   constructor(
     private readonly runtime: TorrentTransferTarget,
@@ -113,8 +104,6 @@ export class TorrentTransfer implements Transfer {
         this.host.scheduleUpdate()
       }
     }
-    // Uploads come in bursts; between them the speeds fall back to 0 here.
-    this.updateUploadSpeeds(now)
     this.host.reconcile()
   }
 
@@ -188,9 +177,6 @@ export class TorrentTransfer implements Transfer {
     } finally {
       for (const peer of this.peers.values()) this.removePeer(peer)
       this.peers.clear()
-      this.uploadSamples.clear()
-      this.uploadSamplesByPeer.clear()
-      this.updateUploadSpeeds(Date.now())
       this.ended = null
     }
   }
@@ -201,34 +187,9 @@ export class TorrentTransfer implements Transfer {
     network.bytesUploaded += bytes
     state.bytesUploaded += bytes
     peer.state.bytesUploaded += bytes
-    const now = Date.now()
-    let samples = this.uploadSamples.get(network.id)
-    if (!samples) this.uploadSamples.set(network.id, (samples = []))
-    pushSpeedSample(samples, network.bytesUploaded, now)
-    let peerSamples = this.uploadSamplesByPeer.get(peer.state.id)
-    if (!peerSamples) this.uploadSamplesByPeer.set(peer.state.id, (peerSamples = []))
-    peer.state.uploadSpeedBytesPerSec = pushSpeedSample(peerSamples, peer.state.bytesUploaded, now)
-    this.updateUploadSpeeds(now)
-  }
-
-  /** Each network's upload speed, and the download's, as of `now`: one that has stopped sending
-   * reads 0 once its samples are older than the speed window. */
-  private updateUploadSpeeds(now: number): void {
-    const { state } = this.runtime
-    let total = 0
-    for (const network of state.networks) {
-      const speed = calculateCurrentSpeed(this.uploadSamples.get(network.id), now)
-      network.uploadSpeedBytesPerSec = speed
-      total += speed
-    }
-    for (const peer of this.peers.values()) {
-      peer.state.uploadSpeedBytesPerSec = calculateCurrentSpeed(
-        this.uploadSamplesByPeer.get(peer.state.id),
-        now
-      )
-    }
-    if (total !== state.uploadSpeedBytesPerSec) this.host.scheduleUpdate()
-    state.uploadSpeedBytesPerSec = total
+    // Read as speeds on the download's clock (see updateSpeeds).
+    this.runtime.uploadMeters.add(peer.state.id, network.id, bytes)
+    this.host.scheduleUpdate()
   }
 
   private add(client: WebTorrent): void {
@@ -360,15 +321,13 @@ export class TorrentTransfer implements Transfer {
       uploadSpeedBytesPerSec: 0,
       client: wire.peerId ? (this.nameClient?.(wire.peerId) ?? null) : null
     }
-    const peer: Peer = { state: peerState, received: 0 }
+    const peer: Peer = { state: peerState }
     this.peers.set(wire, peer)
     const { state } = this.runtime
     state.peers.push(peerState)
     state.peakPeers = Math.max(state.peakPeers, state.peers.length)
 
     wire.on('piece', (index: number, _offset: number, buffer: Uint8Array) => {
-      const now = Date.now()
-      peer.received += buffer.length
       peerState.bytesDownloaded += buffer.length
       peerState.status = 'receiving'
       const pending = this.unverified.get(index) ?? {}
@@ -385,9 +344,7 @@ export class TorrentTransfer implements Transfer {
         const length = piece.rangeEnd === null ? 0 : piece.rangeEnd - piece.rangeStart + 1
         piece.provisionalBytes = Math.min(length, provisional)
       }
-      let samples = this.runtime.speedSamplesByPeer.get(peerState.id)
-      if (!samples) this.runtime.speedSamplesByPeer.set(peerState.id, (samples = []))
-      peerState.speedBytesPerSec = pushSpeedSample(samples, peer.received, now)
+      this.runtime.meters.add(peerState.id, network.id, buffer.length)
       this.host.scheduleUpdate()
     })
     wire.on('upload', (bytes: number) => this.onUpload(network, peer, bytes))
@@ -401,8 +358,8 @@ export class TorrentTransfer implements Transfer {
     const { peers } = this.runtime.state
     const index = peers.indexOf(peer.state)
     if (index >= 0) peers.splice(index, 1)
-    this.runtime.speedSamplesByPeer.delete(peer.state.id)
-    this.uploadSamplesByPeer.delete(peer.state.id)
+    this.runtime.meters.connections.delete(peer.state.id)
+    this.runtime.uploadMeters.connections.delete(peer.state.id)
     this.host.scheduleUpdate()
   }
 

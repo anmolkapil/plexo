@@ -45,12 +45,12 @@ import { TorrentTransfer } from './torrent/torrentTransfer'
 import {
   clearSpeeds,
   delay,
+  Meters,
   recomputeAggregates,
   updateSpeeds,
   type Transfer,
   type TransferHost,
   type HttpTransferTarget,
-  type SpeedSample,
   type TorrentTransferTarget
 } from './transfer'
 import type { NetworkMonitor } from '../network/interfaces'
@@ -387,7 +387,7 @@ export class DownloadManager {
       stop: new AbortController(),
       file,
       blocks,
-      speedSamplesByStream: new Map<number, SpeedSample[]>()
+      meters: new Meters()
     }
     const host: TransferHost = {
       networks: this.networks,
@@ -417,7 +417,8 @@ export class DownloadManager {
       stop: new AbortController(),
       file,
       pieces,
-      speedSamplesByPeer: new Map<number, SpeedSample[]>()
+      meters: new Meters(),
+      uploadMeters: new Meters()
     }
     const host: TransferHost = {
       networks: this.networks,
@@ -987,12 +988,10 @@ export class DownloadManager {
         if (stream.status !== 'completed') {
           stream.status = 'pending'
         }
-        runtime.speedSamplesByStream.delete(stream.id)
         stream.speedBytesPerSec = 0
       }
     } else {
       runtime.state.peers.length = 0
-      runtime.speedSamplesByPeer.clear()
     }
     runtime.transfer.reset()
     this.pushUpdate(runtime)
@@ -1233,6 +1232,9 @@ export class DownloadManager {
   private async run(runtime: DownloadRuntime): Promise<void> {
     if (runtime.stop.signal.aborted) runtime.stop = new AbortController()
     runtime.transfer.reset()
+    // Speeds are this run's: nothing carries over from the last one.
+    runtime.meters.clear()
+    if (runtime.kind === 'torrent') runtime.uploadMeters.clear()
     const { signal } = runtime.stop
     this.reconcile(runtime)
     // One watcher per stream for its whole life. Racing every stream each tick would pile a
@@ -1258,9 +1260,8 @@ export class DownloadManager {
       })
       if ((runtime.state.status as DownloadStatus) !== 'downloading') break
       const now = Date.now()
-      const speed = runtime.state.speedBytesPerSec
-      updateSpeeds(runtime, now)
-      if (runtime.state.speedBytesPerSec !== speed) this.scheduleUpdate(runtime)
+      // The only place speeds are read: on this clock, never as bytes arrive (see Meter).
+      if (updateSpeeds(runtime, now)) this.scheduleUpdate(runtime)
       runtime.bestSpeedSeen = Math.max(runtime.bestSpeedSeen, runtime.state.speedBytesPerSec)
       if (now - runtime.speedSampledAt >= 1000) {
         runtime.speedSampledAt = now
@@ -1272,6 +1273,8 @@ export class DownloadManager {
     // The last blocks are in, or the run was stopped: its streams wind down.
     runtime.stop.abort()
     await Promise.all(runtime.transfer.running())
+    // However it ended — paused, failed, cancelled, done — nothing is moving now.
+    clearSpeeds(runtime.state)
 
     if (runtime.state.status !== 'downloading') {
       // Paused, errored, or cancelled — nothing left to do right now. An error keeps what it has

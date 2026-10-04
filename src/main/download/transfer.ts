@@ -50,7 +50,8 @@ export interface HttpTransferTarget extends TransferTargetBase {
   state: HttpDownloadState
   requestPayload: StartHttpDownloadRequest
   blocks: HttpBlockState[]
-  speedSamplesByStream: Map<number, SpeedSample[]>
+  /** What each stream, and each network, has received (see updateSpeeds). */
+  meters: Meters
 }
 
 export interface TorrentTransferTarget extends TransferTargetBase {
@@ -58,7 +59,10 @@ export interface TorrentTransferTarget extends TransferTargetBase {
   state: TorrentDownloadState
   requestPayload: StartTorrentDownloadRequest
   pieces: TorrentPieceState[]
-  speedSamplesByPeer: Map<number, SpeedSample[]>
+  /** What each peer, and each network, has received (see updateSpeeds). */
+  meters: Meters
+  /** What each peer, and each network, has sent. */
+  uploadMeters: Meters
 }
 
 export type TransferTarget = HttpTransferTarget | TorrentTransferTarget
@@ -75,79 +79,102 @@ export interface TransferHost {
   scheduleUpdate(): void
 }
 
-export interface SpeedSample {
-  bytes: number
-  time: number
-}
-
 // Raw per-event deltas are too noisy to display (socket buffers flush in
 // irregular bursts a few ms apart). Averaging over a few seconds instead
 // gives a speed/ETA reading that tracks reality without jumping around.
 const SPEED_WINDOW_MS = 3000
 
-// Appends a sample and returns the average byte rate over SPEED_WINDOW_MS.
-export function pushSpeedSample(samples: SpeedSample[], bytes: number, time: number): number {
-  if (samples.length > 0 && time - samples[samples.length - 1].time > SPEED_WINDOW_MS) {
-    samples.length = 0
-  }
-  samples.push({ bytes, time })
+/**
+ * Bytes counted as they arrive, and read as a rate only on the download's clock (its tick).
+ * Arrivals come in bursts — socket flushes, and a speed limit pausing reads between them — so a
+ * window that starts or ends on one is off by up to a burst: sampled on arrival, a 7 MB/s limit
+ * read 6.9. Between two clock readings, where the bursts fall doesn't matter.
+ */
+export class Meter {
+  private total = 0
+  private readings: { bytes: number; time: number }[] = []
 
-  return calculateCurrentSpeed(samples, time)
-}
-
-export function calculateCurrentSpeed(samples: SpeedSample[] | undefined, time: number): number {
-  if (!samples || samples.length === 0) return 0
-
-  const latest = samples[samples.length - 1]
-  if (time - latest.time > SPEED_WINDOW_MS) {
-    return 0
+  add(bytes: number): void {
+    this.total += bytes
   }
 
-  const cutoff = time - SPEED_WINDOW_MS
-  while (samples.length > 2 && samples[1].time <= cutoff) {
-    samples.shift()
-  }
-
-  // At least a second: a fresh window can hold two samples ms apart, and one socket burst over a
-  // few ms reads as a speed the connection never had (and sticks as the UI's peak).
-  const oldest = samples[0]
-  const deltaSeconds = Math.max((time - oldest.time) / 1000, 1)
-  return (latest.bytes - oldest.bytes) / deltaSeconds
-}
-
-/** Brings every stream's speed up to date, and each network's and the download's with them. */
-export function updateSpeeds(runtime: TransferTarget, now = Date.now()): void {
-  if ('speedSamplesByStream' in runtime) {
-    updateConnectionSpeeds(runtime.state, runtime.state.streams, runtime.speedSamplesByStream, now)
-  } else {
-    updateConnectionSpeeds(runtime.state, runtime.state.peers, runtime.speedSamplesByPeer, now)
+  /** The rate over the last SPEED_WINDOW_MS, as of `now`. Bytes before the first reading are
+   * the meter's starting point, not part of any rate. */
+  read(now: number): number {
+    const { readings } = this
+    readings.push({ bytes: this.total, time: now })
+    while (readings.length > 2 && readings[1].time <= now - SPEED_WINDOW_MS) readings.shift()
+    const oldest = readings[0]
+    // At least a second: the clock can come round again ms later (a stream ending wakes it), and
+    // one burst over a few ms reads as a speed the connection never had (and sticks as the peak).
+    return (this.total - oldest.bytes) / Math.max((now - oldest.time) / 1000, 1)
   }
 }
 
-function updateConnectionSpeeds(
-  state: DownloadState,
-  connections: Array<{ id: number; interfaceId: string; status: string; speedBytesPerSec: number }>,
-  samplesByConnection: Map<number, SpeedSample[]>,
-  now: number
-): void {
-  let total = 0
-  const byNetwork = new Map<string, number>()
+/** A download's meters in one direction: each connection's, and each network's. A network's is
+ * its own rather than its connections' added up, so its bytes stay counted when one ends. */
+export class Meters {
+  readonly connections = new Map<number, Meter>()
+  readonly networks = new Map<string, Meter>()
+
+  /** Counts `bytes` through connection `connectionId`, on network `networkId`. */
+  add(connectionId: number, networkId: string, bytes: number): void {
+    meterOf(this.connections, connectionId).add(bytes)
+    meterOf(this.networks, networkId).add(bytes)
+  }
+
+  clear(): void {
+    this.connections.clear()
+    this.networks.clear()
+  }
+}
+
+function meterOf<K>(meters: Map<K, Meter>, key: K): Meter {
+  let meter = meters.get(key)
+  if (!meter) meters.set(key, (meter = new Meter()))
+  return meter
+}
+
+/** Reads every meter as of `now` into the download's speeds: each connection's, each
+ * network's and the download's, uploads too for a torrent. Says whether any of them changed. */
+export function updateSpeeds(runtime: TransferTarget, now: number): boolean {
+  const { state } = runtime
+  let changed = false
+  const set = <T, K extends keyof T>(target: T, key: K, value: T[K]): void => {
+    if (target[key] !== value) changed = true
+    target[key] = value
+  }
+  const connections: Array<{ id: number; status: string; speedBytesPerSec: number }> =
+    state.kind === 'http' ? state.streams : state.peers
   for (const connection of connections) {
+    // Read every tick, moving or not, so its window is never stale when it moves again.
+    const speed = runtime.meters.connections.get(connection.id)?.read(now) ?? 0
+    // Between blocks, waiting to retry, or a peer sending nothing: 0, not what it last did.
     const moving = connection.status === 'downloading' || connection.status === 'receiving'
-    if (moving) {
-      const samples = samplesByConnection.get(connection.id)
-      connection.speedBytesPerSec = calculateCurrentSpeed(samples, now)
-    }
-    total += connection.speedBytesPerSec
-    byNetwork.set(
-      connection.interfaceId,
-      (byNetwork.get(connection.interfaceId) ?? 0) + connection.speedBytesPerSec
-    )
+    set(connection, 'speedBytesPerSec', moving ? speed : 0)
   }
+  let total = 0
   for (const network of state.networks) {
-    network.speedBytesPerSec = byNetwork.get(network.id) ?? 0
+    const speed = runtime.meters.networks.get(network.id)?.read(now) ?? 0
+    set(network, 'speedBytesPerSec', speed)
+    total += speed
   }
-  state.speedBytesPerSec = total
+  set(state, 'speedBytesPerSec', total)
+
+  if ('uploadMeters' in runtime) {
+    const { uploadMeters, state } = runtime
+    for (const peer of state.peers) {
+      set(peer, 'uploadSpeedBytesPerSec', uploadMeters.connections.get(peer.id)?.read(now) ?? 0)
+    }
+    let uploaded = 0
+    for (const network of state.networks) {
+      const speed = uploadMeters.networks.get(network.id)?.read(now) ?? 0
+      set(network, 'uploadSpeedBytesPerSec', speed)
+      uploaded += speed
+    }
+    set(state, 'uploadSpeedBytesPerSec', uploaded)
+  }
+  return changed
 }
 
 /** Nothing is moving: a paused or stopped download reads 0 everywhere. */

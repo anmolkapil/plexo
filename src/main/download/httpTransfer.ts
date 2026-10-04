@@ -15,9 +15,7 @@ import { interleave, MAX_STREAMS_PER_NETWORK, startingStreams } from './plan'
 import { pickWork, type SchedulerPolicy, type Work } from './scheduler'
 import {
   delay,
-  pushSpeedSample,
   recomputeAggregates,
-  updateSpeeds,
   type Transfer,
   type TransferHost,
   type HttpTransferTarget
@@ -665,13 +663,8 @@ export class HttpTransfer implements Transfer {
       network.status = 'on'
       self.failures = 0
     }
-    let samples = this.runtime.speedSamplesByStream.get(chunk.id)
-    if (!samples) {
-      samples = []
-      this.runtime.speedSamplesByStream.set(chunk.id, samples)
-    }
-    chunk.speedBytesPerSec = pushSpeedSample(samples, self.receivedBytes, now)
-    updateSpeeds(this.runtime, now)
+    // Read as speeds on the download's clock (see updateSpeeds).
+    this.runtime.meters.add(chunk.id, chunk.interfaceId, deltaBytes)
     this.host.scheduleUpdate()
   }
 
@@ -985,7 +978,7 @@ export class HttpTransfer implements Transfer {
   /** Takes a retired stream off the list. */
   private removeStream(chunk: HttpStreamState): void {
     this.chunkRuntimes.delete(chunk.id)
-    this.runtime.speedSamplesByStream.delete(chunk.id)
+    this.runtime.meters.connections.delete(chunk.id)
     const index = this.runtime.state.streams.indexOf(chunk)
     if (index < 0) return
     this.runtime.state.streams.splice(index, 1)
