@@ -131,7 +131,7 @@ Each block is written straight to its place in `<filename>.plexo`, a staging fil
 
 ### Torrents pin each peer to a network
 
-Plexo runs torrents with [WebTorrent](https://github.com/webtorrent/webtorrent) and opens every peer connection from one network's address. To keep every peer on a network Plexo chose, it turns off the parts that would connect on their own: uTP, web seeds, UPnP and NAT-PMP port mapping, and local peer discovery. Peers are found through trackers and the DHT. Torrents that are v2-only aren't supported yet.
+Plexo runs torrents with [WebTorrent](https://github.com/webtorrent/webtorrent) and opens every peer connection from one network's address. To keep every peer on a network Plexo chose, it turns off the parts that would connect on their own: uTP, WebRTC, web seeds, UPnP and NAT-PMP port mapping, and local peer discovery. Peers are found through HTTP/UDP trackers and the DHT. Torrents that are v2-only aren't supported yet.
 
 ### Resuming checks the file hasn't changed
 

@@ -1,5 +1,6 @@
 appId: com.plexo.app
 productName: Plexo
+afterPack: scripts/check-torrent-package.mjs
 directories:
   buildResources: build
 files:
@@ -11,6 +12,10 @@ files:
   # koffi is only loaded on Linux (network/deviceBinding.ts) and ships prebuilds for every OS.
   - '!node_modules/koffi/{src,vendor,doc}/**'
   - '!node_modules/koffi/build/koffi/!(linux_x64|linux_arm64)/**'
+  # Plexo uses TCP peers only. simple-peer is patched to use browser globals instead of loading
+  # the native WebRTC polyfill; don't ship unused host-platform binaries in cross-platform builds.
+  - '!node_modules/node-datachannel/**'
+  - '!node_modules/webrtc-polyfill/**'
   - '!{tsconfig.json,tsconfig.node.json,tsconfig.web.json}'
 asarUnpack:
   - resources/**
