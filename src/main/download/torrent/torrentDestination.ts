@@ -11,11 +11,11 @@ import { claimDestinationPath } from '../paths'
  */
 export class TorrentDestination extends DownloadFile {
   /** `path` as claimed (see create). `unwanted`: the torrent's files not chosen for download, as
-   * the torrent names them, its own folder first. */
+   * the torrent names them, its own folder first; changed when the choice is. */
   constructor(
     path: string,
     private readonly totalBytes: number,
-    private readonly unwanted: readonly string[] = [],
+    public unwanted: readonly string[] = [],
     private readonly owned: readonly string[] = []
   ) {
     super(path)

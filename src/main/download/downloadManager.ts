@@ -26,7 +26,8 @@ import {
   type TorrentDownloadNetwork,
   type TorrentDownloadState,
   type TorrentFileEntry,
-  type TorrentInfo
+  type TorrentInfo,
+  type TorrentPieceState
 } from '../../shared/types'
 import { Limits } from '../network/limits'
 import { loadSettings } from '../settings'
@@ -37,7 +38,7 @@ import { HttpTransfer, splittable } from './httpTransfer'
 import { ensureDirectory, pathExists, reserveDestinationPath } from './paths'
 import { planBlocks, planDownload, planPieces } from './plan'
 import { restoreBlocks, restorePieces, saveBlocks, type SavedBlocks } from './savedProgress'
-import { chosenFiles, wantedPieces } from './torrent/files'
+import { chosenFiles, finishedFiles, wantedPieces } from './torrent/files'
 import { probeUrl } from './probe'
 import { describeTorrent, probedTorrentFile } from './torrent/metadata'
 import { TorrentDestination } from './torrent/torrentDestination'
@@ -88,6 +89,8 @@ interface RuntimeFields {
   speedSampledAt: number
   /** The best combined speed this run has shown: the peak of one done before it held one. */
   bestSpeedSeen: number
+  /** Changes asked of a torrent's choice of files, counted: only the latest applies. */
+  fileChoices: number
 }
 
 interface HttpDownloadRuntime extends RuntimeFields, HttpTransferTarget {
@@ -97,7 +100,7 @@ interface HttpDownloadRuntime extends RuntimeFields, HttpTransferTarget {
 
 interface TorrentDownloadRuntime extends RuntimeFields, TorrentTransferTarget {
   kind: 'torrent'
-  transfer: Transfer
+  transfer: TorrentTransfer
 }
 
 type DownloadRuntime = HttpDownloadRuntime | TorrentDownloadRuntime
@@ -180,20 +183,31 @@ const isDone = (unit: DownloadUnitState): boolean =>
 const unitsOf = (runtime: DownloadRuntime): DownloadUnitState[] =>
   runtime.kind === 'http' ? runtime.blocks : runtime.pieces
 
-/** Marks the pieces of `torrent` that none of the `chosen` files needs (null: all are) as
- * skipped. Their bytes, all together. */
-function skipUnchosen(
-  blocks: import('../../shared/types').TorrentPieceState[],
+/** A torrent download's files as its state shows them, given those `chosen` (null: every one). */
+function choiceOf(chosen: Set<number> | null, total: number): TorrentDownloadState['files'] {
+  const selected = chosen ? [...chosen].sort((a, b) => a - b) : undefined
+  return { chosen: selected?.length ?? total, total, selected }
+}
+
+/** Sets each piece of `torrent` by whether a `chosen` file (null: every one) needs it: skipped
+ * when none does, waiting again when one does. A piece that's in stays in, needed or not. The
+ * skipped pieces' bytes, all together. As a download starts, comes back, or its choice changes. */
+function choosePieces(
+  pieces: TorrentPieceState[],
   torrent: TorrentInfo,
   chosen: Set<number> | null
 ): number {
-  if (!chosen) return 0
-  const wanted = wantedPieces(torrent.files, torrent.pieceLength, chosen)
+  const wanted = chosen && wantedPieces(torrent.files, torrent.pieceLength, chosen)
   let skipped = 0
-  for (const block of blocks) {
-    if (wanted[block.index] || block.rangeEnd === null) continue
-    block.status = 'skipped'
-    skipped += block.rangeEnd - block.rangeStart + 1
+  for (const piece of pieces) {
+    if (piece.status === 'completed' || piece.rangeEnd === null) continue
+    if (!wanted || wanted[piece.index]) {
+      if (piece.status === 'skipped') piece.status = 'pending'
+      continue
+    }
+    piece.status = 'skipped'
+    piece.provisionalBytes = 0
+    skipped += piece.rangeEnd - piece.rangeStart + 1
   }
   return skipped
 }
@@ -372,7 +386,8 @@ export class DownloadManager {
       sentUpdates: 0,
       sentUnits: [],
       speedSampledAt: 0,
-      bestSpeedSeen: 0
+      bestSpeedSeen: 0,
+      fileChoices: 0
     }
   }
 
@@ -588,8 +603,9 @@ export class DownloadManager {
         pieces,
         totalPieces: pieces.length,
         pieceLength: torrent.pieceLength,
+        files: choiceOf(chosen, torrent.files.length),
         // Its pieces no chosen file needs are skipped again.
-        skippedBytes: skipUnchosen(pieces, torrent, chosen),
+        skippedBytes: choosePieces(pieces, torrent, chosen),
         uploadSpeedBytesPerSec: 0
       }
       runtime = this.newTorrentRuntime(
@@ -730,7 +746,7 @@ export class DownloadManager {
       const totalBytes = torrent.files.reduce((sum, entry) => sum + entry.length, 0)
       const chosen = chosenFiles(requestPayload.selectedFiles, torrent.files.length)
       const pieces = planPieces(totalBytes, torrent.pieceLength)
-      const skippedBytes = skipUnchosen(pieces, torrent, chosen)
+      const skippedBytes = choosePieces(pieces, torrent, chosen)
       await ensureDiskSpace(requestPayload.destinationDir, totalBytes - skippedBytes)
       const folder = torrent.files[0].path.includes(sep)
       const file = await TorrentDestination.create(
@@ -747,7 +763,7 @@ export class DownloadManager {
       const state: TorrentDownloadState = {
         id,
         kind: 'torrent',
-        files: { chosen: chosen?.size ?? torrent.files.length, total: torrent.files.length },
+        files: choiceOf(chosen, torrent.files.length),
         folder,
         url: requestPayload.url,
         fileName: basename(destinationPath),
@@ -1098,17 +1114,67 @@ export class DownloadManager {
     }
   }
 
-  /** A torrent download's files, read from its .torrent: they never change, so they're asked
-   * for when shown rather than sent with every update. */
-  async torrentFiles(id: string): Promise<TorrentFileEntry[]> {
+  /** A torrent download's own .torrent, read: its files never change, so they're read when
+   * needed rather than kept or sent with every update. */
+  private async torrentInfo(id: string): Promise<TorrentInfo | null> {
     const request = this.runtimes.get(id)?.requestPayload
-    if (request?.kind !== 'torrent') return []
-    const torrentFile = await readFile(this.torrentFilePath(id))
-    const probe = await describeTorrent(torrentFile, request.url)
-    if (probe.kind !== 'torrent') return []
-    const { files } = probe.torrent
-    const chosen = chosenFiles(request.selectedFiles, files.length)
-    return files.map((file, index) => ({ ...file, chosen: !chosen || chosen.has(index) }))
+    if (request?.kind !== 'torrent') return null
+    const probe = await describeTorrent(await readFile(this.torrentFilePath(id)), request.url)
+    return probe.kind === 'torrent' ? probe.torrent : null
+  }
+
+  /** A torrent download's files, each marked by whether it's chosen. */
+  async torrentFiles(id: string): Promise<TorrentFileEntry[]> {
+    const torrent = await this.torrentInfo(id)
+    const request = this.runtimes.get(id)?.requestPayload
+    if (!torrent || request?.kind !== 'torrent') return []
+    const chosen = chosenFiles(request.selectedFiles, torrent.files.length)
+    return torrent.files.map((file, index) => ({ ...file, chosen: !chosen || chosen.has(index) }))
+  }
+
+  /** Changes which of a torrent download's files it fetches, running or not, as its choice
+   * (requestPayload.selectedFiles) everything else follows from. What's in stays in: the pieces
+   * a newly chosen file needs are fetched, those no chosen file needs any more aren't. A file
+   * that's in can't be dropped: it's done, and dropping it would delete it once the download is. */
+  async chooseTorrentFiles(id: string, selected: number[]): Promise<void> {
+    const runtime = this.runtimes.get(id)
+    if (runtime?.kind !== 'torrent') throw new Error('This download has no files to choose')
+    // Ticks come quicker than the disk answers: one overtaken by a later one gives way to it.
+    const turn = ++runtime.fileChoices
+    const torrent = await this.torrentInfo(id)
+    if (!torrent) throw new Error('This download has no files to choose')
+    // Done or going: its files are what they are. Checked again after waiting on the disk.
+    const settled = (): boolean =>
+      runtime.publishing ||
+      runtime.state.status === 'completed' ||
+      runtime.state.status === 'cancelled' ||
+      this.runtimes.get(id) !== runtime
+    if (settled()) throw new Error('This download’s files can’t change now')
+
+    const chosen = chosenFiles(selected, torrent.files.length)
+    const completed = runtime.pieces.map((piece) => piece.status === 'completed')
+    const finished = finishedFiles(torrent.files, torrent.pieceLength, completed)
+    if (chosen && [...finished].some((index) => !chosen.has(index))) {
+      throw new Error('A file that’s already downloaded stays')
+    }
+    const wanted = chosen && wantedPieces(torrent.files, torrent.pieceLength, chosen)
+    let adding = 0
+    for (const piece of runtime.pieces) {
+      if (piece.status === 'skipped' && (!wanted || wanted[piece.index])) {
+        adding += piece.rangeEnd! - piece.rangeStart + 1
+      }
+    }
+    await ensureDiskSpace(runtime.requestPayload.destinationDir, adding)
+    if (settled()) throw new Error('This download’s files can’t change now')
+    if (turn !== runtime.fileChoices) return
+
+    runtime.state.files = choiceOf(chosen, torrent.files.length)
+    runtime.requestPayload.selectedFiles = runtime.state.files.selected
+    runtime.state.skippedBytes = choosePieces(runtime.pieces, torrent, chosen)
+    runtime.file.unwanted = unchosenPaths(torrent, chosen)
+    runtime.transfer.filesChosen()
+    // Sent now, ahead of the answer: the window shows the choice from the state it's sent.
+    this.pushUpdate(runtime)
   }
 
   async cancel(id: string): Promise<void> {

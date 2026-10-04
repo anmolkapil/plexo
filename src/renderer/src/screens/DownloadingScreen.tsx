@@ -404,7 +404,11 @@ export const DownloadingScreen = memo(function DownloadingScreen({
           </div>
         </div>
         {download.kind === 'torrent' && filesOpen && (
-          <TorrentFiles downloadId={download.id} pieces={download.pieces} />
+          <TorrentFiles
+            downloadId={download.id}
+            pieces={download.pieces}
+            selected={download.files.selected}
+          />
         )}
       </div>
 

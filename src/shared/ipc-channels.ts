@@ -19,6 +19,7 @@ export const IpcChannels = {
   freeSpace: 'disk:free-space',
   historyChanged: 'history:changed',
   torrentFiles: 'download:torrent-files',
+  chooseTorrentFiles: 'download:choose-torrent-files',
   pauseDownload: 'download:pause',
   resumeDownload: 'download:resume',
   relinkDownload: 'download:relink',

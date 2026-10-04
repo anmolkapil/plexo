@@ -124,6 +124,35 @@ test.describe('choosing files', () => {
     await plexo.api.resumeDownload(id)
     await plexo.waitForTorrentStatus('completed', 60_000)
   })
+
+  test('the choice changes as it runs: a file dropped never appears, one added comes in', async ({
+    plexo
+  }) => {
+    const files = album(1500 * KB, 81)
+    let torrent = await swarm.seed(files, {
+      folder: 'Mix',
+      pieceLength: PIECE,
+      uploadLimit: 300 * KB
+    })
+    for (let seeder = 1; seeder < 3; seeder++) {
+      torrent = await swarm.seed(files, {
+        folder: 'Mix',
+        pieceLength: PIECE,
+        uploadLimit: 300 * KB
+      })
+    }
+
+    // a and b chosen, then b swapped for c before either is near done.
+    const id = await plexo.start(await torrentFileOnDisk(torrent), shaOf([files[0], files[2]]), {
+      selectedFiles: [0, 1]
+    })
+    await plexo.waitUntil((state) => state.bytesDownloaded > 0, 30_000)
+    await plexo.api.chooseTorrentFiles(id, [0, 2])
+    const changed = await plexo.currentTorrent()
+    expect(changed!.status).toBe('downloading')
+    expect(changed!.files).toEqual({ chosen: 2, total: 4, selected: [0, 2] })
+    await plexo.waitForTorrentStatus('completed', 60_000)
+  })
 })
 
 test.describe('torrents over two networks', () => {

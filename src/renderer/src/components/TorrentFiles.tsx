@@ -1,6 +1,9 @@
-import type { TorrentFileEntry, TorrentPieceState } from '@shared/types'
+import type { TorrentFileEntry, TorrentInfo, TorrentPieceState } from '@shared/types'
+import { cn } from 'cn'
+import { Folder } from 'lucide-react'
 import { useEffect, useState } from 'react'
-import { formatBytes, formatPercent, pathInTorrent } from '../utils/format'
+import { describeError, formatBytes, formatPercent, pathInTorrent } from '../utils/format'
+import { Checkbox } from './ui/checkbox'
 
 /** Bytes of each file that are in verified pieces. Files and pieces both run in byte order, so
  * one pass over each. */
@@ -24,15 +27,88 @@ function verifiedBytes(files: TorrentFileEntry[], pieces: TorrentPieceState[]): 
   })
 }
 
-/** A torrent download's files, each with how much of it is done; those not chosen dimmed. */
+/** A torrent's files, each ticked to be downloaded. Several come in the torrent's folder, whose
+ * row above them, by its name, ticks all of them. Given `done` (each file's bytes in), each shows
+ * how far it is, and one all in stays ticked: it's downloaded. */
+export function TorrentFileList({
+  files,
+  skipped,
+  onChange,
+  done
+}: {
+  files: TorrentInfo['files']
+  skipped: number[]
+  onChange: (skipped: number[]) => void
+  done?: number[]
+}): React.JSX.Element {
+  // A torrent in a folder (always so with several files) starts every path with it.
+  const parts = files[0]?.path.split(/[\\/]/) ?? []
+  const folder = parts.length > 1 ? parts[0] : null
+  const finished = (index: number): boolean =>
+    done !== undefined && done[index] >= files[index].length
+  return (
+    <div
+      role="group"
+      aria-label="Files"
+      className="max-h-44 overflow-y-auto rounded-[9px] border border-border px-3 py-1.5"
+    >
+      {folder && (
+        <label className="flex items-center gap-2 py-0.5 font-mono text-[11.5px] font-medium">
+          <Checkbox
+            checked={skipped.length === 0}
+            indeterminate={skipped.length > 0 && skipped.length < files.length}
+            onCheckedChange={(checked) =>
+              // Unticking all leaves the downloaded ones: they're in.
+              onChange(checked ? [] : files.flatMap((_, index) => (finished(index) ? [] : [index])))
+            }
+          />
+          <Folder aria-hidden className="size-3.5 shrink-0 text-muted-foreground" />
+          <span className="min-w-0 flex-1 truncate">{folder}</span>
+        </label>
+      )}
+      {files.map((file, index) => (
+        <label
+          key={index}
+          className={cn('flex items-center gap-2 py-0.5 font-mono text-[11.5px]', folder && 'pl-6')}
+        >
+          <Checkbox
+            checked={!skipped.includes(index)}
+            disabled={finished(index)}
+            onCheckedChange={(checked) =>
+              onChange(checked ? skipped.filter((entry) => entry !== index) : [...skipped, index])
+            }
+          />
+          <span className="min-w-0 flex-1 truncate">{pathInTorrent(file.path)}</span>
+          <span className="shrink-0 text-muted-foreground">{formatBytes(file.length)}</span>
+          {done && (
+            <span className="w-14 shrink-0 text-right tabular-nums text-[var(--text-secondary)]">
+              {skipped.includes(index)
+                ? 'Skipped'
+                : finished(index)
+                  ? 'Done'
+                  : `${formatPercent(done[index], file.length)}%`}
+            </span>
+          )}
+        </label>
+      ))}
+    </div>
+  )
+}
+
+/** A torrent download's files once it has started: how far each is, and which to fetch, changed
+ * as it runs. The choice is main's, `selected` as its state has it (unset: every file): a change
+ * is asked for, and shows once the state it's sent back has it. */
 export function TorrentFiles({
   downloadId,
-  pieces
+  pieces,
+  selected
 }: {
   downloadId: string
   pieces: TorrentPieceState[]
-}): React.JSX.Element {
+  selected: number[] | undefined
+}): React.JSX.Element | null {
   const [files, setFiles] = useState<TorrentFileEntry[] | null>(null)
+  const [error, setError] = useState<string | null>(null)
   useEffect(() => {
     let stale = false
     void window.plexo.torrentFiles(downloadId).then((entries) => {
@@ -43,28 +119,35 @@ export function TorrentFiles({
     }
   }, [downloadId])
 
-  const done = files ? verifiedBytes(files, pieces) : []
+  if (!files) return null
+  const skipped = selected
+    ? files.flatMap((_, index) => (selected.includes(index) ? [] : [index]))
+    : []
+  const choose = (next: number[]): void => {
+    if (next.length === files.length) {
+      setError('Keep at least one file.')
+      return
+    }
+    setError(null)
+    const chosen = files.flatMap((_, index) => (next.includes(index) ? [] : [index]))
+    window.plexo
+      .chooseTorrentFiles(downloadId, chosen)
+      .catch((cause) => setError(describeError(cause)))
+  }
+
   return (
-    <div
-      role="list"
-      aria-label="Files"
-      className="mt-3 max-h-36 overflow-y-auto rounded-[9px] border border-border px-3 py-1.5"
-    >
-      {files?.map((file, index) => (
-        <div
-          role="listitem"
-          key={index}
-          className={`flex items-center gap-3 py-0.5 font-mono text-[11.5px] ${file.chosen ? '' : 'opacity-45'}`}
-        >
-          <span className="min-w-0 flex-1 truncate">{pathInTorrent(file.path)}</span>
-          <span className="shrink-0 text-muted-foreground">{formatBytes(file.length)}</span>
-          <span className="w-14 shrink-0 text-right tabular-nums text-[var(--text-secondary)]">
-            {!file.chosen
-              ? 'Skipped'
-              : `${file.length === 0 ? 100 : formatPercent(done[index], file.length)}%`}
-          </span>
-        </div>
-      ))}
+    <div className="mt-3 flex flex-col gap-1.5">
+      <TorrentFileList
+        files={files}
+        skipped={skipped}
+        onChange={choose}
+        done={verifiedBytes(files, pieces)}
+      />
+      {error && (
+        <p role="alert" className="text-[12px] text-[var(--color-danger)]">
+          {error}
+        </p>
+      )}
     </div>
   )
 }

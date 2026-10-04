@@ -52,6 +52,8 @@ export class TorrentTransfer implements Transfer {
   private nextPeerId = 0
   /** webtorrent's file store, writing under the download's name; loaded with the first run. */
   private store: Store | null = null
+  /** The run's torrent, once ready for its files to be chosen. */
+  private torrent: Torrent | null = null
   /** Names a peer's client from its peer id; loaded with the first run. */
   private nameClient: ((peerId: string) => string | null) | null = null
   /** The network each peer is on, by webtorrent's address for it: dialled through, or dialled in
@@ -177,8 +179,25 @@ export class TorrentTransfer implements Transfer {
     } finally {
       for (const peer of this.peers.values()) this.removePeer(peer)
       this.peers.clear()
+      this.torrent = null
       this.ended = null
     }
+  }
+
+  /** The choice of files changed (requestPayload.selectedFiles): the engine fetches for the new
+   * one now. Not running, the next run starts with it. */
+  filesChosen(): void {
+    if (this.torrent) this.selectFiles(this.torrent)
+  }
+
+  /** Asks the engine for the chosen files' pieces only, all of them with no choice made. What it
+   * fetched before stays: a deselected piece just isn't asked for. */
+  private selectFiles(torrent: Torrent): void {
+    const chosen = this.runtime.requestPayload.selectedFiles
+    if (torrent.pieces.length > 0) torrent.deselect(0, torrent.pieces.length - 1)
+    torrent.files.forEach((file, index) => {
+      if (!chosen || chosen.includes(index)) file.select()
+    })
   }
 
   /** A peer took `bytes` of a piece from this download, over `network`. */
@@ -193,21 +212,19 @@ export class TorrentTransfer implements Transfer {
   }
 
   private add(client: WebTorrent): void {
-    const chosen = this.runtime.requestPayload.selectedFiles
     const torrent = client.add(this.torrentFile, {
       path: dirname(this.destination),
       store: this.store!,
       // Trusted as done, bar a hash check of a piece or two per file (more if one fails).
       bitfield: bitfieldOf(this.runtime.pieces.map((block) => block.status === 'completed')),
-      // Only the chosen files, once webtorrent is ready to be told which (below).
-      deselect: chosen !== undefined
+      // Nothing until webtorrent is ready to be told which files (below), as on a change.
+      deselect: true
     })
     torrent.on('wire', (wire: Wire, address: string) => this.onWire(wire, address))
     torrent.on('verified', (index: number) => this.onVerified(index))
     torrent.once('ready', () => {
-      torrent.files.forEach((file, index) => {
-        if (chosen?.includes(index)) file.select()
-      })
+      this.torrent = torrent
+      this.selectFiles(torrent)
       this.followEngine(torrent)
     })
     torrent.on('error', (error: unknown) => this.host.failDownload(message(error)))

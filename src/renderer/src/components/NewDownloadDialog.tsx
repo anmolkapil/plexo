@@ -1,6 +1,6 @@
-import type { ProbeResult, TorrentInfo } from '@shared/types'
+import type { ProbeResult } from '@shared/types'
 import { cn } from 'cn'
-import { AlertTriangle, Folder, FolderOpen, X } from 'lucide-react'
+import { AlertTriangle, FolderOpen, X } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 import { useNetworkVisuals } from '../hooks/useNetworkVisuals'
 import { useAppStore } from '../store/useAppStore'
@@ -10,13 +10,12 @@ import {
   describeFileCount,
   fileExtensionBadge,
   formatBytes,
-  pathInTorrent,
   toDisplayPath
 } from '../utils/format'
 import { Button } from './ui/button'
-import { Checkbox } from './ui/checkbox'
 import { Dialog, DialogContent, DialogTitle } from './ui/dialog'
 import { ToggleGroup, ToggleGroupItem } from './ui/toggle-group'
+import { TorrentFileList } from './TorrentFiles'
 import { Tooltip, TooltipContent, TooltipTrigger } from './ui/tooltip'
 
 type ProbeState =
@@ -32,56 +31,6 @@ type StreamsChoice = 'auto' | number
 const STREAMS_CHOICES: StreamsChoice[] = ['auto', 4, 8, 16, 32]
 
 const labelClass = 'w-16 shrink-0 text-[12.5px] text-[var(--text-secondary)]'
-
-/** A torrent's files, each ticked to be downloaded. Several come in the torrent's folder, whose
- * row above them, by its name, ticks all of them. */
-function TorrentFileList({
-  files,
-  skipped,
-  onChange
-}: {
-  files: TorrentInfo['files']
-  skipped: number[]
-  onChange: (skipped: number[]) => void
-}): React.JSX.Element {
-  // A torrent in a folder (always so with several files) starts every path with it.
-  const parts = files[0]?.path.split(/[\\/]/) ?? []
-  const folder = parts.length > 1 ? parts[0] : null
-  return (
-    <div
-      role="group"
-      aria-label="Files"
-      className="max-h-44 overflow-y-auto rounded-[9px] border border-border px-3 py-1.5"
-    >
-      {folder && (
-        <label className="flex items-center gap-2 py-0.5 font-mono text-[11.5px] font-medium">
-          <Checkbox
-            checked={skipped.length === 0}
-            indeterminate={skipped.length > 0 && skipped.length < files.length}
-            onCheckedChange={(checked) => onChange(checked ? [] : files.map((_, index) => index))}
-          />
-          <Folder aria-hidden className="size-3.5 shrink-0 text-muted-foreground" />
-          <span className="min-w-0 flex-1 truncate">{folder}</span>
-        </label>
-      )}
-      {files.map((file, index) => (
-        <label
-          key={index}
-          className={cn('flex items-center gap-2 py-0.5 font-mono text-[11.5px]', folder && 'pl-6')}
-        >
-          <Checkbox
-            checked={!skipped.includes(index)}
-            onCheckedChange={(checked) =>
-              onChange(checked ? skipped.filter((entry) => entry !== index) : [...skipped, index])
-            }
-          />
-          <span className="min-w-0 flex-1 truncate">{pathInTorrent(file.path)}</span>
-          <span className="shrink-0 text-muted-foreground">{formatBytes(file.length)}</span>
-        </label>
-      ))}
-    </div>
-  )
-}
 
 /** New download: a link, then only what differs from one download to the next — its name (or a
  * torrent's files), where it goes, over which networks, and how many streams each runs. Everything set once for every

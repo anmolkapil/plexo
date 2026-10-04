@@ -239,7 +239,8 @@ export interface TorrentDownloadState extends DownloadStateBase {
   pieces: TorrentPieceState[]
   totalPieces: number
   pieceLength: number
-  files: { chosen: number; total: number }
+  /** How many files it has, how many are chosen, and which (by index; unset: every one). */
+  files: { chosen: number; total: number; selected?: number[] }
   /** Its files come in the torrent's folder (`fileName`), rather than as one file. */
   folder: boolean
   /** Of `totalBytes`, the bytes of pieces that no chosen file needs. */

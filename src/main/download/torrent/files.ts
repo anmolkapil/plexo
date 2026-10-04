@@ -17,6 +17,22 @@ export function chosenFiles(
   return chosen.size === count ? null : chosen
 }
 
+/** The first and last piece each file has bytes in; null for an empty file, which has none. */
+function fileSpans(
+  files: readonly { length: number }[],
+  pieceLength: number
+): ([number, number] | null)[] {
+  let offset = 0
+  return files.map((file) => {
+    const span: [number, number] | null =
+      file.length > 0
+        ? [Math.floor(offset / pieceLength), Math.floor((offset + file.length - 1) / pieceLength)]
+        : null
+    offset += file.length
+    return span
+  })
+}
+
 /**
  * Which pieces the chosen files need: a piece is needed when any byte of it belongs to one. The
  * pieces at a chosen file's edges hold bytes of its neighbours too; those are fetched with them
@@ -29,15 +45,22 @@ export function wantedPieces(
 ): boolean[] {
   const total = files.reduce((sum, file) => sum + file.length, 0)
   const wanted = new Array<boolean>(Math.ceil(total / pieceLength)).fill(false)
-  let offset = 0
-  files.forEach((file, index) => {
-    if (chosen.has(index) && file.length > 0) {
-      const last = Math.floor((offset + file.length - 1) / pieceLength)
-      for (let piece = Math.floor(offset / pieceLength); piece <= last; piece++) {
-        wanted[piece] = true
-      }
-    }
-    offset += file.length
+  fileSpans(files, pieceLength).forEach((span, index) => {
+    if (!span || !chosen.has(index)) return
+    for (let piece = span[0]; piece <= span[1]; piece++) wanted[piece] = true
   })
   return wanted
+}
+
+/** The files every piece of which is in: downloaded, whatever is chosen. An empty file is. */
+export function finishedFiles(
+  files: readonly { length: number }[],
+  pieceLength: number,
+  completed: readonly boolean[]
+): Set<number> {
+  const finished = new Set<number>()
+  fileSpans(files, pieceLength).forEach((span, index) => {
+    if (!span || completed.slice(span[0], span[1] + 1).every(Boolean)) finished.add(index)
+  })
+  return finished
 }

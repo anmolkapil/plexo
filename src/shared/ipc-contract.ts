@@ -40,6 +40,9 @@ export interface IpcContract {
   freeSpace: { args: [dir: string]; result: number | null }
   /** A torrent download's files, in the torrent's order; empty for any other download. */
   torrentFiles: { args: [id: string]; result: TorrentFileEntry[] }
+  /** Which of a torrent download's files to fetch, by index, as it runs or not. Refused for one
+   * already downloaded, or with no room on disk for what's added. */
+  chooseTorrentFiles: { args: [id: string, selected: number[]]; result: void }
   pauseDownload: { args: [id: string]; result: void }
   resumeDownload: { args: [id: string]; result: void }
   /** A fresh link to the same file, for a download whose link stopped working; it resumes. */

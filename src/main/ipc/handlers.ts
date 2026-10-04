@@ -202,6 +202,9 @@ export function registerIpcHandlers(getWindow: () => BrowserWindow | null): Down
   handle('freeSpace', async (_event, dir) => freeSpace(dir))
 
   handle('torrentFiles', async (_event, id) => manager.torrentFiles(id))
+  handle('chooseTorrentFiles', async (_event, id, selected) =>
+    manager.chooseTorrentFiles(id, selected)
+  )
 
   handle('pauseDownload', async (_event, id) => {
     await manager.pause(id)

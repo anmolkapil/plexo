@@ -66,6 +66,10 @@ declare module 'webtorrent' {
     uploaded: number
     /** In the torrent's order; a deselected file's pieces aren't fetched for it. */
     files: { select(): void; deselect(): void }[]
+    pieces: unknown[]
+    /** Takes pieces `start` to `end` out of every selection, trimming or splitting those that
+     * reach further. */
+    deselect(start: number, end: number): void
     /** Which pieces are verified and on disk. */
     bitfield: { get(index: number): boolean }
     destroy(options?: { destroyStore?: boolean }, callback?: (error?: Error) => void): void

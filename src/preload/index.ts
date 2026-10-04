@@ -44,6 +44,8 @@ const plexoApi = {
   resetNetworkUsage: (id) => invoke('resetNetworkUsage', id),
   freeSpace: (dir: string) => invoke('freeSpace', dir),
   torrentFiles: (downloadId: string) => invoke('torrentFiles', downloadId),
+  chooseTorrentFiles: (downloadId: string, selected: number[]) =>
+    invoke('chooseTorrentFiles', downloadId, selected),
   pauseDownload: (downloadId: string) => invoke('pauseDownload', downloadId),
   resumeDownload: (downloadId: string) => invoke('resumeDownload', downloadId),
   relinkDownload: (downloadId: string, url: string) => invoke('relinkDownload', downloadId, url),
