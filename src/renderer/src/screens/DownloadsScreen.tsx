@@ -390,12 +390,8 @@ export function DownloadsScreen(): React.JSX.Element {
           const some = !all && ids.some((id) => selected.has(id))
           return (
             <section key={group.label} aria-label={group.label}>
-              <div className="group/group-header flex items-center gap-3 border-b-[0.5px] border-border pt-5 pb-3">
+              <div className="flex items-center gap-3 border-b-[0.5px] border-border pt-5 pb-3">
                 <Checkbox
-                  className={cn(
-                    chosen.length === 0 &&
-                      'opacity-0 group-focus-within/group-header:opacity-100 group-hover/group-header:opacity-100'
-                  )}
                   aria-label={
                     group.label === 'Needs attention'
                       ? 'Select all downloads needing attention'
@@ -433,7 +429,6 @@ export function DownloadsScreen(): React.JSX.Element {
                   item={item}
                   now={now}
                   selected={selected.has(item.id)}
-                  selecting={chosen.length > 0}
                   networkVisual={
                     isFinished(item) || item.status === 'completed' ? undefined : networkVisual
                   }
@@ -560,7 +555,6 @@ const DownloadRow = memo(function DownloadRow({
   item,
   now,
   selected,
-  selecting,
   networkVisual,
   onSelect,
   onOpen,
@@ -570,8 +564,6 @@ const DownloadRow = memo(function DownloadRow({
   item: Item
   now: number
   selected: boolean
-  /** Something is selected: every checkbox shows, not just the hovered row's. */
-  selecting: boolean
   /** Colors its progress bar; a finished row has none. */
   networkVisual?: ResolveNetworkVisual
   onSelect: (id: string, on: boolean) => void
@@ -681,11 +673,6 @@ const DownloadRow = memo(function DownloadRow({
       )}
     >
       <Checkbox
-        className={cn(
-          !selecting &&
-            !selected &&
-            'opacity-0 group-focus-within/download-row:opacity-100 group-hover/download-row:opacity-100'
-        )}
         aria-label={`Select ${item.fileName}`}
         checked={selected}
         onCheckedChange={(on) => onSelect(item.id, on)}
