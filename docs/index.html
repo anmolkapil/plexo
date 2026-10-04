@@ -2,2311 +2,2990 @@
 <html lang="en">
   <head>
     <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Plexo — one download, every connection you own</title>
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <meta name="theme-color" content="#0A0A0B" />
     <meta
       name="description"
-      content="Plexo splits a single download across every network you have — Wi-Fi, Ethernet, tethered phone — and merges it back into one verified file."
+      content="A free, open-source download manager for macOS, Windows and Linux that combines your internet connections to download files and torrents faster."
+    />
+    <title>Plexo — Free download manager that combines your networks</title>
+    <link rel="canonical" href="https://getplexo.app/" />
+    <link rel="icon" href="favicon.svg" type="image/svg+xml" />
+
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="Plexo" />
+    <meta property="og:url" content="https://getplexo.app/" />
+    <meta property="og:title" content="Plexo — Combine your networks. Download faster." />
+    <meta
+      property="og:description"
+      content="A free, open-source download manager that combines your internet connections to download files and torrents faster."
+    />
+    <meta property="og:image" content="https://getplexo.app/og.png" />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta property="og:image:alt" content="Plexo — Combine your networks. Download faster." />
+    <meta name="twitter:card" content="summary_large_image" />
+
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@type": "SoftwareApplication",
+        "name": "Plexo",
+        "url": "https://getplexo.app/",
+        "image": "https://getplexo.app/og.png",
+        "description": "A free, open-source download manager that combines your internet connections to download files and torrents faster.",
+        "applicationCategory": "UtilitiesApplication",
+        "operatingSystem": "macOS, Windows, Linux",
+        "downloadUrl": "https://github.com/anmolkapil/plexo/releases/latest",
+        "license": "https://opensource.org/licenses/MIT",
+        "isAccessibleForFree": true,
+        "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" }
+      }
+    </script>
+
+    <link
+      rel="preload"
+      href="assets/fonts/Archivo-Variable.woff2"
+      as="font"
+      type="font/woff2"
+      crossorigin
     />
     <link
-      href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&family=Roboto+Mono:wght@400;500;600&display=swap"
-      rel="stylesheet"
+      rel="preload"
+      href="assets/fonts/Geist-Variable.woff2"
+      as="font"
+      type="font/woff2"
+      crossorigin
     />
-    <style>
-      :root {
-        color-scheme: dark;
-      }
-      * {
-        box-sizing: border-box;
-      }
-      body {
-        margin: 0;
-        background: #16181a;
-        font-family:
-          Manrope,
-          -apple-system,
-          sans-serif;
-        -webkit-font-smoothing: antialiased;
-        color: #eae7e2;
-      }
-      a {
-        color: #d8a44c;
-        text-decoration: none;
-      }
-      a:hover {
-        color: #e8bb6d;
-      }
-      .wrap {
-        max-width: 1120px;
-        margin: 0 auto;
-        padding: 22px 26px 80px;
-        display: flex;
-        flex-direction: column;
-        gap: 56px;
-      }
-      header {
-        display: flex;
-        align-items: center;
-        gap: 14px;
-        flex-wrap: wrap;
-      }
-      header .spacer {
-        flex: 1;
-      }
-      header a {
-        font:
-          500 13px/1 Manrope,
-          sans-serif;
-        color: #a9adb2;
-      }
-      header a:hover {
-        color: #eae7e2;
-      }
-      @media (max-width: 440px) {
-        header .support-link {
-          display: none;
-        }
-      }
-      .logo {
-        width: 32px;
-        height: 32px;
-        display: block;
-        flex-shrink: 0;
-      }
-      .wordmark {
-        font:
-          800 17px/1 Manrope,
-          sans-serif;
-        letter-spacing: -0.01em;
-      }
-      .badge {
-        padding: 5px 10px;
-        border-radius: 999px;
-        background: #33291a;
-        border: 1px solid #4a3a22;
-        font:
-          600 10px/1 'Roboto Mono',
-          monospace;
-        letter-spacing: 0.14em;
-        color: #e8bb6d;
-        white-space: nowrap;
-      }
-      .hero {
-        display: flex;
-        flex-direction: column;
-        gap: 26px;
-        max-width: 760px;
-      }
-      .eyebrow {
-        font:
-          500 11px/1 'Roboto Mono',
-          monospace;
-        letter-spacing: 0.2em;
-        color: #8d9196;
-        white-space: nowrap;
-      }
-      h1 {
-        margin: 0;
-        font:
-          800 clamp(40px, 6.4vw, 68px)/1.02 Manrope,
-          sans-serif;
-        letter-spacing: -0.035em;
-        color: #f5f2ed;
-        text-wrap: balance;
-      }
-      .hero p {
-        margin: 0;
-        font:
-          400 17px/1.6 Manrope,
-          sans-serif;
-        color: #a9adb2;
-        max-width: 600px;
-        text-wrap: pretty;
-      }
-      .cta-row {
-        display: flex;
-        align-items: center;
-        gap: 16px;
-        flex-wrap: wrap;
-        margin-top: 4px;
-      }
-      .primary-btn {
-        display: flex;
-        align-items: center;
-        gap: 13px;
-        padding: 16px 24px;
-        border-radius: 11px;
-        background: #d8a44c;
-        color: #1b1405;
-        box-shadow: 0 16px 38px rgba(216, 164, 76, 0.22);
-      }
-      .primary-btn:hover {
-        background: #e8bb6d;
-      }
-      .primary-btn .label {
-        display: flex;
-        flex-direction: column;
-        gap: 3px;
-      }
-      .primary-btn .title {
-        font:
-          700 15px/1.2 Manrope,
-          sans-serif;
-        color: #1b1405;
-      }
-      .primary-btn .meta {
-        font:
-          500 10.5px/1.3 'Roboto Mono',
-          monospace;
-        color: #5a4413;
-        overflow-wrap: anywhere;
-      }
-      .carousel {
-        position: relative;
-      }
-      .carousel-track {
-        display: flex;
-        gap: 14px;
-        margin: 0;
-        padding: 0;
-        list-style: none;
-        overflow-x: auto;
-        scroll-snap-type: x mandatory;
-        scroll-behavior: smooth;
-        scrollbar-width: none;
-      }
-      .carousel-track::-webkit-scrollbar {
-        display: none;
-      }
-      .carousel-track li {
-        flex: 0 0 auto;
-        scroll-snap-align: center;
-        margin: 0;
-      }
-      .carousel-track img {
-        display: block;
-        height: clamp(200px, 42vw, 380px);
-        width: auto;
-        max-width: 88vw;
-      }
-      .carousel-btn {
-        position: absolute;
-        top: 50%;
-        translate: 0 -50%;
-        width: 38px;
-        height: 38px;
-        border-radius: 50%;
-        background: #1b1e20;
-        border: 1px solid #33383c;
-        color: #eae7e2;
-        font:
-          500 18px/1 Manrope,
-          sans-serif;
-        cursor: pointer;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-      }
-      .carousel-btn:hover {
-        background: #262a2d;
-      }
-      .carousel-btn.prev {
-        left: -8px;
-      }
-      .carousel-btn.next {
-        right: -8px;
-      }
-      .carousel-dots {
-        display: none;
-        justify-content: center;
-        gap: 8px;
-        margin-top: 12px;
-      }
-      .carousel-dots .dot {
-        width: 6px;
-        height: 6px;
-        border-radius: 50%;
-        background: #33383c;
-      }
-      .carousel-dots .dot.active {
-        background: #d8a44c;
-      }
-      @media (max-width: 700px) {
-        .wrap {
-          gap: 32px;
-          padding-top: 18px;
-        }
-        .top {
-          gap: 24px;
-        }
-        .hero {
-          gap: 18px;
-        }
-        h1 {
-          margin-top: -4px;
-        }
-        .cta-meta {
-          margin-top: -6px;
-        }
-        .downloads,
-        .guides,
-        .support {
-          gap: 14px;
-        }
-        .carousel-btn {
-          display: none;
-        }
-        .carousel-track li {
-          flex: 0 0 100%;
-          width: 100%;
-          scroll-snap-align: start;
-          display: flex;
-          justify-content: center;
-        }
-        .carousel-track img {
-          width: 100%;
-          height: auto;
-          max-width: 100%;
-        }
-        .carousel-dots {
-          display: flex;
-        }
-      }
-      .downloads {
-        display: flex;
-        flex-direction: column;
-        gap: 16px;
-      }
-      .downloads-head {
-        display: flex;
-        align-items: baseline;
-        gap: 14px;
-        flex-wrap: wrap;
-      }
-      .downloads-head .title {
-        font:
-          700 21px/1.2 Manrope,
-          sans-serif;
-        letter-spacing: -0.015em;
-        color: #f5f2ed;
-        white-space: nowrap;
-      }
-      .downloads-head .source {
-        font:
-          400 11.5px/1.4 'Roboto Mono',
-          monospace;
-        color: #6f7479;
-        overflow-wrap: anywhere;
-      }
-      .asset-table {
-        border-radius: 13px;
-        overflow: hidden;
-        border: 1px solid #2b2f33;
-        background: #1b1e20;
-      }
-      .asset-row {
-        display: grid;
-        grid-template-columns: minmax(150px, 1fr) minmax(0, 2fr) 110px;
-        grid-template-areas: 'platform file dl';
-        gap: 16px;
-        align-items: center;
-        padding: 15px 18px;
-        border-bottom: 1px solid #23262a;
-      }
-      .asset-row .platform {
-        grid-area: platform;
-        font:
-          600 13.5px/1.35 Manrope,
-          sans-serif;
-        color: #eae7e2;
-      }
-      .asset-row .file {
-        grid-area: file;
-        font:
-          400 11.5px/1.4 'Roboto Mono',
-          monospace;
-        color: #8d9196;
-        overflow-wrap: anywhere;
-      }
-      .asset-row .file .size {
-        color: #5d6165;
-      }
-      .asset-row .dl {
-        grid-area: dl;
-        justify-self: end;
-        padding: 9px 15px;
-        border-radius: 8px;
-        background: #262a2d;
-        border: 1px solid #33383c;
-        font:
-          600 12px/1 Manrope,
-          sans-serif;
-        color: #eae7e2;
-        white-space: nowrap;
-      }
-      .asset-row .dl:hover {
-        background: #2f3437;
-        color: #f5f2ed;
-      }
-      /* The pre-release line after the downloads sits with them, not as its own section. */
-      .groups > .asset-note:last-child {
-        margin-top: -14px;
-        padding: 0 4px;
-      }
-      .asset-note {
-        padding: 14px 20px;
-        font:
-          400 11.5px/1.6 'Roboto Mono',
-          monospace;
-        color: #6f7479;
-      }
-      .groups {
-        display: flex;
-        flex-direction: column;
-        gap: 30px;
-      }
-      .os-group {
-        display: flex;
-        flex-direction: column;
-        gap: 12px;
-      }
-      .os-group h3 {
-        margin: 0;
-        font:
-          700 19px/1.2 Manrope,
-          sans-serif;
-        letter-spacing: -0.015em;
-        color: #f5f2ed;
-      }
-      .asset-table .asset-row:last-child {
-        border-bottom: 0;
-      }
-      .asset-row.recommended {
-        background: #202428;
-      }
-      .asset-row .platform .detail {
-        display: block;
-        margin-top: 2px;
-        font:
-          400 11.5px/1.4 Manrope,
-          sans-serif;
-        color: #8d9196;
-      }
-      .asset-row .platform .rec {
-        display: inline-block;
-        margin-left: 8px;
-        padding: 2px 7px;
-        border-radius: 999px;
-        background: rgba(216, 164, 76, 0.14);
-        color: #d8a44c;
-        font:
-          600 10px/1.3 'Roboto Mono',
-          monospace;
-        letter-spacing: 0.02em;
-        vertical-align: 1px;
-      }
-      .os-notes {
-        margin: 0;
-        padding: 0 4px 0 18px;
-        font:
-          400 12.5px/1.6 Manrope,
-          sans-serif;
-        color: #8d9196;
-      }
-      .os-notes li {
-        margin: 5px 0;
-      }
-      .os-notes code,
-      .g-body code {
-        padding: 1px 6px;
-        border-radius: 5px;
-        background: #23262a;
-        color: #c9ccd0;
-        font:
-          400 11.5px/1.5 'Roboto Mono',
-          monospace;
-        overflow-wrap: anywhere;
-      }
-      .first-launch {
-        display: flex;
-        flex-direction: column;
-        gap: 10px;
-        padding: 16px 18px;
-        border-radius: 12px;
-        border: 1px solid #4a3a22;
-        background: #1f1b15;
-      }
-      .first-launch .fl-warning {
-        display: flex;
-        align-items: flex-start;
-        gap: 10px;
-        margin: 0;
-        font:
-          600 14px/1.45 Manrope,
-          sans-serif;
-        color: #f5f2ed;
-      }
-      .first-launch .fl-warning svg {
-        flex-shrink: 0;
-        margin-top: 1px;
-      }
-      .first-launch .fl-warning .quote {
-        color: #e8bb6d;
-      }
-      .first-launch p {
-        margin: 0;
-        font:
-          400 13.5px/1.6 Manrope,
-          sans-serif;
-        color: #a9adb2;
-        text-wrap: pretty;
-      }
-      .first-launch strong {
-        font-weight: 700;
-        color: #eae7e2;
-      }
-      .first-launch code {
-        padding: 1px 6px;
-        border-radius: 5px;
-        background: #23262a;
-        color: #c9ccd0;
-        font:
-          400 12px/1.5 'Roboto Mono',
-          monospace;
-      }
-      .fl-command {
-        display: flex;
-        align-items: stretch;
-        border-radius: 9px;
-        border: 1px solid #33383c;
-        background: #121416;
-        overflow: hidden;
-      }
-      .first-launch .fl-command code {
-        flex: 1;
-        min-width: 0;
-        padding: 10px 12px;
-        border-radius: 0;
-        background: none;
-        font:
-          500 12.5px/1.5 'Roboto Mono',
-          monospace;
-        color: #eae7e2;
-        overflow-x: auto;
-        white-space: nowrap;
-      }
-      .fl-command button {
-        flex-shrink: 0;
-        padding: 0 14px;
-        border: 0;
-        border-left: 1px solid #33383c;
-        background: #262a2d;
-        color: #eae7e2;
-        font:
-          600 12px/1 Manrope,
-          sans-serif;
-        cursor: pointer;
-      }
-      .fl-command button:hover {
-        background: #2f3437;
-      }
-      .fl-command button.done {
-        color: #6cc2b4;
-      }
-      .first-launch .fl-aside {
-        font-size: 12px;
-        color: #8d9196;
-      }
-      .os-group .first-launch {
-        margin-top: 4px;
-      }
-      .hero p .examples {
-        display: block;
-        margin-top: 6px;
-        color: #eae7e2;
-      }
-      .cta-meta {
-        display: flex;
-        flex-wrap: wrap;
-        align-items: baseline;
-        gap: 6px 18px;
-        margin-top: -10px;
-        font:
-          500 12.5px/1.5 Manrope,
-          sans-serif;
-      }
-      .cta-meta #release-line {
-        font:
-          400 11.5px/1.5 'Roboto Mono',
-          monospace;
-        color: #6f7479;
-      }
-      .cta-alt {
-        display: contents;
-      }
-      .fl-details {
-        border-radius: 12px;
-        border: 1px solid #4a3a22;
-        background: #1f1b15;
-        transition:
-          border-color 0.3s,
-          box-shadow 0.3s;
-      }
-      .fl-details > summary {
-        display: flex;
-        align-items: flex-start;
-        gap: 10px;
-        padding: 12px 16px;
-        list-style: none;
-        cursor: pointer;
-        font:
-          500 13.5px/1.5 Manrope,
-          sans-serif;
-        color: #c7cace;
-      }
-      .fl-details > summary::-webkit-details-marker {
-        display: none;
-      }
-      .fl-details > summary svg {
-        flex-shrink: 0;
-        margin-top: 1px;
-      }
-      .fl-details > summary .how {
-        margin-left: auto;
-        padding-left: 12px;
-        font-weight: 700;
-        color: #d8a44c;
-        white-space: nowrap;
-      }
-      .fl-details[open] > summary .how {
-        color: #8d9196;
-      }
-      .fl-details > .first-launch {
-        border: 0;
-        border-top: 1px solid #3a2f1f;
-        border-radius: 0 0 12px 12px;
-        background: none;
-      }
-      /* The summary line already carries the icon. */
-      .fl-details > .first-launch .fl-warning svg {
-        display: none;
-      }
-      .fl-details.downloading {
-        border-color: #d8a44c;
-        box-shadow: 0 0 0 4px rgba(216, 164, 76, 0.14);
-      }
-      .fl-details.downloading > summary {
-        font-weight: 700;
-        color: #f5f2ed;
-      }
-      .whats-new-head {
-        display: flex;
-        align-items: center;
-        gap: 10px;
-        flex-wrap: wrap;
-        padding: 0;
-        border: 0;
-        background: none;
-        text-align: left;
-        cursor: default;
-      }
-      .whats-new-head .count {
-        display: none;
-      }
-      @media (max-width: 960px) {
-        .whats-new-head {
-          display: grid;
-          grid-template-columns: minmax(0, 1fr) auto;
-          align-items: center;
-          gap: 4px 12px;
-          cursor: pointer;
-        }
-        .whats-new-head .ver {
-          grid-row: 2;
-        }
-        .whats-new-head .count {
-          display: block;
-          grid-column: 2;
-          grid-row: 1 / span 2;
-          font:
-            600 12.5px/1 Manrope,
-            sans-serif;
-          color: #d8a44c;
-          white-space: nowrap;
-        }
-        .whats-new:not(.open) .changes,
-        .whats-new:not(.open) .older {
-          display: none;
-        }
-      }
-      .os-tabs {
-        display: flex;
-        flex-wrap: wrap;
-        gap: 8px;
-      }
-      .os-tabs button {
-        padding: 9px 16px;
-        border-radius: 999px;
-        border: 1px solid #33383c;
-        background: #1b1e20;
-        color: #c7cace;
-        font:
-          600 13.5px/1.2 Manrope,
-          sans-serif;
-        cursor: pointer;
-      }
-      .os-tabs button:hover {
-        background: #262a2d;
-        color: #f5f2ed;
-      }
-      .os-tabs button[aria-selected='true'] {
-        border-color: #d8a44c;
-        background: #d8a44c;
-        color: #1b1405;
-      }
-      .os-tabs .yours {
-        margin-left: 6px;
-        font:
-          500 10px/1 'Roboto Mono',
-          monospace;
-        letter-spacing: 0.06em;
-        opacity: 0.75;
-      }
-      /* With tabs, each tab already names its OS. */
-      .groups.tabbed .os-group h3 {
-        position: absolute;
-        width: 1px;
-        height: 1px;
-        overflow: hidden;
-        clip: rect(0 0 0 0);
-        white-space: nowrap;
-      }
-      .guides {
-        display: flex;
-        flex-direction: column;
-        gap: 16px;
-      }
-      .guide-list {
-        border-radius: 13px;
-        border: 1px solid #2b2f33;
-        background: #1b1e20;
-        overflow: hidden;
-      }
-      .guide-item + .guide-item {
-        border-top: 1px solid #23262a;
-      }
-      .guide-item > summary {
-        display: grid;
-        grid-template-columns: minmax(0, 1fr) auto;
-        column-gap: 16px;
-        row-gap: 3px;
-        padding: 16px 20px;
-        list-style: none;
-        cursor: pointer;
-      }
-      .guide-item > summary::-webkit-details-marker {
-        display: none;
-      }
-      .guide-item > summary::after {
-        content: '+';
-        grid-column: 2;
-        grid-row: 1 / span 2;
-        align-self: center;
-        font:
-          400 20px/1 Manrope,
-          sans-serif;
-        color: #8d9196;
-      }
-      .guide-item[open] > summary::after {
-        content: '−';
-      }
-      .guide-item > summary:hover {
-        background: #202428;
-      }
-      .g-title {
-        font:
-          600 15px/1.35 Manrope,
-          sans-serif;
-        color: #f5f2ed;
-      }
-      .g-sub {
-        font:
-          400 12.5px/1.45 Manrope,
-          sans-serif;
-        color: #8d9196;
-      }
-      .g-body {
-        display: flex;
-        flex-direction: column;
-        gap: 12px;
-        max-width: 760px;
-        padding: 0 20px 20px;
-      }
-      .g-body p {
-        margin: 0;
-        font:
-          400 14px/1.6 Manrope,
-          sans-serif;
-        color: #a9adb2;
-      }
-      .fl-details > summary:focus-visible,
-      .guide-item > summary:focus-visible,
-      .whats-new-head:focus-visible,
-      .os-tabs button:focus-visible {
-        outline: 2px solid #d8a44c;
-        outline-offset: 2px;
-      }
-      @media (prefers-reduced-motion: reduce) {
-        .fl-details {
-          transition: none;
-        }
-      }
-      .guide {
-        display: flex;
-        flex-direction: column;
-        gap: 14px;
-        max-width: 720px;
-      }
-      .guide p {
-        margin: 0;
-        font:
-          400 14px/1.6 Manrope,
-          sans-serif;
-        color: #a9adb2;
-      }
-      .top {
-        display: grid;
-        grid-template-columns: minmax(0, 1fr) minmax(300px, 360px);
-        gap: 48px;
-        align-items: start;
-      }
-      @media (max-width: 960px) {
-        .top {
-          grid-template-columns: minmax(0, 1fr);
-        }
-        /* Stacked, the hero spans the same width as What's new below it. */
-        .hero {
-          max-width: none;
-        }
-      }
-      .card {
-        border-radius: 13px;
-        border: 1px solid #2b2f33;
-        background: #1b1e20;
-      }
-      .whats-new {
-        display: flex;
-        flex-direction: column;
-        padding: 20px 20px 18px;
-        gap: 16px;
-      }
-      .whats-new-head .title {
-        font:
-          700 16px/1.2 Manrope,
-          sans-serif;
-        letter-spacing: -0.01em;
-        color: #f5f2ed;
-      }
-      .whats-new-head .ver {
-        font:
-          500 10.5px/1 'Roboto Mono',
-          monospace;
-        color: #8d9196;
-        overflow-wrap: anywhere;
-      }
-      .changes {
-        margin: 0;
-        padding: 0;
-        list-style: none;
-        display: flex;
-        flex-direction: column;
-        gap: 14px;
-      }
-      /* Beside the hero, the panel takes the hero's height (height 0 keeps it from setting the row's
-         height; min-height then fills it) and the list scrolls. Stacked, it shows everything. */
-      @media (min-width: 961px) {
-        .whats-new {
-          align-self: stretch;
-          height: 0;
-          min-height: 100%;
-        }
-        .whats-new-head,
-        .older {
-          flex-shrink: 0;
-        }
-        .changes {
-          flex: 1;
-          min-height: 0;
-          /* Always show the scrollbar so the list reads as scrollable. A styled
-             ::-webkit-scrollbar stays visible in Chrome and Safari, even with macOS
-             overlay scrollbars, but only without scrollbar-width/-color, which are
-             Firefox's way. The fade spares the scrollbar's strip. */
-          overflow-y: scroll;
-          padding-right: 12px;
-          margin-right: -8px;
-          padding-bottom: 18px;
-          mask-image:
-            linear-gradient(to bottom, #000 calc(100% - 36px), transparent),
-            linear-gradient(#000, #000) right / 8px 100% no-repeat;
-        }
-        .changes::-webkit-scrollbar {
-          width: 6px;
-        }
-        .changes::-webkit-scrollbar-track {
-          border-radius: 3px;
-          background: #23262a;
-        }
-        .changes::-webkit-scrollbar-thumb {
-          border-radius: 3px;
-          background: #5d6165;
-        }
-        @supports (-moz-appearance: none) {
-          .changes {
-            scrollbar-width: thin;
-            scrollbar-color: #5d6165 #23262a;
-          }
-        }
-      }
-      .changes li {
-        display: flex;
-        flex-direction: column;
-        gap: 4px;
-      }
-      .changes .name {
-        display: flex;
-        align-items: center;
-        gap: 8px;
-        font:
-          600 13.5px/1.35 Manrope,
-          sans-serif;
-        color: #eae7e2;
-      }
-      .changes p {
-        margin: 0;
-        font:
-          400 12.5px/1.55 Manrope,
-          sans-serif;
-        color: #8d9196;
-        text-wrap: pretty;
-      }
-      .changes code {
-        padding: 0 5px;
-        border-radius: 4px;
-        background: #23262a;
-        color: #c9ccd0;
-        font:
-          400 11.5px/1.5 'Roboto Mono',
-          monospace;
-      }
-      .kind {
-        flex-shrink: 0;
-        padding: 3px 7px;
-        border-radius: 999px;
-        font:
-          600 9.5px/1 'Roboto Mono',
-          monospace;
-        letter-spacing: 0.1em;
-        text-transform: uppercase;
-        background: rgba(216, 164, 76, 0.14);
-        color: #d8a44c;
-      }
-      .kind.faster {
-        background: rgba(78, 168, 154, 0.15);
-        color: #6cc2b4;
-      }
-      .kind.improved {
-        background: rgba(126, 147, 189, 0.16);
-        color: #9aaed6;
-      }
-      .kind.fixed {
-        background: #262a2d;
-        color: #a9adb2;
-      }
-      .older {
-        display: flex;
-        flex-direction: column;
-        gap: 8px;
-        padding-top: 14px;
-        border-top: 1px solid #2b2f33;
-      }
-      .older .label {
-        font:
-          500 10.5px/1 'Roboto Mono',
-          monospace;
-        letter-spacing: 0.14em;
-        color: #6f7479;
-      }
-      .older ul {
-        margin: 0;
-        padding: 0;
-        list-style: none;
-        display: flex;
-        flex-direction: column;
-        gap: 6px;
-      }
-      .older li a {
-        display: flex;
-        gap: 10px;
-        font:
-          500 12px/1.4 'Roboto Mono',
-          monospace;
-        color: #a9adb2;
-      }
-      .older li a:hover {
-        color: #eae7e2;
-      }
-      .older li .date {
-        margin-left: auto;
-        color: #5d6165;
-        white-space: nowrap;
-      }
-      .older .all {
-        font:
-          600 12.5px/1.4 Manrope,
-          sans-serif;
-      }
-      .poll-dialog {
-        width: min(440px, calc(100% - 32px));
-        padding: 0;
-        border-radius: 16px;
-        border: 1px solid #33383c;
-        background: #1b1e20;
-        color: #eae7e2;
-        box-shadow: 0 30px 80px rgba(0, 0, 0, 0.55);
-      }
-      .poll-dialog::backdrop {
-        background: rgba(10, 11, 12, 0.62);
-      }
-      .poll-dialog[open] {
-        animation: pop-in 0.22s ease-out;
-      }
-      @keyframes pop-in {
-        from {
-          opacity: 0;
-          transform: translateY(10px) scale(0.98);
-        }
-      }
-      @media (prefers-reduced-motion: reduce) {
-        .poll-dialog[open] {
-          animation: none;
-        }
-      }
-      .poll-dialog .body {
-        display: flex;
-        flex-direction: column;
-        gap: 14px;
-        padding: 24px;
-      }
-      .poll-dialog .top-row {
-        display: flex;
-        align-items: center;
-        gap: 10px;
-      }
-      .poll-dialog h2:focus {
-        outline: none;
-      }
-      .poll-dialog h2 {
-        margin: 0;
-        font:
-          800 22px/1.2 Manrope,
-          sans-serif;
-        letter-spacing: -0.02em;
-        color: #f5f2ed;
-        text-wrap: balance;
-      }
-      .poll-dialog p {
-        margin: 0;
-        font:
-          400 13.5px/1.6 Manrope,
-          sans-serif;
-        color: #a9adb2;
-        text-wrap: pretty;
-      }
-      .poll-dialog .ask {
-        font-weight: 600;
-        color: #eae7e2;
-      }
-      .poll-dialog .poll-choices button:first-child,
-      .poll-dialog .see-results {
-        background: #d8a44c;
-        border-color: #d8a44c;
-        color: #1b1405;
-      }
-      .poll-dialog .poll-choices button:first-child:hover:not(:disabled),
-      .poll-dialog .see-results:hover {
-        background: #e8bb6d;
-        border-color: #e8bb6d;
-      }
-      .poll-dialog .later {
-        align-self: stretch;
-        padding: 10px 14px;
-        border-radius: 10px;
-        border: 0;
-        background: none;
-        font:
-          600 13.5px/1.2 Manrope,
-          sans-serif;
-        color: #c7cace;
-        cursor: pointer;
-      }
-      .poll-dialog .later:hover {
-        background: #262a2d;
-        color: #f5f2ed;
-      }
-      .poll-dialog .error {
-        font:
-          400 11.5px/1.5 'Roboto Mono',
-          monospace;
-        color: #e0806b;
-      }
-      .support {
-        display: flex;
-        flex-direction: column;
-        gap: 18px;
-      }
-      .support > p {
-        margin: 0;
-        max-width: 760px;
-        font:
-          400 14px/1.6 Manrope,
-          sans-serif;
-        color: #a9adb2;
-        text-wrap: pretty;
-      }
-      .poll {
-        display: flex;
-        flex-direction: column;
-        gap: 16px;
-        padding: 22px;
-      }
-      .poll .question {
-        margin: 0;
-        font:
-          700 17px/1.35 Manrope,
-          sans-serif;
-        letter-spacing: -0.01em;
-        color: #f5f2ed;
-        text-wrap: balance;
-      }
-      .poll .sub {
-        margin: -8px 0 0;
-        font:
-          400 13px/1.55 Manrope,
-          sans-serif;
-        color: #8d9196;
-      }
-      .poll-choices {
-        display: flex;
-        gap: 10px;
-        flex-wrap: wrap;
-      }
-      .poll-choices button {
-        flex: 1 1 180px;
-        padding: 13px 18px;
-        border-radius: 10px;
-        border: 1px solid #33383c;
-        background: #262a2d;
-        color: #eae7e2;
-        font:
-          600 14px/1.2 Manrope,
-          sans-serif;
-        cursor: pointer;
-      }
-      .poll-choices button:hover:not(:disabled) {
-        background: #2f3437;
-        border-color: #4a3a22;
-      }
-      .poll-choices button:disabled {
-        opacity: 0.6;
-        cursor: default;
-      }
-      .poll-results {
-        display: flex;
-        flex-direction: column;
-        gap: 12px;
-      }
-      .bar {
-        display: flex;
-        flex-direction: column;
-        gap: 6px;
-      }
-      .bar .row {
-        display: flex;
-        align-items: baseline;
-        gap: 10px;
-        font:
-          600 13.5px/1.3 Manrope,
-          sans-serif;
-        color: #eae7e2;
-      }
-      .bar .row .mine {
-        display: inline-block;
-        margin-left: 6px;
-        white-space: nowrap;
-        font:
-          500 10px/1 'Roboto Mono',
-          monospace;
-        letter-spacing: 0.1em;
-        color: #d8a44c;
-      }
-      .bar .row .num {
-        margin-left: auto;
-        font:
-          500 12px/1 'Roboto Mono',
-          monospace;
-        color: #a9adb2;
-        white-space: nowrap;
-      }
-      .bar .track {
-        height: 8px;
-        border-radius: 999px;
-        background: #262a2d;
-        overflow: hidden;
-      }
-      .bar .fill {
-        height: 100%;
-        width: 0;
-        border-radius: 999px;
-        background: #7e93bd;
-        transition: width 0.5s ease;
-      }
-      .bar.yes .fill {
-        background: #d8a44c;
-      }
-      .poll-meta {
-        display: flex;
-        align-items: center;
-        gap: 8px;
-        font:
-          400 11.5px/1.5 'Roboto Mono',
-          monospace;
-        color: #6f7479;
-      }
-      .live-dot {
-        width: 7px;
-        height: 7px;
-        border-radius: 50%;
-        background: #4ea89a;
-        box-shadow: 0 0 0 0 rgba(78, 168, 154, 0.5);
-        animation: pulse 2s infinite;
-      }
-      .live-dot.off {
-        background: #5d6165;
-        animation: none;
-      }
-      @keyframes pulse {
-        70% {
-          box-shadow: 0 0 0 7px rgba(78, 168, 154, 0);
-        }
-        100% {
-          box-shadow: 0 0 0 0 rgba(78, 168, 154, 0);
-        }
-      }
-      @media (prefers-reduced-motion: reduce) {
-        .live-dot {
-          animation: none;
-        }
-        .bar .fill {
-          transition: none;
-        }
-      }
-      .ways {
-        display: flex;
-        flex-direction: column;
-        gap: 12px;
-      }
-      .ways .lead {
-        margin: 0;
-        font:
-          600 14px/1.5 Manrope,
-          sans-serif;
-        color: #eae7e2;
-      }
-      .ways-grid {
-        display: grid;
-        grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
-        gap: 10px;
-      }
-      .way {
-        display: flex;
-        flex-direction: column;
-        gap: 4px;
-        padding: 14px 16px;
-        border-radius: 11px;
-        border: 1px solid #2b2f33;
-        background: #1b1e20;
-        font:
-          400 12px/1.5 Manrope,
-          sans-serif;
-        color: #8d9196;
-        text-align: left;
-        cursor: pointer;
-      }
-      .way strong {
-        font:
-          600 13.5px/1.35 Manrope,
-          sans-serif;
-        color: #eae7e2;
-      }
-      a.way:hover,
-      button.way:hover {
-        border-color: #4a3a22;
-        background: #202428;
-        color: #a9adb2;
-      }
-      .way.primary {
-        border-color: #4a3a22;
-        background: #241f17;
-      }
-      [hidden] {
-        display: none !important;
-      }
-      footer {
-        display: flex;
-        align-items: center;
-        gap: 18px;
-        flex-wrap: wrap;
-        padding-top: 28px;
-        border-top: 1px solid #23262a;
-      }
-      footer .spacer {
-        flex: 1;
-      }
-      footer .ver {
-        font:
-          400 11.5px/1 'Roboto Mono',
-          monospace;
-        color: #6f7479;
-        white-space: nowrap;
-      }
-      footer a {
-        font:
-          500 12.5px/1 Manrope,
-          sans-serif;
-        color: #a9adb2;
-        white-space: nowrap;
-      }
-      footer a:hover {
-        color: #eae7e2;
-      }
-      @media (max-width: 700px) {
-        .asset-row {
-          grid-template-columns: 1fr auto;
-          grid-template-areas:
-            'platform dl'
-            'file file';
-          gap: 6px 14px;
-        }
-      }
-    </style>
+    <link rel="stylesheet" href="landing.css" />
+    <script src="downloads.js" defer></script>
+    <script src="landing.js" defer></script>
   </head>
   <body>
-    <div class="wrap">
-      <header>
-        <svg class="logo" viewBox="0 0 1024 1024">
-          <path
-            d="M512,26 C726,26 820,54 883,117 C946,180 998,298 998,512 C998,726 946,844 883,907 C820,970 726,998 512,998 C298,998 204,970 141,907 C78,844 26,726 26,512 C26,298 78,180 141,117 C204,54 298,26 512,26 Z"
-            fill="#23282b"
-          />
-          <g fill="none" stroke-width="54" stroke-linecap="round" stroke-dasharray="44 64">
-            <path d="M186,282 C400,282 470,512 640,512" stroke="#4ea89a" />
-            <path d="M186,512 L640,512" stroke="#d8a44c" />
-            <path d="M186,742 C400,742 470,512 640,512" stroke="#7e93bd" />
-          </g>
-          <path
-            d="M640,512 L846,512"
-            fill="none"
-            stroke="#f7f4ef"
-            stroke-width="112"
-            stroke-linecap="round"
-          />
-          <circle cx="640" cy="512" r="74" fill="#f7f4ef" />
-        </svg>
-        <div class="wordmark">Plexo</div>
-        <div class="badge">PRE-RELEASE</div>
-        <div class="spacer"></div>
-        <a class="support-link" href="#support">Support</a>
-        <a href="https://github.com/anmolkapil/plexo">GitHub</a>
-      </header>
+    <a class="skip-link" href="#main">Skip to content</a>
+    <div
+      style="
+        position: relative;
+        display: flex;
+        flex-direction: column;
+        min-height: 100vh;
+        background: #0a0a0b;
+        color: #ededef;
+        font-family:
+          'Geist',
+          ui-sans-serif,
+          system-ui,
+          -apple-system,
+          'Segoe UI',
+          sans-serif;
+        overflow-x: clip;
+        -webkit-font-smoothing: antialiased;
+      "
+      data-canvas-width="1440"
+      data-canvas-height="7029"
+    >
+      <!-- vertical guide lines -->
+      <div
+        aria-hidden="true"
+        style="
+          position: absolute;
+          inset: 0;
+          pointer-events: none;
+          display: flex;
+          justify-content: center;
+        "
+      >
+        <div
+          style="
+            width: 100%;
+            max-width: 1248px;
+            height: 100%;
+            border-left: 1px solid rgba(255, 255, 255, 0.09);
+            border-right: 1px solid rgba(255, 255, 255, 0.09);
+          "
+        ></div>
+      </div>
 
-      <div class="top">
-        <section class="hero">
-          <div class="eyebrow">DOWNLOAD MANAGER · MULTI-LINK</div>
-          <h1>One download.<br />Every network.</h1>
-          <p>
-            Plexo combines all your available internet connections to download files faster.
-            <span class="examples"
-              >Wi-Fi, Ethernet, tethered phones, any mix your computer has.</span
-            >
-          </p>
+      <!-- top spotlight glow -->
+      <div aria-hidden="true" class="top-glow">
+        <div class="tg-core"></div>
+        <div class="tg-wide"></div>
+        <div class="tg-sparks"></div>
+        <div class="tg-fade"></div>
+      </div>
 
-          <div class="cta-row">
-            <a
-              class="primary-btn"
-              id="primary-btn"
-              href="https://github.com/anmolkapil/plexo/releases/latest"
+      <!-- NAV -->
+      <header
+        style="
+          position: sticky;
+          top: 0;
+          z-index: 30;
+          display: flex;
+          flex-direction: column;
+          align-items: center;
+          gap: 8px;
+          padding: 20px 16px 0;
+        "
+      >
+        <nav
+          aria-label="Main"
+          style="
+            display: flex;
+            flex-wrap: wrap;
+            align-items: center;
+            justify-content: space-between;
+            gap: 10px 24px;
+            width: 100%;
+            max-width: 780px;
+            padding: 7px 7px 7px 20px;
+            border: 1px solid rgba(255, 255, 255, 0.09);
+            border-radius: 30px;
+            background: rgba(20, 20, 22, 0.72);
+            backdrop-filter: blur(14px);
+            -webkit-backdrop-filter: blur(14px);
+          "
+        >
+          <a
+            href="#top"
+            aria-label="Plexo home"
+            style="
+              display: flex;
+              align-items: center;
+              gap: 10px;
+              font-weight: 600;
+              font-size: 18px;
+              letter-spacing: -0.01em;
+              min-height: 44px;
+            "
+          >
+            <svg width="28" height="28" viewBox="0 0 28 28" aria-hidden="true">
+              <path
+                d="M2.5 7c7 0 8.5 7 15 7M2.5 21c7 0 8.5-7 15-7M17.5 14h8M22 10l4 4-4 4"
+                fill="none"
+                stroke="#FFFFFF"
+                stroke-width="2.4"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              ></path>
+            </svg>
+            <span>Plexo</span>
+          </a>
+          <div
+            class="navlinks"
+            style="
+              display: flex;
+              flex-wrap: wrap;
+              justify-content: center;
+              gap: 4px 28px;
+              font-size: 14px;
+            "
+          >
+            <a class="nav-section-link" href="#features" style="padding: 12px 0">Features</a>
+            <a class="nav-section-link" href="#downloads" style="padding: 12px 0">Downloads</a>
+            <a class="nav-section-link" href="#faq" style="padding: 12px 0">FAQ</a>
+            <a class="nav-section-link" href="#support" style="padding: 12px 0">Support</a>
+          </div>
+          <div style="display: flex; align-items: center; gap: 8px">
+            <button
+              type="button"
+              class="menu-btn gh-btn"
+              id="menu-toggle"
+              aria-controls="mobile-menu"
+              aria-label="Menu"
+              aria-expanded="false"
+              style="
+                width: 44px;
+                height: 44px;
+                padding: 0;
+                border-radius: 999px;
+                background: linear-gradient(
+                  160deg,
+                  rgba(255, 255, 255, 0.14),
+                  rgba(255, 255, 255, 0.03)
+                );
+                border: 1px solid rgba(255, 255, 255, 0.18);
+                color: #ffffff;
+                place-items: center;
+                cursor: pointer;
+              "
             >
               <svg
+                width="18"
+                height="18"
                 viewBox="0 0 24 24"
-                width="19"
-                height="19"
                 fill="none"
-                stroke="#1b1405"
-                stroke-width="2.2"
+                stroke="currentColor"
+                stroke-width="2"
                 stroke-linecap="round"
+                aria-hidden="true"
               >
-                <path d="M12 3v12" />
-                <path d="M6.5 11.5 12 17l5.5-5.5" />
-                <path d="M4 20h16" />
+                <path d="M4 8h16"></path>
+                <path d="M4 16h16"></path>
               </svg>
-              <span class="label">
-                <span class="title" id="primary-title">Download for your OS</span>
-                <span class="meta" id="primary-meta">Loading latest release…</span>
-              </span>
+            </button>
+            <a
+              href="https://github.com/anmolkapil/plexo"
+              aria-label="Plexo on GitHub"
+              class="gh-btn github-button"
+              style="
+                width: 44px;
+                height: 44px;
+                border-radius: 999px;
+                background: linear-gradient(
+                  160deg,
+                  rgba(255, 255, 255, 0.22),
+                  rgba(255, 255, 255, 0.05)
+                );
+                border: 1px solid rgba(255, 255, 255, 0.22);
+                box-shadow:
+                  inset 0 1px 0 rgba(255, 255, 255, 0.35),
+                  inset 0 -1px 0 rgba(255, 255, 255, 0.06),
+                  0 6px 20px -8px rgba(0, 0, 0, 0.6);
+                backdrop-filter: blur(12px) saturate(160%);
+                -webkit-backdrop-filter: blur(12px) saturate(160%);
+                color: #ffffff;
+                display: grid;
+                place-items: center;
+              "
+            >
+              <svg
+                width="24"
+                height="24"
+                viewBox="0 0 24 24"
+                fill="currentColor"
+                shape-rendering="geometricPrecision"
+                aria-hidden="true"
+              >
+                <path
+                  d="M12 2.4a9.6 9.6 0 0 0-3.04 18.71c.48.09.66-.21.66-.46v-1.87c-2.69.58-3.25-1.14-3.25-1.14-.44-1.12-1.08-1.42-1.08-1.42-.88-.6.07-.59.07-.59.97.07 1.48 1 1.48 1 .87 1.48 2.27 1.05 2.82.8.09-.62.34-1.05.61-1.29-2.14-.24-4.4-1.07-4.4-4.75 0-1.05.38-1.91 1-2.58-.1-.24-.43-1.22.09-2.54 0 0 .81-.26 2.64.98A9.2 9.2 0 0 1 12 6.93c.82 0 1.63.11 2.4.32 1.83-1.24 2.64-.98 2.64-.98.52 1.32.19 2.3.09 2.54.62.67 1 1.53 1 2.58 0 3.69-2.26 4.5-4.41 4.74.35.3.65.88.65 1.78v2.74c0 .25.18.55.66.46A9.6 9.6 0 0 0 12 2.4Z"
+                ></path>
+              </svg>
             </a>
           </div>
-          <div class="cta-meta">
-            <span id="release-line">Checking GitHub for the latest release…</span>
-            <span class="cta-alt" id="cta-alt"></span>
-            <a href="#downloads">All downloads</a>
-          </div>
-          <div id="first-launch-slot"></div>
-        </section>
-
-        <aside class="card whats-new" id="whats-new" aria-labelledby="whats-new-title">
-          <button
-            type="button"
-            class="whats-new-head"
-            id="whats-new-toggle"
-            aria-expanded="false"
-            aria-controls="changes"
+        </nav>
+        <div id="mobile-menu" hidden>
+          <div
+            class="menu-panel"
+            style="
+              width: 100%;
+              max-width: 780px;
+              display: flex;
+              flex-direction: column;
+              padding: 8px;
+              border: 1px solid rgba(255, 255, 255, 0.09);
+              border-radius: 24px;
+              background: rgba(20, 20, 22, 0.92);
+              backdrop-filter: blur(14px);
+              -webkit-backdrop-filter: blur(14px);
+            "
           >
-            <span class="title" id="whats-new-title">What’s new</span>
-            <span class="ver" id="whats-new-ver"></span>
-            <span class="count" id="whats-new-count"></span>
-          </button>
-          <ul class="changes" id="changes"></ul>
-          <div class="older">
-            <div class="label" id="older-label" hidden>EARLIER VERSIONS</div>
-            <ul id="older-list"></ul>
-            <a class="all" href="https://github.com/anmolkapil/plexo/releases"
-              >All releases on GitHub →</a
+            <a
+              class="nav-section-link"
+              href="#features"
+              style="padding: 14px 16px; border-radius: 14px; font-size: 16px"
+              >Features</a
+            >
+            <a
+              class="nav-section-link"
+              href="#downloads"
+              style="padding: 14px 16px; border-radius: 14px; font-size: 16px"
+              >Downloads</a
+            >
+            <a
+              class="nav-section-link"
+              href="#faq"
+              style="padding: 14px 16px; border-radius: 14px; font-size: 16px"
+              >FAQ</a
+            >
+            <a
+              class="nav-section-link"
+              href="#support"
+              style="padding: 14px 16px; border-radius: 14px; font-size: 16px"
+              >Support</a
             >
           </div>
-        </aside>
+        </div>
+      </header>
+
+      <!-- HERO -->
+      <main id="main">
+        <section id="top" style="position: relative; padding: 96px 24px 0; text-align: center">
+          <span
+            style="
+              position: relative;
+              display: inline-flex;
+              align-items: center;
+              margin-bottom: 28px;
+              padding: 5px 12px;
+              border-radius: 999px;
+              border: 1px solid rgba(255, 255, 255, 0.14);
+              background: rgba(255, 255, 255, 0.05);
+              backdrop-filter: blur(10px);
+              -webkit-backdrop-filter: blur(10px);
+              font-size: 12px;
+              letter-spacing: 0.02em;
+              color: #ededef;
+            "
+            >Pre-release</span
+          >
+          <h1
+            style="
+              position: relative;
+              margin: 0 auto;
+              font-family: 'Archivo', 'Helvetica Neue', sans-serif;
+              font-stretch: 118%;
+              font-weight: 600;
+              font-size: clamp(34px, 4.6vw, 72px);
+              line-height: 1.04;
+              letter-spacing: -0.02em;
+              text-transform: uppercase;
+              color: #ededef;
+            "
+          >
+            <span class="h1-line"><span class="hero-t">Combine</span> your networks.</span
+            ><span class="h1-line"><span class="hero-t">Download</span> faster.</span>
+          </h1>
+
+          <p
+            style="
+              position: relative;
+              max-width: 580px;
+              margin: 28px auto 0;
+              font-size: 18px;
+              line-height: 1.6;
+              color: #a1a1a8;
+              text-wrap: pretty;
+            "
+          >
+            A free, open-source download manager that combines your internet connections to download
+            <em style="color: #ededef">files</em> and
+            <em style="color: #ededef">torrents</em> faster.
+          </p>
+
+          <div class="hero-actions">
+            <div class="hero-action-row">
+              <a id="primary-btn" class="btn-3d download-primary" href="#downloads"
+                ><svg
+                  width="20"
+                  height="20"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2.2"
+                  aria-hidden="true"
+                >
+                  <path d="M12 4v11m-5-5 5 5 5-5M5 20h14" /></svg
+                ><span id="primary-title">Download Plexo</span></a
+              ><a class="lnk all-downloads" href="#downloads">All downloads ↓</a>
+            </div>
+            <p id="hero-download-info">macOS, Windows &amp; Linux</p>
+            <div id="hero-alternates"></div>
+          </div>
+          <!-- LIVE HERO WIDGET -->
+          <div
+            class="demo-wrap"
+            style="position: relative; max-width: 920px; margin: 72px auto 0; height: auto"
+          >
+            <div class="demo-stage" style="width: 100%">
+              <div
+                class="demo-frame download-demo"
+                style="
+                  position: relative;
+                  margin: 0;
+                  padding: 24px 24px 0;
+                  border-radius: 40px 40px 0 0;
+                  border: 1px solid rgba(255, 255, 255, 0.14);
+                  border-bottom: 0;
+                  background: linear-gradient(
+                    180deg,
+                    rgba(255, 255, 255, 0.045) 0%,
+                    rgba(255, 255, 255, 0.015) 60%,
+                    rgba(255, 255, 255, 0) 100%
+                  );
+                  backdrop-filter: blur(12px);
+                  -webkit-backdrop-filter: blur(12px);
+                  text-align: left;
+                "
+              >
+                <div aria-hidden="true" class="shine shine-tl"></div>
+                <div style="display: flex; flex-direction: column; gap: 12px">
+                  <!-- top panel -->
+                  <div
+                    class="demo-speed-panel"
+                    style="
+                      display: flex;
+                      flex-wrap: wrap;
+                      align-items: center;
+                      gap: 24px 28px;
+                      padding: 26px 28px;
+                      border-radius: 24px;
+                      background: #17171a;
+                      border: 1px solid rgba(255, 255, 255, 0.06);
+                    "
+                  >
+                    <div
+                      class="demo-flow-graphic"
+                      style="position: relative; flex: 0 0 300px; height: 160px"
+                    >
+                      <svg
+                        width="300"
+                        height="160"
+                        viewBox="0 0 300 160"
+                        aria-hidden="true"
+                        style="position: absolute; inset: 0"
+                      >
+                        <path
+                          class="flow flow-wifi"
+                          style="animation-duration: 1s"
+                          d="M128 46C164 46 194 80 220 80"
+                        ></path>
+                        <path
+                          class="flow flow-usb"
+                          style="animation-duration: 1s"
+                          d="M128 116C164 116 194 80 220 80"
+                        ></path>
+                        <circle class="source-wifi" cx="122" cy="46" r="3.5"></circle>
+                        <circle class="source-usb" cx="122" cy="116" r="3.5"></circle>
+                        <circle class="combine-ring" cx="220" cy="80" r="10"></circle>
+                        <circle class="combine-dot" cx="220" cy="80" r="3.7"></circle>
+                        <path class="flow-out" d="M220 80H278"></path>
+                        <path class="flow-arrow" d="M277 75.5L284 80L277 84.5Z"></path>
+                      </svg>
+                      <div
+                        style="
+                          position: absolute;
+                          left: 0;
+                          top: 22px;
+                          width: 110px;
+                          text-align: right;
+                        "
+                      >
+                        <div
+                          style="
+                            font-family: 'Geist Mono', ui-monospace, monospace;
+                            font-size: 12.5px;
+                            letter-spacing: 0.14em;
+                            color: #a1a1a8;
+                          "
+                        >
+                          WI-FI
+                        </div>
+                        <div
+                          style="
+                            font-family: 'Geist Mono', ui-monospace, monospace;
+                            font-size: 17px;
+                            color: #ff8a3d;
+                            margin-top: 3px;
+                          "
+                        >
+                          <span id="wifi-diagram-speed">34.8 MB/s</span>
+                        </div>
+                      </div>
+                      <div
+                        style="
+                          position: absolute;
+                          left: 0;
+                          top: 92px;
+                          width: 110px;
+                          text-align: right;
+                        "
+                      >
+                        <div
+                          style="
+                            font-family: 'Geist Mono', ui-monospace, monospace;
+                            font-size: 12.5px;
+                            letter-spacing: 0.14em;
+                            color: #a1a1a8;
+                          "
+                        >
+                          USB
+                        </div>
+                        <div
+                          style="
+                            font-family: 'Geist Mono', ui-monospace, monospace;
+                            font-size: 17px;
+                            color: #ededef;
+                            margin-top: 3px;
+                          "
+                        >
+                          <span id="usb-diagram-speed">11.4 MB/s</span>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div class="demo-total" style="flex: 1 1 200px; min-width: 0">
+                      <div
+                        class="demo-total-label"
+                        style="
+                          font-family: 'Geist Mono', ui-monospace, monospace;
+                          font-size: 13px;
+                          letter-spacing: 0.16em;
+                          color: #a1a1a8;
+                        "
+                      >
+                        TOTAL SPEED
+                      </div>
+                      <div
+                        style="display: flex; align-items: baseline; gap: 10px; margin-top: 10px"
+                      >
+                        <span
+                          style="
+                            font-family: 'Geist Mono', ui-monospace, monospace;
+                            font-size: 64px;
+                            font-weight: 600;
+                            letter-spacing: -0.04em;
+                            line-height: 1;
+                            font-variant-numeric: tabular-nums;
+                          "
+                          ><span id="total-speed">46.2</span></span
+                        >
+                        <span
+                          style="
+                            font-family: 'Geist Mono', ui-monospace, monospace;
+                            font-size: 17px;
+                            color: #c8c8ce;
+                          "
+                          >MB/s</span
+                        >
+                      </div>
+                    </div>
+
+                    <div class="demo-chart" style="flex: 2 1 300px; min-width: 0">
+                      <div
+                        style="
+                          display: flex;
+                          flex-wrap: wrap;
+                          justify-content: space-between;
+                          gap: 8px 16px;
+                          font-family: 'Geist Mono', ui-monospace, monospace;
+                          font-size: 13px;
+                          letter-spacing: 0.16em;
+                          color: #a1a1a8;
+                        "
+                      >
+                        <span>THROUGHPUT</span>
+                      </div>
+                      <svg
+                        viewBox="0 0 600 160"
+                        preserveAspectRatio="none"
+                        aria-hidden="true"
+                        style="display: block; width: 100%; height: 150px; margin-top: 14px"
+                      >
+                        <line class="gline" x1="0" y1="53" x2="600" y2="53"></line>
+                        <line class="gline" x1="0" y1="106" x2="600" y2="106"></line>
+                        <path class="area area-wifi" id="chart-wifi" d=""></path>
+                        <path class="area area-usb" id="chart-usb" d=""></path>
+                        <path class="cline" id="chart-line" d=""></path>
+                      </svg>
+                    </div>
+                  </div>
+
+                  <!-- file row -->
+                  <div
+                    class="demo-file-row"
+                    style="
+                      display: flex;
+                      flex-wrap: wrap;
+                      align-items: center;
+                      gap: 16px 22px;
+                      padding: 18px 26px 18px 18px;
+                      border-radius: 22px;
+                      background: #17171a;
+                      border: 1px solid rgba(255, 255, 255, 0.06);
+                    "
+                  >
+                    <div
+                      id="demo-file-kind"
+                      style="
+                        flex: 0 0 72px;
+                        height: 72px;
+                        border-radius: 16px;
+                        background: #222225;
+                        border: 1px solid rgba(255, 255, 255, 0.07);
+                        display: grid;
+                        place-items: center;
+                        font-family: 'Geist Mono', ui-monospace, monospace;
+                        font-size: 15px;
+                        letter-spacing: 0.06em;
+                      "
+                    >
+                      ZIP
+                    </div>
+                    <div style="flex: 1 1 280px; min-width: 0">
+                      <div style="display: flex; align-items: center; gap: 10px; min-width: 0">
+                        <span
+                          id="demo-file-name"
+                          style="
+                            font-size: 19px;
+                            font-weight: 500;
+                            white-space: nowrap;
+                            overflow: hidden;
+                            text-overflow: ellipsis;
+                          "
+                          >Project.zip</span
+                        >
+                      </div>
+                      <div
+                        style="
+                          margin-top: 6px;
+                          font-family: 'Geist Mono', ui-monospace, monospace;
+                          font-size: 14px;
+                          color: #a1a1a8;
+                        "
+                      >
+                        <span id="downloaded">300.2 MB of 2.3 GB</span> ·
+                        <span style="color: #ededef"><span id="download-percent">13%</span></span> ·
+                        <span id="time-left">46s left</span>
+                      </div>
+                      <div
+                        class="file-progress"
+                        role="progressbar"
+                        aria-label="Project.zip download progress"
+                        aria-valuemin="0"
+                        aria-valuemax="100"
+                        aria-valuenow="13"
+                        style="
+                          margin-top: 12px;
+                          height: 4px;
+                          border-radius: 4px;
+                          background: rgba(255, 255, 255, 0.07);
+                          overflow: hidden;
+                        "
+                      >
+                        <div
+                          class="bar"
+                          id="file-progress-fill"
+                          style="
+                            height: 100%;
+                            border-radius: 4px;
+                            width: 13%;
+                            background: linear-gradient(90deg, #f36712, #ffd9bf);
+                          "
+                        ></div>
+                      </div>
+                    </div>
+                    <div
+                      class="demo-folder"
+                      style="
+                        display: flex;
+                        align-items: center;
+                        gap: 8px;
+                        font-size: 15px;
+                        color: #c8c8ce;
+                      "
+                    >
+                      <svg
+                        width="18"
+                        height="18"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        stroke-width="1.8"
+                        stroke-linecap="round"
+                        stroke-linejoin="round"
+                        aria-hidden="true"
+                      >
+                        <path
+                          d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z"
+                        ></path>
+                      </svg>
+                      <span>~/Downloads</span>
+                    </div>
+                  </div>
+
+                  <!-- network table -->
+                  <div
+                    class="demo-networks"
+                    style="
+                      padding-bottom: 96px;
+                      border-radius: 22px 22px 0 0;
+                      background: linear-gradient(
+                        180deg,
+                        #17171a 0%,
+                        #17171a calc(100% - 110px),
+                        rgba(23, 23, 26, 0) 100%
+                      );
+                      border: 1px solid rgba(255, 255, 255, 0.06);
+                      border-bottom: 0;
+                      overflow-x: auto;
+                    "
+                  >
+                    <div class="ntable" style="min-width: 600px">
+                      <div
+                        class="nhead"
+                        style="
+                          display: grid;
+                          grid-template-columns: minmax(220px, 1.3fr) minmax(240px, 2fr) 130px;
+                          gap: 18px;
+                          align-items: center;
+                          padding: 16px 28px;
+                          font-family: 'Geist Mono', ui-monospace, monospace;
+                          font-size: 13px;
+                          letter-spacing: 0.16em;
+                          color: #a1a1a8;
+                        "
+                      >
+                        <span>NETWORK</span>
+                        <span>SHARE OF DOWNLOAD</span>
+                        <span>SPEED</span>
+                      </div>
+
+                      <div
+                        class="nrow network-row wifi-row"
+                        style="
+                          display: grid;
+                          grid-template-columns: minmax(220px, 1.3fr) minmax(240px, 2fr) 130px;
+                          gap: 18px;
+                          align-items: center;
+                          padding: 12px 28px;
+                          border-top: 1px solid rgba(255, 255, 255, 0.06);
+                        "
+                      >
+                        <label class="n-name" style="display: flex; align-items: center; gap: 14px">
+                          <span
+                            style="
+                              width: 10px;
+                              height: 10px;
+                              border-radius: 50%;
+                              background: #f36712;
+                              box-shadow: 0 0 14px rgba(243, 103, 18, 0.8);
+                              opacity: 1;
+                            "
+                          ></span>
+                          <input
+                            id="wifi-toggle"
+                            type="checkbox"
+                            checked
+                            aria-label="Wi-Fi"
+                            class="network-toggle"
+                          />
+                          <span style="font-size: 18px; color: #ededef">Wi-Fi</span>
+                        </label>
+                        <div style="display: flex; align-items: center; gap: 12px; min-width: 0">
+                          <div
+                            class="n-bar"
+                            style="
+                              flex: 1;
+                              height: 8px;
+                              border-radius: 8px;
+                              background: rgba(255, 255, 255, 0.07);
+                              overflow: hidden;
+                            "
+                          >
+                            <div
+                              class="bar"
+                              id="wifi-contribution"
+                              style="
+                                height: 100%;
+                                border-radius: 8px;
+                                width: 73%;
+                                background: #f36712;
+                              "
+                            ></div>
+                          </div>
+                          <span
+                            id="wifi-share"
+                            style="
+                              width: 42px;
+                              font-family: 'Geist Mono', ui-monospace, monospace;
+                              font-size: 15px;
+                              color: #ededef;
+                            "
+                            >73%</span
+                          >
+                        </div>
+                        <span
+                          style="
+                            font-family: 'Geist Mono', ui-monospace, monospace;
+                            font-size: 16px;
+                            color: #ff8a3d;
+                          "
+                          ><span id="wifi-speed">34.8 MB/s</span></span
+                        >
+                      </div>
+
+                      <div
+                        class="nrow network-row usb-row"
+                        style="
+                          display: grid;
+                          grid-template-columns: minmax(220px, 1.3fr) minmax(240px, 2fr) 130px;
+                          gap: 18px;
+                          align-items: center;
+                          padding: 12px 28px;
+                          border-top: 1px solid rgba(255, 255, 255, 0.06);
+                        "
+                      >
+                        <label class="n-name" style="display: flex; align-items: center; gap: 14px">
+                          <span
+                            style="
+                              width: 10px;
+                              height: 10px;
+                              border-radius: 50%;
+                              background: #ededef;
+                              box-shadow: 0 0 14px rgba(255, 255, 255, 0.55);
+                              opacity: 1;
+                            "
+                          ></span>
+                          <input
+                            id="usb-toggle"
+                            type="checkbox"
+                            checked
+                            aria-label="USB tethering"
+                            class="network-toggle"
+                          />
+                          <span style="font-size: 18px; color: #ededef">USB Tethering</span>
+                        </label>
+                        <div style="display: flex; align-items: center; gap: 12px; min-width: 0">
+                          <div
+                            class="n-bar"
+                            style="
+                              flex: 1;
+                              height: 8px;
+                              border-radius: 8px;
+                              background: rgba(255, 255, 255, 0.07);
+                              overflow: hidden;
+                            "
+                          >
+                            <div
+                              class="bar"
+                              id="usb-contribution"
+                              style="
+                                height: 100%;
+                                border-radius: 8px;
+                                width: 27%;
+                                background: #ededef;
+                              "
+                            ></div>
+                          </div>
+                          <span
+                            id="usb-share"
+                            style="
+                              width: 42px;
+                              font-family: 'Geist Mono', ui-monospace, monospace;
+                              font-size: 15px;
+                              color: #ededef;
+                            "
+                            >27%</span
+                          >
+                        </div>
+                        <span
+                          style="
+                            font-family: 'Geist Mono', ui-monospace, monospace;
+                            font-size: 16px;
+                            color: #ededef;
+                          "
+                          ><span id="usb-speed">11.4 MB/s</span></span
+                        >
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+          <p class="demo-caption">
+            <button id="demo-motion" type="button" aria-pressed="false">Pause demo</button
+            ><span id="demo-status" class="sr-only">Downloading</span>
+          </p>
+        </section>
+
+        <div
+          class="hatch"
+          aria-hidden="true"
+          style="
+            height: 72px;
+            margin-top: 120px;
+            border-top: 1px solid rgba(255, 255, 255, 0.06);
+            border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+          "
+        ></div>
+
+        <!-- FEATURES -->
+        <section id="features" style="padding: 120px 0 0">
+          <div style="max-width: 1248px; margin: 0 auto; padding: 0 24px; text-align: center">
+            <span
+              style="
+                display: inline-flex;
+                padding: 8px 18px;
+                border-radius: 999px;
+                border: 1px solid rgba(255, 255, 255, 0.14);
+                background: #151517;
+                font-size: 13px;
+                color: #c8c8ce;
+              "
+              >Features</span
+            >
+            <h2
+              style="
+                margin: 24px auto 0;
+                max-width: 900px;
+                font-family: 'Archivo', 'Helvetica Neue', sans-serif;
+                font-stretch: 118%;
+                font-weight: 600;
+                font-size: clamp(30px, 4.4vw, 60px);
+                line-height: 1.06;
+                letter-spacing: -0.015em;
+                text-transform: uppercase;
+                color: #ededef;
+                text-wrap: balance;
+              "
+            >
+              <span style="color: #f36712">More connections,</span> less waiting
+            </h2>
+          </div>
+
+          <!-- row 1 -->
+          <div style="max-width: 1248px; margin: 72px auto 0; padding: 0 24px">
+            <div
+              class="cells"
+              style="
+                display: grid;
+                grid-template-columns: repeat(auto-fit, minmax(min(480px, 100%), 1fr));
+              "
+            >
+              <div class="stack" style="display: flex; flex-direction: column">
+                <div
+                  class="feat-title"
+                  style="
+                    flex: 1;
+                    min-height: 300px;
+                    display: flex;
+                    align-items: center;
+                    padding: clamp(28px, 5vw, 64px);
+                    border: 1px solid rgba(255, 255, 255, 0.08);
+                    border-radius: 40px;
+                    background: #0e0e10;
+                  "
+                >
+                  <h3
+                    style="
+                      margin: 0;
+                      font-family: 'Archivo', 'Helvetica Neue', sans-serif;
+                      font-stretch: 118%;
+                      font-weight: 600;
+                      font-size: clamp(28px, 3.2vw, 46px);
+                      line-height: 1.08;
+                      letter-spacing: -0.01em;
+                      text-transform: uppercase;
+                      color: #e4e4e8;
+                    "
+                  >
+                    Multiple<br />connections
+                  </h3>
+                </div>
+                <div
+                  style="
+                    padding: clamp(28px, 4vw, 48px) clamp(28px, 5vw, 64px);
+                    border: 1px solid rgba(255, 255, 255, 0.08);
+                    border-radius: 40px;
+                    background: #0e0e10;
+                  "
+                >
+                  <p
+                    style="
+                      margin: 0;
+                      max-width: 470px;
+                      font-size: 18px;
+                      line-height: 1.6;
+                      color: #a1a1a8;
+                      text-wrap: pretty;
+                    "
+                  >
+                    Use all your internet connections together. Plexo downloads different parts of
+                    the same file through each connection, helping it finish faster.
+                  </p>
+                </div>
+              </div>
+              <div
+                class="feature-visual"
+                style="
+                  display: flex;
+                  align-items: center;
+                  justify-content: center;
+                  min-height: 440px;
+                  padding: clamp(24px, 4vw, 56px);
+                  border: 1px solid rgba(255, 255, 255, 0.08);
+                  border-radius: 40px;
+                  background: #0e0e10;
+                "
+              >
+                <div
+                  role="img"
+                  aria-label="Plexo connections panel: Wi-Fi and USB tethering switched on and combined into one download, Ethernet off"
+                  style="
+                    width: 100%;
+                    max-width: 440px;
+                    display: flex;
+                    flex-direction: column;
+                    gap: 14px;
+                  "
+                >
+                  <div
+                    style="
+                      padding: 18px;
+                      border-radius: 22px;
+                      background: #17171a;
+                      border: 1px solid rgba(255, 255, 255, 0.07);
+                      box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.05);
+                    "
+                  >
+                    <div
+                      style="
+                        display: flex;
+                        justify-content: space-between;
+                        align-items: center;
+                        margin-bottom: 14px;
+                      "
+                    >
+                      <span style="font-size: 15px; color: #ededef">Connections</span
+                      ><span
+                        style="
+                          font-family: 'Geist Mono', ui-monospace, monospace;
+                          font-size: 11px;
+                          letter-spacing: 0.12em;
+                          color: #8c8c94;
+                        "
+                        >2 OF 3 ACTIVE</span
+                      >
+                    </div>
+                    <div style="display: flex; flex-direction: column; gap: 8px">
+                      <div
+                        style="
+                          display: flex;
+                          align-items: center;
+                          gap: 12px;
+                          padding: 12px 14px;
+                          border-radius: 14px;
+                          background: #222225;
+                          opacity: 1;
+                        "
+                      >
+                        <span
+                          style="
+                            flex: none;
+                            width: 9px;
+                            height: 9px;
+                            border-radius: 50%;
+                            background: #f36712;
+                            box-shadow: 0 0 10px #f36712;
+                          "
+                        ></span>
+                        <span
+                          style="
+                            flex: 1;
+                            min-width: 0;
+                            display: flex;
+                            flex-direction: column;
+                            gap: 2px;
+                          "
+                          ><span style="font-size: 14px; color: #ededef">Wi-Fi</span
+                          ><span
+                            style="
+                              font-family: 'Geist Mono', ui-monospace, monospace;
+                              font-size: 11px;
+                              color: #8c8c94;
+                            "
+                            >en0</span
+                          ></span
+                        >
+                        <span
+                          style="
+                            font-family: 'Geist Mono', ui-monospace, monospace;
+                            font-size: 13px;
+                            color: #ff8a3d;
+                          "
+                          >34.8 MB/s</span
+                        >
+                        <span
+                          style="
+                            position: relative;
+                            flex: none;
+                            width: 34px;
+                            height: 20px;
+                            border-radius: 999px;
+                            background: #f36712;
+                          "
+                          ><span
+                            style="
+                              position: absolute;
+                              top: 3px;
+                              right: 3px;
+                              width: 14px;
+                              height: 14px;
+                              border-radius: 50%;
+                              background: #ffffff;
+                            "
+                          ></span
+                        ></span>
+                      </div>
+                      <div
+                        style="
+                          display: flex;
+                          align-items: center;
+                          gap: 12px;
+                          padding: 12px 14px;
+                          border-radius: 14px;
+                          background: #222225;
+                          opacity: 1;
+                        "
+                      >
+                        <span
+                          style="
+                            flex: none;
+                            width: 9px;
+                            height: 9px;
+                            border-radius: 50%;
+                            background: #ededef;
+                            box-shadow: 0 0 10px #ededef;
+                          "
+                        ></span>
+                        <span
+                          style="
+                            flex: 1;
+                            min-width: 0;
+                            display: flex;
+                            flex-direction: column;
+                            gap: 2px;
+                          "
+                          ><span style="font-size: 14px; color: #ededef">USB Tethering</span
+                          ><span
+                            style="
+                              font-family: 'Geist Mono', ui-monospace, monospace;
+                              font-size: 11px;
+                              color: #8c8c94;
+                            "
+                            >en7</span
+                          ></span
+                        >
+                        <span
+                          style="
+                            font-family: 'Geist Mono', ui-monospace, monospace;
+                            font-size: 13px;
+                            color: #ededef;
+                          "
+                          >11.4 MB/s</span
+                        >
+                        <span
+                          style="
+                            position: relative;
+                            flex: none;
+                            width: 34px;
+                            height: 20px;
+                            border-radius: 999px;
+                            background: #ededef;
+                          "
+                          ><span
+                            style="
+                              position: absolute;
+                              top: 3px;
+                              right: 3px;
+                              width: 14px;
+                              height: 14px;
+                              border-radius: 50%;
+                              background: #140a03;
+                            "
+                          ></span
+                        ></span>
+                      </div>
+                      <div
+                        style="
+                          display: flex;
+                          align-items: center;
+                          gap: 12px;
+                          padding: 12px 14px;
+                          border-radius: 14px;
+                          background: #222225;
+                          opacity: 0.7;
+                        "
+                      >
+                        <span
+                          style="
+                            flex: none;
+                            width: 9px;
+                            height: 9px;
+                            border-radius: 50%;
+                            background: transparent;
+                            border: 1.5px solid rgba(255, 255, 255, 0.25);
+                          "
+                        ></span>
+                        <span
+                          style="
+                            flex: 1;
+                            min-width: 0;
+                            display: flex;
+                            flex-direction: column;
+                            gap: 2px;
+                          "
+                          ><span style="font-size: 14px; color: #ededef">Ethernet</span
+                          ><span
+                            style="
+                              font-family: 'Geist Mono', ui-monospace, monospace;
+                              font-size: 11px;
+                              color: #8c8c94;
+                            "
+                            >en5 · not connected</span
+                          ></span
+                        >
+                        <span
+                          style="
+                            font-family: 'Geist Mono', ui-monospace, monospace;
+                            font-size: 13px;
+                            color: #8c8c94;
+                          "
+                          >—</span
+                        >
+                        <span
+                          style="
+                            position: relative;
+                            flex: none;
+                            width: 34px;
+                            height: 20px;
+                            border-radius: 999px;
+                            background: rgba(255, 255, 255, 0.12);
+                          "
+                          ><span
+                            style="
+                              position: absolute;
+                              top: 3px;
+                              left: 3px;
+                              width: 14px;
+                              height: 14px;
+                              border-radius: 50%;
+                              background: #8c8c94;
+                            "
+                          ></span
+                        ></span>
+                      </div>
+                    </div>
+                  </div>
+                  <div
+                    style="
+                      position: relative;
+                      overflow: hidden;
+                      padding: 18px;
+                      border-radius: 22px;
+                      background: #17171a;
+                      border: 1px solid rgba(255, 255, 255, 0.07);
+                      box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.05);
+                    "
+                  >
+                    <div
+                      aria-hidden="true"
+                      style="
+                        position: absolute;
+                        top: -90px;
+                        right: -60px;
+                        width: 240px;
+                        height: 240px;
+                        border-radius: 50%;
+                        background: radial-gradient(
+                          closest-side,
+                          rgba(243, 103, 18, 0.55),
+                          rgba(243, 103, 18, 0)
+                        );
+                        filter: blur(6px);
+                      "
+                    ></div>
+                    <div
+                      style="
+                        position: relative;
+                        display: flex;
+                        justify-content: space-between;
+                        align-items: baseline;
+                      "
+                    >
+                      <span style="font-size: 15px; color: #ededef">Combined speed</span
+                      ><span
+                        style="
+                          font-family: 'Geist Mono', ui-monospace, monospace;
+                          font-size: 22px;
+                          font-weight: 600;
+                          color: #ffffff;
+                        "
+                        >46.2
+                        <span style="font-size: 12px; font-weight: 400; color: #a1a1a8"
+                          >MB/s</span
+                        ></span
+                      >
+                    </div>
+                    <div
+                      style="
+                        position: relative;
+                        display: flex;
+                        gap: 3px;
+                        height: 10px;
+                        margin-top: 14px;
+                        border-radius: 999px;
+                        overflow: hidden;
+                        background: #222225;
+                      "
+                    >
+                      <span style="width: 75%; background: #f36712"></span>
+                      <span style="width: 25%; background: #ededef"></span>
+                    </div>
+                    <div
+                      style="
+                        position: relative;
+                        display: flex;
+                        gap: 16px;
+                        margin-top: 10px;
+                        font-family: 'Geist Mono', ui-monospace, monospace;
+                        font-size: 11px;
+                        letter-spacing: 0.08em;
+                        color: #8c8c94;
+                      "
+                    >
+                      <span style="display: flex; align-items: center; gap: 6px"
+                        ><span
+                          style="width: 7px; height: 7px; border-radius: 2px; background: #f36712"
+                        ></span
+                        >WI-FI 75%</span
+                      ><span style="display: flex; align-items: center; gap: 6px"
+                        ><span
+                          style="width: 7px; height: 7px; border-radius: 2px; background: #ededef"
+                        ></span
+                        >USB 25%</span
+                      >
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div
+            class="hatch"
+            aria-hidden="true"
+            style="
+              height: 72px;
+              border-top: 1px solid rgba(255, 255, 255, 0.06);
+              border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+            "
+          ></div>
+
+          <!-- row 2 (image left) -->
+          <div style="max-width: 1248px; margin: 0 auto; padding: 0 24px">
+            <div
+              class="cells"
+              style="
+                display: grid;
+                grid-template-columns: repeat(auto-fit, minmax(min(480px, 100%), 1fr));
+              "
+            >
+              <div
+                class="feat-swap feature-visual"
+                style="
+                  display: flex;
+                  align-items: center;
+                  justify-content: center;
+                  min-height: 440px;
+                  padding: clamp(24px, 4vw, 56px);
+                  border: 1px solid rgba(255, 255, 255, 0.08);
+                  border-radius: 40px;
+                  background: #0e0e10;
+                "
+              >
+                <div
+                  role="img"
+                  aria-label="Plexo download queue with a direct file and a torrent downloading side by side, and a field for pasting a link, magnet or torrent file"
+                  style="
+                    position: relative;
+                    width: 100%;
+                    max-width: 440px;
+                    display: flex;
+                    flex-direction: column;
+                    gap: 14px;
+                  "
+                >
+                  <div
+                    style="
+                      position: relative;
+                      padding: 18px;
+                      border-radius: 22px;
+                      background: #17171a;
+                      border: 1px solid rgba(255, 255, 255, 0.07);
+                      box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.05);
+                    "
+                  >
+                    <div
+                      style="
+                        display: flex;
+                        justify-content: space-between;
+                        align-items: center;
+                        margin-bottom: 14px;
+                      "
+                    >
+                      <span style="font-size: 15px; color: #ededef">Add download</span
+                      ><span
+                        style="
+                          font-family: 'Geist Mono', ui-monospace, monospace;
+                          font-size: 11px;
+                          letter-spacing: 0.12em;
+                          color: #8c8c94;
+                        "
+                        >URL · MAGNET · .TORRENT</span
+                      >
+                    </div>
+                    <div
+                      style="
+                        display: flex;
+                        align-items: center;
+                        gap: 8px;
+                        padding: 6px 6px 6px 14px;
+                        border-radius: 14px;
+                        background: #222225;
+                        border: 1px solid rgba(243, 103, 18, 0.35);
+                      "
+                    >
+                      <span
+                        style="
+                          flex: 1;
+                          min-width: 0;
+                          font-family: 'Geist Mono', ui-monospace, monospace;
+                          font-size: 12px;
+                          color: #c8c8ce;
+                          white-space: nowrap;
+                          overflow: hidden;
+                          text-overflow: ellipsis;
+                        "
+                        >magnet:?xt=urn:btih:3b245504cf5f11bbdbe1201cea6a6bf45aee1bc0</span
+                      >
+                      <span
+                        style="
+                          flex: none;
+                          padding: 8px 14px;
+                          border-radius: 10px;
+                          background: linear-gradient(180deg, #f2711f, #c94a06);
+                          color: #ffffff;
+                          font-size: 13px;
+                          font-weight: 600;
+                        "
+                        >Add</span
+                      >
+                    </div>
+                  </div>
+                  <div
+                    style="
+                      position: relative;
+                      overflow: hidden;
+                      isolation: isolate;
+                      padding: 18px;
+                      border-radius: 22px;
+                      background: #17171a;
+                      border: 1px solid rgba(255, 255, 255, 0.07);
+                      box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.05);
+                    "
+                  >
+                    <div
+                      aria-hidden="true"
+                      style="
+                        position: absolute;
+                        bottom: -110px;
+                        left: -80px;
+                        width: 260px;
+                        height: 260px;
+                        border-radius: 50%;
+                        background: radial-gradient(
+                          closest-side,
+                          rgba(243, 103, 18, 0.5),
+                          rgba(243, 103, 18, 0)
+                        );
+                        filter: blur(6px);
+                        z-index: -1;
+                        pointer-events: none;
+                      "
+                    ></div>
+                    <div
+                      style="
+                        display: flex;
+                        justify-content: space-between;
+                        align-items: center;
+                        margin-bottom: 14px;
+                      "
+                    >
+                      <span style="font-size: 15px; color: #ededef">Queue</span
+                      ><span
+                        style="
+                          font-family: 'Geist Mono', ui-monospace, monospace;
+                          font-size: 11px;
+                          letter-spacing: 0.12em;
+                          color: #8c8c94;
+                        "
+                        >2 DOWNLOADING</span
+                      >
+                    </div>
+                    <div style="display: flex; flex-direction: column; gap: 8px">
+                      <div
+                        style="
+                          padding: 12px 14px;
+                          border-radius: 14px;
+                          background: #222225;
+                          opacity: 1;
+                        "
+                      >
+                        <div style="display: flex; align-items: center; gap: 10px">
+                          <span
+                            style="
+                              flex: none;
+                              padding: 2px 7px;
+                              border-radius: 6px;
+                              border: 1px solid;
+                              color: #c8c8ce;
+                              border-color: rgba(255, 255, 255, 0.16);
+                              background: transparent;
+                              font-family: 'Geist Mono', ui-monospace, monospace;
+                              font-size: 10px;
+                              letter-spacing: 0.08em;
+                            "
+                            >FILE</span
+                          >
+                          <span
+                            style="
+                              flex: 1;
+                              min-width: 0;
+                              font-size: 14px;
+                              color: #ededef;
+                              white-space: nowrap;
+                              overflow: hidden;
+                              text-overflow: ellipsis;
+                            "
+                            >Project.zip</span
+                          >
+                          <span
+                            style="
+                              flex: none;
+                              font-family: 'Geist Mono', ui-monospace, monospace;
+                              font-size: 12px;
+                              color: #a1a1a8;
+                            "
+                            >62%</span
+                          >
+                        </div>
+                        <div
+                          style="
+                            margin-top: 4px;
+                            font-family: 'Geist Mono', ui-monospace, monospace;
+                            font-size: 11px;
+                            color: #8c8c94;
+                          "
+                        >
+                          1.4 GB of 2.3 GB · 2 networks
+                        </div>
+                        <div
+                          style="
+                            height: 4px;
+                            margin-top: 10px;
+                            border-radius: 4px;
+                            background: rgba(255, 255, 255, 0.08);
+                            overflow: hidden;
+                          "
+                        >
+                          <div
+                            style="
+                              width: 62%;
+                              height: 100%;
+                              border-radius: 4px;
+                              background: #f36712;
+                            "
+                          ></div>
+                        </div>
+                      </div>
+                      <div
+                        style="
+                          padding: 12px 14px;
+                          border-radius: 14px;
+                          background: #222225;
+                          opacity: 1;
+                        "
+                      >
+                        <div style="display: flex; align-items: center; gap: 10px">
+                          <span
+                            style="
+                              flex: none;
+                              padding: 2px 7px;
+                              border-radius: 6px;
+                              border: 1px solid;
+                              color: #ff8a3d;
+                              border-color: rgba(243, 103, 18, 0.45);
+                              background: rgba(243, 103, 18, 0.1);
+                              font-family: 'Geist Mono', ui-monospace, monospace;
+                              font-size: 10px;
+                              letter-spacing: 0.08em;
+                            "
+                            >TORRENT</span
+                          >
+                          <span
+                            style="
+                              flex: 1;
+                              min-width: 0;
+                              font-size: 14px;
+                              color: #ededef;
+                              white-space: nowrap;
+                              overflow: hidden;
+                              text-overflow: ellipsis;
+                            "
+                            >ubuntu-24.04-desktop-amd64.iso</span
+                          >
+                          <span
+                            style="
+                              flex: none;
+                              font-family: 'Geist Mono', ui-monospace, monospace;
+                              font-size: 12px;
+                              color: #a1a1a8;
+                            "
+                            >34%</span
+                          >
+                        </div>
+                        <div
+                          style="
+                            margin-top: 4px;
+                            font-family: 'Geist Mono', ui-monospace, monospace;
+                            font-size: 11px;
+                            color: #8c8c94;
+                          "
+                        >
+                          2.0 GB of 5.8 GB · 48 peers · 2 networks
+                        </div>
+                        <div
+                          style="
+                            height: 4px;
+                            margin-top: 10px;
+                            border-radius: 4px;
+                            background: rgba(255, 255, 255, 0.08);
+                            overflow: hidden;
+                          "
+                        >
+                          <div
+                            style="
+                              width: 34%;
+                              height: 100%;
+                              border-radius: 4px;
+                              background: #ededef;
+                            "
+                          ></div>
+                        </div>
+                      </div>
+                      <div
+                        style="
+                          padding: 12px 14px;
+                          border-radius: 14px;
+                          background: #222225;
+                          opacity: 0.65;
+                        "
+                      >
+                        <div style="display: flex; align-items: center; gap: 10px">
+                          <span
+                            style="
+                              flex: none;
+                              padding: 2px 7px;
+                              border-radius: 6px;
+                              border: 1px solid;
+                              color: #c8c8ce;
+                              border-color: rgba(255, 255, 255, 0.16);
+                              background: transparent;
+                              font-family: 'Geist Mono', ui-monospace, monospace;
+                              font-size: 10px;
+                              letter-spacing: 0.08em;
+                            "
+                            >FILE</span
+                          >
+                          <span
+                            style="
+                              flex: 1;
+                              min-width: 0;
+                              font-size: 14px;
+                              color: #ededef;
+                              white-space: nowrap;
+                              overflow: hidden;
+                              text-overflow: ellipsis;
+                            "
+                            >Footage_Final_4K.mov</span
+                          >
+                          <span
+                            style="
+                              flex: none;
+                              font-family: 'Geist Mono', ui-monospace, monospace;
+                              font-size: 12px;
+                              color: #a1a1a8;
+                            "
+                            >Queued</span
+                          >
+                        </div>
+                        <div
+                          style="
+                            margin-top: 4px;
+                            font-family: 'Geist Mono', ui-monospace, monospace;
+                            font-size: 11px;
+                            color: #8c8c94;
+                          "
+                        >
+                          3.4 GB · waiting
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+              <div class="stack" style="display: flex; flex-direction: column">
+                <div
+                  class="feat-title"
+                  style="
+                    flex: 1;
+                    min-height: 300px;
+                    display: flex;
+                    align-items: center;
+                    padding: clamp(28px, 5vw, 64px);
+                    border: 1px solid rgba(255, 255, 255, 0.08);
+                    border-radius: 40px;
+                    background: #0e0e10;
+                  "
+                >
+                  <h3
+                    style="
+                      margin: 0;
+                      font-family: 'Archivo', 'Helvetica Neue', sans-serif;
+                      font-stretch: 118%;
+                      font-weight: 600;
+                      font-size: clamp(28px, 3.2vw, 46px);
+                      line-height: 1.08;
+                      letter-spacing: -0.01em;
+                      text-transform: uppercase;
+                      color: #e4e4e8;
+                    "
+                  >
+                    Files and<br />torrents
+                  </h3>
+                </div>
+                <div
+                  style="
+                    padding: clamp(28px, 4vw, 48px) clamp(28px, 5vw, 64px);
+                    border: 1px solid rgba(255, 255, 255, 0.08);
+                    border-radius: 40px;
+                    background: #0e0e10;
+                  "
+                >
+                  <p
+                    style="
+                      margin: 0;
+                      max-width: 470px;
+                      font-size: 18px;
+                      line-height: 1.6;
+                      color: #a1a1a8;
+                      text-wrap: pretty;
+                    "
+                  >
+                    Download files and torrents in one place. Paste a link or add a torrent, and
+                    Plexo handles everything in the same queue using all your active connections.
+                  </p>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div
+            class="hatch"
+            aria-hidden="true"
+            style="
+              height: 72px;
+              border-top: 1px solid rgba(255, 255, 255, 0.06);
+              border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+            "
+          ></div>
+
+          <!-- row 3 -->
+          <div style="max-width: 1248px; margin: 0 auto; padding: 0 24px">
+            <div
+              class="cells"
+              style="
+                display: grid;
+                grid-template-columns: repeat(auto-fit, minmax(min(480px, 100%), 1fr));
+              "
+            >
+              <div class="stack" style="display: flex; flex-direction: column">
+                <div
+                  class="feat-title"
+                  style="
+                    flex: 1;
+                    min-height: 300px;
+                    display: flex;
+                    align-items: center;
+                    padding: clamp(28px, 5vw, 64px);
+                    border: 1px solid rgba(255, 255, 255, 0.08);
+                    border-radius: 40px;
+                    background: #0e0e10;
+                  "
+                >
+                  <h3
+                    style="
+                      margin: 0;
+                      font-family: 'Archivo', 'Helvetica Neue', sans-serif;
+                      font-stretch: 118%;
+                      font-weight: 600;
+                      font-size: clamp(28px, 3.2vw, 46px);
+                      line-height: 1.08;
+                      letter-spacing: -0.01em;
+                      text-transform: uppercase;
+                      color: #e4e4e8;
+                    "
+                  >
+                    Speed and<br />data limits
+                  </h3>
+                </div>
+                <div
+                  style="
+                    padding: clamp(28px, 4vw, 48px) clamp(28px, 5vw, 64px);
+                    border: 1px solid rgba(255, 255, 255, 0.08);
+                    border-radius: 40px;
+                    background: #0e0e10;
+                  "
+                >
+                  <p
+                    style="
+                      margin: 0;
+                      max-width: 470px;
+                      font-size: 18px;
+                      line-height: 1.6;
+                      color: #a1a1a8;
+                      text-wrap: pretty;
+                    "
+                  >
+                    Stay in control of every connection. Set speed limits and data caps for any
+                    network, so you decide how much speed and data each one can use.
+                  </p>
+                </div>
+              </div>
+              <div
+                class="feature-visual"
+                style="
+                  display: flex;
+                  align-items: center;
+                  justify-content: center;
+                  min-height: 440px;
+                  padding: clamp(24px, 4vw, 56px);
+                  border: 1px solid rgba(255, 255, 255, 0.08);
+                  border-radius: 40px;
+                  background: #0e0e10;
+                "
+              >
+                <div
+                  role="img"
+                  aria-label="Plexo limits settings: USB tethering capped at 8 MB/s with a 2 GB daily data budget, 1.2 GB used; Wi-Fi with no limits"
+                  style="
+                    position: relative;
+                    width: 100%;
+                    max-width: 440px;
+                    display: flex;
+                    flex-direction: column;
+                    gap: 14px;
+                  "
+                >
+                  <div
+                    style="
+                      position: relative;
+                      overflow: hidden;
+                      isolation: isolate;
+                      padding: 18px;
+                      border-radius: 22px;
+                      background: #17171a;
+                      border: 1px solid rgba(255, 255, 255, 0.07);
+                      box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.05);
+                    "
+                  >
+                    <div
+                      aria-hidden="true"
+                      style="
+                        position: absolute;
+                        top: -90px;
+                        right: -60px;
+                        width: 240px;
+                        height: 240px;
+                        border-radius: 50%;
+                        background: radial-gradient(
+                          closest-side,
+                          rgba(243, 103, 18, 0.55),
+                          rgba(243, 103, 18, 0)
+                        );
+                        filter: blur(6px);
+                        z-index: -1;
+                        pointer-events: none;
+                      "
+                    ></div>
+                    <div
+                      style="
+                        display: flex;
+                        justify-content: space-between;
+                        align-items: center;
+                        margin-bottom: 14px;
+                      "
+                    >
+                      <span
+                        style="
+                          display: flex;
+                          align-items: center;
+                          gap: 10px;
+                          font-size: 15px;
+                          color: #ededef;
+                        "
+                        ><span
+                          style="
+                            width: 9px;
+                            height: 9px;
+                            border-radius: 50%;
+                            background: #ededef;
+                            box-shadow: 0 0 10px #ededef;
+                          "
+                        ></span
+                        >USB Tethering</span
+                      ><span
+                        style="
+                          font-family: 'Geist Mono', ui-monospace, monospace;
+                          font-size: 11px;
+                          letter-spacing: 0.12em;
+                          color: #8c8c94;
+                        "
+                        >LIMITS ON</span
+                      >
+                    </div>
+                    <div style="padding: 14px; border-radius: 14px; background: #222225">
+                      <div
+                        style="display: flex; justify-content: space-between; align-items: baseline"
+                      >
+                        <span style="font-size: 14px; color: #ededef">Speed cap</span
+                        ><span
+                          style="
+                            font-family: 'Geist Mono', ui-monospace, monospace;
+                            font-size: 13px;
+                            color: #ededef;
+                          "
+                          >8 MB/s</span
+                        >
+                      </div>
+                      <div
+                        style="
+                          position: relative;
+                          height: 6px;
+                          margin: 14px 0 6px;
+                          border-radius: 6px;
+                          background: rgba(255, 255, 255, 0.1);
+                        "
+                      >
+                        <div
+                          style="width: 40%; height: 100%; border-radius: 6px; background: #ededef"
+                        ></div>
+                        <span
+                          style="
+                            position: absolute;
+                            top: 50%;
+                            left: 40%;
+                            width: 16px;
+                            height: 16px;
+                            margin: -8px 0 0 -8px;
+                            border-radius: 50%;
+                            background: #ffffff;
+                            box-shadow:
+                              0 0 0 4px rgba(255, 255, 255, 0.12),
+                              0 2px 6px rgba(0, 0, 0, 0.5);
+                          "
+                        ></span>
+                      </div>
+                      <div
+                        style="
+                          display: flex;
+                          justify-content: space-between;
+                          font-family: 'Geist Mono', ui-monospace, monospace;
+                          font-size: 10px;
+                          color: #8c8c94;
+                        "
+                      >
+                        <span>0</span><span>20 MB/s</span>
+                      </div>
+                    </div>
+                    <div
+                      style="
+                        margin-top: 8px;
+                        padding: 14px;
+                        border-radius: 14px;
+                        background: #222225;
+                      "
+                    >
+                      <div
+                        style="display: flex; justify-content: space-between; align-items: baseline"
+                      >
+                        <span style="font-size: 14px; color: #ededef">Daily data budget</span
+                        ><span
+                          style="
+                            font-family: 'Geist Mono', ui-monospace, monospace;
+                            font-size: 13px;
+                            color: #ededef;
+                          "
+                          >1.2 <span style="color: #8c8c94">/ 2.0 GB</span></span
+                        >
+                      </div>
+                      <div
+                        style="
+                          height: 6px;
+                          margin-top: 12px;
+                          border-radius: 6px;
+                          background: rgba(255, 255, 255, 0.1);
+                          overflow: hidden;
+                        "
+                      >
+                        <div
+                          style="
+                            width: 60%;
+                            height: 100%;
+                            border-radius: 6px;
+                            background: linear-gradient(90deg, #ededef, #f36712);
+                          "
+                        ></div>
+                      </div>
+                      <div
+                        style="
+                          display: flex;
+                          justify-content: space-between;
+                          align-items: center;
+                          margin-top: 12px;
+                        "
+                      >
+                        <span style="font-size: 13px; color: #a1a1a8">Stop at limit</span
+                        ><span
+                          style="
+                            position: relative;
+                            flex: none;
+                            width: 34px;
+                            height: 20px;
+                            border-radius: 999px;
+                            background: #f36712;
+                          "
+                          ><span
+                            style="
+                              position: absolute;
+                              top: 3px;
+                              right: 3px;
+                              width: 14px;
+                              height: 14px;
+                              border-radius: 50%;
+                              background: #ffffff;
+                            "
+                          ></span
+                        ></span>
+                      </div>
+                    </div>
+                  </div>
+                  <div
+                    style="
+                      position: relative;
+                      padding: 18px;
+                      border-radius: 22px;
+                      background: #17171a;
+                      border: 1px solid rgba(255, 255, 255, 0.07);
+                      box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.05);
+                    "
+                  >
+                    <div
+                      style="
+                        display: flex;
+                        justify-content: space-between;
+                        align-items: center;
+                        margin-bottom: 14px;
+                      "
+                    >
+                      <span
+                        style="
+                          display: flex;
+                          align-items: center;
+                          gap: 10px;
+                          font-size: 15px;
+                          color: #ededef;
+                        "
+                        ><span
+                          style="
+                            width: 9px;
+                            height: 9px;
+                            border-radius: 50%;
+                            background: #f36712;
+                            box-shadow: 0 0 10px #f36712;
+                          "
+                        ></span
+                        >Wi-Fi</span
+                      ><span
+                        style="
+                          font-family: 'Geist Mono', ui-monospace, monospace;
+                          font-size: 11px;
+                          letter-spacing: 0.12em;
+                          color: #8c8c94;
+                        "
+                        >NO LIMITS</span
+                      >
+                    </div>
+                    <div
+                      style="
+                        display: grid;
+                        grid-template-columns: repeat(2, minmax(0, 1fr));
+                        gap: 8px;
+                      "
+                    >
+                      <div style="padding: 12px 14px; border-radius: 14px; background: #222225">
+                        <div
+                          style="
+                            font-family: 'Geist Mono', ui-monospace, monospace;
+                            font-size: 11px;
+                            letter-spacing: 0.12em;
+                            color: #8c8c94;
+                          "
+                        >
+                          SPEED CAP
+                        </div>
+                        <div style="margin-top: 6px; font-size: 14px; color: #ededef">Off</div>
+                      </div>
+                      <div style="padding: 12px 14px; border-radius: 14px; background: #222225">
+                        <div
+                          style="
+                            font-family: 'Geist Mono', ui-monospace, monospace;
+                            font-size: 11px;
+                            letter-spacing: 0.12em;
+                            color: #8c8c94;
+                          "
+                        >
+                          DATA
+                        </div>
+                        <div style="margin-top: 6px; font-size: 14px; color: #ededef">
+                          Unlimited
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <div
+          class="hatch"
+          aria-hidden="true"
+          style="
+            height: 72px;
+            border-top: 1px solid rgba(255, 255, 255, 0.06);
+            border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+          "
+        ></div>
+
+        <section id="downloads" class="section downloads" aria-labelledby="downloads-title">
+          <div class="section-heading">
+            <span class="section-tag">Downloads</span>
+            <h2 id="downloads-title"><span>Get Plexo</span> for your machine</h2>
+            <div id="release-meta" class="release-meta" aria-live="polite">
+              Loading the latest release…
+            </div>
+          </div>
+          <div class="download-box">
+            <div class="os-tabs" role="tablist" aria-label="Operating system">
+              <button
+                type="button"
+                role="tab"
+                id="tab-mac"
+                aria-selected="true"
+                aria-controls="panel-mac"
+                tabindex="0"
+                data-os="mac"
+              >
+                <svg class="os-icon os-icon-apple" viewBox="0 0 24 24" aria-hidden="true">
+                  <path
+                    d="M12.152 6.896c-.948 0-2.415-1.078-3.96-1.04-2.04.027-3.91 1.183-4.961 3.014-2.117 3.675-.546 9.103 1.519 12.09 1.013 1.454 2.208 3.09 3.792 3.039 1.52-.065 2.09-.987 3.935-.987 1.831 0 2.35.987 3.96.948 1.637-.026 2.676-1.48 3.676-2.948 1.156-1.688 1.636-3.325 1.662-3.415-.039-.013-3.182-1.221-3.22-4.857-.026-3.04 2.48-4.494 2.597-4.559-1.429-2.09-3.623-2.324-4.39-2.376-2-.156-3.675 1.09-4.61 1.09Zm3.377-3.065C16.372 2.819 16.929 1.403 16.774 0c-1.207.052-2.662.805-3.532 1.818-.78.896-1.454 2.338-1.273 3.714 1.338.104 2.715-.688 3.56-1.701Z"
+                  />
+                </svg>
+                <span>macOS</span></button
+              ><button
+                type="button"
+                role="tab"
+                id="tab-win"
+                aria-selected="false"
+                aria-controls="panel-win"
+                tabindex="-1"
+                data-os="win"
+              >
+                <svg class="os-icon" viewBox="0 0 24 24" aria-hidden="true">
+                  <path
+                    d="M3 5.25 11 4.1v7.15H3v-6Zm9-1.3 9-1.3v8.6h-9v-7.3ZM3 12.75h8V19.9l-8-1.15v-6Zm9 0h9v8.6l-9-1.3v-7.3Z"
+                  />
+                </svg>
+                <span>Windows</span></button
+              ><button
+                type="button"
+                role="tab"
+                id="tab-linux"
+                aria-selected="false"
+                aria-controls="panel-linux"
+                tabindex="-1"
+                data-os="linux"
+              >
+                <svg
+                  class="os-icon os-icon-terminal"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  aria-hidden="true"
+                >
+                  <rect x="2.75" y="3.75" width="18.5" height="16.5" rx="3.25" />
+                  <path d="m7.25 9 3 3-3 3M13 15h4" />
+                </svg>
+                <span>Linux</span>
+              </button>
+            </div>
+            <div
+              id="panel-mac"
+              class="os-panel"
+              role="tabpanel"
+              aria-labelledby="tab-mac"
+              tabindex="0"
+            ></div>
+            <div
+              id="panel-win"
+              class="os-panel"
+              role="tabpanel"
+              aria-labelledby="tab-win"
+              tabindex="0"
+              hidden
+            ></div>
+            <div
+              id="panel-linux"
+              class="os-panel"
+              role="tabpanel"
+              aria-labelledby="tab-linux"
+              tabindex="0"
+              hidden
+            ></div>
+            <noscript
+              ><p>
+                JavaScript is needed to find the latest builds.
+                <a href="https://github.com/anmolkapil/plexo/releases"
+                  >Download from GitHub releases.</a
+                >
+              </p></noscript
+            >
+          </div>
+          <p class="release-warning">
+            Found a problem with this build?
+            <a href="https://github.com/anmolkapil/plexo/issues/new?labels=bug">Report a bug</a>
+          </p>
+        </section>
+        <div
+          class="hatch"
+          aria-hidden="true"
+          style="height: 72px; margin-top: 120px; border-block: 1px solid rgba(255, 255, 255, 0.06)"
+        ></div>
+        <!-- FAQ -->
+        <section id="faq" style="padding: 120px 24px 0">
+          <div style="max-width: 920px; margin: 0 auto">
+            <div style="text-align: center">
+              <span
+                style="
+                  display: inline-flex;
+                  padding: 8px 18px;
+                  border-radius: 999px;
+                  border: 1px solid rgba(255, 255, 255, 0.14);
+                  background: #151517;
+                  font-size: 13px;
+                  color: #c8c8ce;
+                "
+                >FAQ</span
+              >
+              <h2
+                style="
+                  margin: 24px auto 0;
+                  font-family: 'Archivo', 'Helvetica Neue', sans-serif;
+                  font-stretch: 118%;
+                  font-weight: 600;
+                  font-size: clamp(30px, 4.4vw, 60px);
+                  line-height: 1.06;
+                  letter-spacing: -0.015em;
+                  text-transform: uppercase;
+                  color: #ededef;
+                  text-wrap: balance;
+                "
+              >
+                <span style="color: #f36712">Questions,</span> answered
+              </h2>
+            </div>
+            <div
+              style="
+                margin-top: 56px;
+                padding: 8px clamp(20px, 4vw, 40px);
+                border-radius: 32px;
+                border: 1px solid rgba(255, 255, 255, 0.08);
+                background: #0e0e10;
+              "
+            >
+              <details class="faq-item" name="faq" open>
+                <summary>
+                  How does Plexo combine my connections?<span aria-hidden="true">+</span>
+                </summary>
+                <p
+                  style="
+                    margin: 0 0 24px;
+                    max-width: 720px;
+                    font-size: 16px;
+                    line-height: 1.65;
+                    color: #a1a1a8;
+                  "
+                >
+                  Plexo splits a download into smaller chunks, downloads those chunks over all the
+                  connections you've selected, then puts them back together as one file. This lets
+                  one download use the combined capacity of your available connections.
+                </p>
+              </details>
+
+              <details class="faq-item" name="faq">
+                <summary>Which connections can I combine?<span aria-hidden="true">+</span></summary>
+                <p
+                  style="
+                    margin: 0 0 24px;
+                    max-width: 720px;
+                    font-size: 16px;
+                    line-height: 1.65;
+                    color: #a1a1a8;
+                  "
+                >
+                  You can combine active connections available on your computer, such as Wi-Fi,
+                  Ethernet, and a phone connected through USB tethering. Each connection needs to
+                  provide a separate route to the internet.
+                </p>
+              </details>
+
+              <details class="faq-item" name="faq">
+                <summary>
+                  Why does my computer warn me when I open Plexo?<span aria-hidden="true">+</span>
+                </summary>
+                <p
+                  style="
+                    margin: 0 0 24px;
+                    max-width: 720px;
+                    font-size: 16px;
+                    line-height: 1.65;
+                    color: #a1a1a8;
+                  "
+                >
+                  Plexo isn't code-signed yet, so macOS and Windows may show a security warning the
+                  first time you open it. Follow the first-launch steps under Downloads for your
+                  system. You only need to do this once, and the full source code is available on
+                  GitHub. Code-signing licenses cost money; if you'd like to help remove these
+                  warnings, consider
+                  <a href="https://github.com/sponsors/anmolkapil">sponsoring Plexo</a> so the
+                  project can cover them.
+                </p>
+              </details>
+
+              <details class="faq-item" name="faq">
+                <summary>
+                  Can Plexo combine internet speed for my whole device?<span aria-hidden="true"
+                    >+</span
+                  >
+                </summary>
+                <p
+                  style="
+                    margin: 0 0 24px;
+                    max-width: 720px;
+                    font-size: 16px;
+                    line-height: 1.65;
+                    color: #a1a1a8;
+                  "
+                >
+                  No. Plexo combines connections only for downloads started inside Plexo. It isn't a
+                  VPN and doesn't change how browsers, games, streaming apps, or other software use
+                  the internet.
+                </p>
+              </details>
+
+              <details class="faq-item" name="faq">
+                <summary>Is Plexo stable?<span aria-hidden="true">+</span></summary>
+                <p
+                  style="
+                    margin: 0 0 24px;
+                    max-width: 720px;
+                    font-size: 16px;
+                    line-height: 1.65;
+                    color: #a1a1a8;
+                  "
+                >
+                  Plexo is currently a pre-release. The core download flow works, but you may still
+                  encounter bugs or rough edges. If something goes wrong, please report it on
+                  GitHub.
+                </p>
+              </details>
+
+              <details class="faq-item" name="faq">
+                <summary>
+                  How do I use Android USB tethering on a Mac?<span aria-hidden="true">+</span>
+                </summary>
+                <p
+                  style="
+                    margin: 0 0 24px;
+                    max-width: 720px;
+                    font-size: 16px;
+                    line-height: 1.65;
+                    color: #a1a1a8;
+                  "
+                >
+                  macOS doesn't support Android USB tethering by itself. Install
+                  <a href="https://github.com/XiaoMiku01/TetherKit">TetherKit</a>, connect your
+                  phone by USB, then turn on <strong>USB tethering</strong> in your phone's hotspot
+                  and tethering settings. Once macOS shows it as a network connection, Plexo can use
+                  it. Follow the
+                  <a href="https://github.com/anmolkapil/plexo#using-a-usb-tethered-android-phone"
+                    >full Android USB tethering tutorial</a
+                  >.
+                </p>
+              </details>
+            </div>
+          </div>
+        </section>
+
+        <div
+          class="hatch"
+          aria-hidden="true"
+          style="
+            height: 72px;
+            margin-top: 120px;
+            border-top: 1px solid rgba(255, 255, 255, 0.06);
+            border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+          "
+        ></div>
+
+        <!-- SUPPORT -->
+        <section id="support" style="padding: 120px 0 120px">
+          <div style="max-width: 1248px; margin: 0 auto; padding: 0 24px; text-align: center">
+            <span
+              style="
+                display: inline-flex;
+                padding: 8px 18px;
+                border-radius: 999px;
+                border: 1px solid rgba(255, 255, 255, 0.14);
+                background: #151517;
+                font-size: 13px;
+                color: #c8c8ce;
+              "
+              >Support</span
+            >
+            <h2
+              style="
+                margin: 24px auto 0;
+                max-width: 900px;
+                font-family: 'Archivo', 'Helvetica Neue', sans-serif;
+                font-stretch: 118%;
+                font-weight: 600;
+                font-size: clamp(30px, 4.4vw, 60px);
+                line-height: 1.06;
+                letter-spacing: -0.015em;
+                text-transform: uppercase;
+                color: #ededef;
+                text-wrap: balance;
+              "
+            >
+              <span style="color: #f36712">Keep Plexo</span> fast and free
+            </h2>
+          </div>
+          <div style="max-width: 1248px; margin: 72px auto 0; padding: 0 24px">
+            <div
+              class="cells"
+              style="
+                display: grid;
+                grid-template-columns: repeat(auto-fit, minmax(min(480px, 100%), 1fr));
+              "
+            >
+              <div
+                style="
+                  position: relative;
+                  overflow: hidden;
+                  display: flex;
+                  flex-direction: column;
+                  justify-content: space-between;
+                  gap: 40px;
+                  min-height: 380px;
+                  padding: clamp(28px, 5vw, 64px);
+                  border: 1px solid rgba(255, 255, 255, 0.08);
+                  border-radius: 40px;
+                  background: #0e0e10;
+                "
+              >
+                <div
+                  aria-hidden="true"
+                  style="
+                    position: absolute;
+                    top: -160px;
+                    left: -120px;
+                    width: 420px;
+                    height: 420px;
+                    border-radius: 50%;
+                    background: radial-gradient(
+                      closest-side,
+                      rgba(243, 103, 18, 0.32),
+                      rgba(243, 103, 18, 0)
+                    );
+                    filter: blur(20px);
+                    pointer-events: none;
+                  "
+                ></div>
+                <p
+                  style="
+                    position: relative;
+                    margin: 0;
+                    max-width: 440px;
+                    font-size: clamp(20px, 2vw, 24px);
+                    line-height: 1.5;
+                    color: #ededef;
+                    text-wrap: pretty;
+                  "
+                >
+                  Plexo is free and open source.
+                  <span style="color: #a1a1a8"
+                    >If it helps you, support the project by starring it, sharing it, reporting
+                    problems, or sponsoring the code-signing licenses needed to remove the macOS and
+                    Windows security warnings.</span
+                  >
+                </p>
+                <div
+                  style="
+                    position: relative;
+                    display: flex;
+                    flex-wrap: wrap;
+                    align-items: center;
+                    gap: 14px 22px;
+                  "
+                >
+                  <a
+                    href="https://github.com/anmolkapil/plexo"
+                    class="btn-3d"
+                    style="
+                      display: inline-flex;
+                      align-items: center;
+                      gap: 10px;
+                      padding: 16px 28px;
+                      border-radius: 999px;
+                      background: linear-gradient(180deg, #f2711f 0%, #dd5a0c 55%, #c94a06 100%);
+                      color: #ffffff;
+                      font-weight: 600;
+                      font-size: 17px;
+                    "
+                  >
+                    <svg
+                      width="18"
+                      height="18"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      stroke-width="2"
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                      aria-hidden="true"
+                    >
+                      <path
+                        d="m12 3 2.8 5.7 6.2.9-4.5 4.4 1.1 6.2L12 17.3l-5.6 2.9 1.1-6.2L3 9.6l6.2-.9Z"
+                      ></path>
+                    </svg>
+                    <span>Star on GitHub</span>
+                  </a>
+                  <span style="font-size: 14px; color: #8c8c94"
+                    >A star helps more people discover Plexo.</span
+                  >
+                </div>
+              </div>
+              <div
+                style="
+                  display: flex;
+                  flex-direction: column;
+                  justify-content: center;
+                  overflow: hidden;
+                  border: 1px solid rgba(255, 255, 255, 0.08);
+                  border-radius: 40px;
+                  background: #0e0e10;
+                "
+              >
+                <a
+                  href="https://github.com/sponsors/anmolkapil"
+                  class="srow"
+                  style="
+                    display: flex;
+                    align-items: center;
+                    gap: 18px;
+                    width: 100%;
+                    padding: 22px clamp(20px, 3vw, 32px);
+                    border: 0;
+                    background: transparent;
+                    font-family: inherit;
+                    text-align: left;
+                    cursor: pointer;
+                  "
+                >
+                  <span
+                    style="
+                      flex: none;
+                      width: 44px;
+                      height: 44px;
+                      border-radius: 999px;
+                      display: grid;
+                      place-items: center;
+                      border: 1px solid rgba(255, 255, 255, 0.12);
+                      background: rgba(255, 255, 255, 0.04);
+                      color: #ededef;
+                    "
+                    ><svg
+                      width="18"
+                      height="18"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      stroke-width="1.8"
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                      aria-hidden="true"
+                    >
+                      <path
+                        d="M12 20s-7-4.4-7-10a4 4 0 0 1 7-2.6A4 4 0 0 1 19 10c0 5.6-7 10-7 10Z"
+                      ></path></svg
+                  ></span>
+                  <span
+                    style="flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px"
+                    ><span style="font-size: 17px; font-weight: 500; color: #ededef"
+                      >Sponsor Plexo</span
+                    ><span style="font-size: 14px; line-height: 1.5; color: #a1a1a8"
+                      >Help fund code signing and keep Plexo free.</span
+                    ></span
+                  >
+                  <svg
+                    width="18"
+                    height="18"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="2"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                    aria-hidden="true"
+                    style="flex: none; color: #8c8c94"
+                  >
+                    <path d="M7 17 17 7"></path>
+                    <path d="M8 7h9v9"></path>
+                  </svg>
+                </a>
+                <button
+                  type="button"
+                  id="share-button"
+                  class="srow"
+                  style="
+                    display: flex;
+                    align-items: center;
+                    gap: 18px;
+                    width: 100%;
+                    padding: 22px clamp(20px, 3vw, 32px);
+                    border: 0;
+                    background: transparent;
+                    font-family: inherit;
+                    text-align: left;
+                    cursor: pointer;
+                    border-top: 1px solid rgba(255, 255, 255, 0.07);
+                  "
+                >
+                  <span
+                    style="
+                      flex: none;
+                      width: 44px;
+                      height: 44px;
+                      border-radius: 999px;
+                      display: grid;
+                      place-items: center;
+                      border: 1px solid rgba(255, 255, 255, 0.12);
+                      background: rgba(255, 255, 255, 0.04);
+                      color: #ededef;
+                    "
+                    ><svg
+                      width="18"
+                      height="18"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      stroke-width="1.8"
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                      aria-hidden="true"
+                    >
+                      <circle cx="18" cy="5" r="3"></circle>
+                      <circle cx="6" cy="12" r="3"></circle>
+                      <circle cx="18" cy="19" r="3"></circle>
+                      <path d="m8.6 13.5 6.8 4M15.4 6.5l-6.8 4"></path></svg
+                  ></span>
+                  <span
+                    style="flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px"
+                    ><span style="font-size: 17px; font-weight: 500; color: #ededef"
+                      ><span id="share-label">Share Plexo</span></span
+                    ><span style="font-size: 14px; line-height: 1.5; color: #a1a1a8"
+                      >Know someone with slow downloads? Send them Plexo.</span
+                    ></span
+                  >
+                  <svg
+                    width="18"
+                    height="18"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="2"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                    aria-hidden="true"
+                    style="flex: none; color: #8c8c94"
+                  >
+                    <path d="M7 17 17 7"></path>
+                    <path d="M8 7h9v9"></path>
+                  </svg>
+                </button>
+                <a
+                  href="https://github.com/anmolkapil/plexo/issues/new?labels=bug"
+                  class="srow"
+                  style="
+                    display: flex;
+                    align-items: center;
+                    gap: 18px;
+                    width: 100%;
+                    padding: 22px clamp(20px, 3vw, 32px);
+                    border: 0;
+                    background: transparent;
+                    font-family: inherit;
+                    text-align: left;
+                    cursor: pointer;
+                    border-top: 1px solid rgba(255, 255, 255, 0.07);
+                  "
+                >
+                  <span
+                    style="
+                      flex: none;
+                      width: 44px;
+                      height: 44px;
+                      border-radius: 999px;
+                      display: grid;
+                      place-items: center;
+                      border: 1px solid rgba(255, 255, 255, 0.12);
+                      background: rgba(255, 255, 255, 0.04);
+                      color: #ededef;
+                    "
+                    ><svg
+                      width="18"
+                      height="18"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      stroke-width="1.8"
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                      aria-hidden="true"
+                    >
+                      <rect x="7" y="7" width="10" height="13" rx="5"></rect>
+                      <path
+                        d="M12 7V4M3 13h4M17 13h4M4 8l3 2M20 8l-3 2M4 19l3-2M20 19l-3-2"
+                      ></path></svg
+                  ></span>
+                  <span
+                    style="flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px"
+                    ><span style="font-size: 17px; font-weight: 500; color: #ededef"
+                      >Report a bug</span
+                    ><span style="font-size: 14px; line-height: 1.5; color: #a1a1a8"
+                      >Found something broken? Tell us what happened.</span
+                    ></span
+                  >
+                  <svg
+                    width="18"
+                    height="18"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="2"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                    aria-hidden="true"
+                    style="flex: none; color: #8c8c94"
+                  >
+                    <path d="M7 17 17 7"></path>
+                    <path d="M8 7h9v9"></path>
+                  </svg>
+                </a>
+                <a
+                  href="https://github.com/anmolkapil/plexo/issues/new?labels=enhancement"
+                  class="srow"
+                  style="
+                    display: flex;
+                    align-items: center;
+                    gap: 18px;
+                    width: 100%;
+                    padding: 22px clamp(20px, 3vw, 32px);
+                    border: 0;
+                    background: transparent;
+                    font-family: inherit;
+                    text-align: left;
+                    cursor: pointer;
+                    border-top: 1px solid rgba(255, 255, 255, 0.07);
+                  "
+                >
+                  <span
+                    style="
+                      flex: none;
+                      width: 44px;
+                      height: 44px;
+                      border-radius: 999px;
+                      display: grid;
+                      place-items: center;
+                      border: 1px solid rgba(255, 255, 255, 0.12);
+                      background: rgba(255, 255, 255, 0.04);
+                      color: #ededef;
+                    "
+                    ><svg
+                      width="18"
+                      height="18"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      stroke-width="1.8"
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                      aria-hidden="true"
+                    >
+                      <path d="M9 18h6M10 21h4"></path>
+                      <path
+                        d="M12 3a6 6 0 0 0-3.5 10.9c.6.4 1 1.1 1 1.9V16h5v-.2c0-.8.4-1.5 1-1.9A6 6 0 0 0 12 3Z"
+                      ></path></svg
+                  ></span>
+                  <span
+                    style="flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px"
+                    ><span style="font-size: 17px; font-weight: 500; color: #ededef"
+                      >Request a feature</span
+                    ><span style="font-size: 14px; line-height: 1.5; color: #a1a1a8"
+                      >Have an idea? Tell us what Plexo should do next.</span
+                    ></span
+                  >
+                  <svg
+                    width="18"
+                    height="18"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="2"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                    aria-hidden="true"
+                    style="flex: none; color: #8c8c94"
+                  >
+                    <path d="M7 17 17 7"></path>
+                    <path d="M8 7h9v9"></path>
+                  </svg>
+                </a>
+              </div>
+            </div>
+          </div>
+        </section>
+      </main>
+      <!-- CREDIT BAR -->
+      <div
+        style="
+          position: relative;
+          width: 100%;
+          max-width: 1248px;
+          margin: auto auto 0;
+          padding: 20px 24px;
+          box-sizing: border-box;
+          display: flex;
+          flex-wrap: wrap;
+          align-items: center;
+          justify-content: space-between;
+          gap: 12px 24px;
+          font-size: 14px;
+          color: #a1a1a8;
+        "
+      >
+        <span
+          >Made by
+          <a href="https://github.com/anmolkapil" class="lnk" style="color: #ededef"
+            >Anmol Kapil</a
+          ></span
+        >
+        <a
+          href="#top"
+          class="lnk"
+          style="
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            min-height: 44px;
+            color: #ededef;
+          "
+          >Back to Top
+          <svg
+            width="16"
+            height="16"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+            aria-hidden="true"
+          >
+            <path d="M12 19V5"></path>
+            <path d="m6 11 6-6 6 6"></path>
+          </svg>
+        </a>
       </div>
 
-      <section class="carousel">
-        <ul class="carousel-track" id="shots-track">
-          <li>
-            <img
-              src="screenshots/links.png"
-              alt="Plexo's link picker showing Wi-Fi and USB Tethering selected, with ping and parallel stream controls."
-              loading="lazy"
-            />
-          </li>
-          <li>
-            <img
-              src="screenshots/downloading.png"
-              alt="Plexo combining Wi-Fi and USB tethering into one 27.9 MB/s download, with per-network speed and progress."
-              loading="lazy"
-            />
-          </li>
-          <li>
-            <img
-              src="screenshots/complete.png"
-              alt="Plexo download complete summary: 109.3 MB in 8 seconds at 39.4 MB/s peak, split across Wi-Fi and USB tethering."
-              loading="lazy"
-            />
-          </li>
-        </ul>
-        <button
-          class="carousel-btn prev"
-          aria-label="Previous screenshot"
-          onclick="
-            document.getElementById('shots-track').scrollBy({
-              left: -document.getElementById('shots-track').clientWidth * 0.9,
-              behavior: 'smooth'
-            })
+      <!-- FOOTER -->
+      <footer
+        style="position: relative; border-top: 1px solid rgba(255, 255, 255, 0.1); overflow: hidden"
+      >
+        <div
+          aria-hidden="true"
+          class="giant"
+          style="
+            position: relative;
+            z-index: 0;
+            width: calc(100% - 48px);
+            max-width: 1200px;
+            margin: 28px auto -0.126em;
+            clip-path: inset(0 0 0.126em 0);
+            font-family: 'Archivo', 'Helvetica Neue', sans-serif;
+            font-stretch: 125%;
+            font-weight: 800;
+            font-size: clamp(64px, 20.5vw, 288px);
+            line-height: 0.92;
+            letter-spacing: -0.04em;
+            text-align: center;
+            user-select: none;
           "
         >
-          ‹
-        </button>
-        <button
-          class="carousel-btn next"
-          aria-label="Next screenshot"
-          onclick="
-            document.getElementById('shots-track').scrollBy({
-              left: document.getElementById('shots-track').clientWidth * 0.9,
-              behavior: 'smooth'
-            })
-          "
-        >
-          ›
-        </button>
-        <div class="carousel-dots" id="shots-dots">
-          <span class="dot active"></span>
-          <span class="dot"></span>
-          <span class="dot"></span>
+          PLEXO
         </div>
-      </section>
-
-      <section class="downloads" id="downloads">
-        <div class="downloads-head">
-          <div class="title">All downloads</div>
-          <div class="source" id="asset-source">PUBLISHED ON GITHUB RELEASES</div>
-        </div>
-        <div class="os-tabs" id="os-tabs" role="tablist" aria-label="Operating system" hidden></div>
-        <div class="groups" id="asset-groups">
-          <div class="asset-note">Loading releases…</div>
-        </div>
-      </section>
-
-      <section class="guides" id="guides">
-        <div class="downloads-head">
-          <div class="title">Setup guides</div>
-        </div>
-        <div class="guide-list">
-          <details class="guide-item" id="multiple-connections" open>
-            <summary>
-              <span class="g-title">Use separate connections</span>
-              <span class="g-sub">Why two networks on the same router won’t add speed</span>
-            </summary>
-            <div class="g-body">
-              <p>
-                Plexo is faster only when each network has its own Internet line, like home Wi-Fi
-                plus a phone on USB tethering. Two connections to the same router share one line, so
-                they won’t add speed.
-              </p>
-              <p>
-                If two connections have addresses on the same local network (both
-                <code>192.168.1.x</code>, say), your computer sends everything through one of them.
-                Plexo warns you when two selected connections look like that.
-              </p>
-            </div>
-          </details>
-
-          <details class="guide-item" id="mac-tethering">
-            <summary>
-              <span class="g-title">USB tethering on macOS</span>
-              <span class="g-sub">Android phones need a free helper app first</span>
-            </summary>
-            <div class="g-body">
-              <p>
-                Macs don’t recognize an Android phone’s USB tethering out of the box. Install the
-                free <a href="https://github.com/XiaoMiku01/TetherKit">TetherKit</a> first.
-              </p>
-              <ol class="os-notes">
-                <li>
-                  Install TetherKit: open Terminal and run
-                  <code>brew install XiaoMiku01/tap/tetherkit</code>
-                </li>
-                <li>Connect your Android phone to your Mac with a USB cable.</li>
-                <li>
-                  On your phone: Settings → Network & Internet → Hotspot & tethering → turn on USB
-                  tethering.
-                </li>
-                <li>Open Plexo. It picks up the connection automatically.</li>
-              </ol>
-            </div>
-          </details>
-
-          <details class="guide-item" id="windows-wifi">
-            <summary>
-              <span class="g-title">Wi-Fi drops when Ethernet is plugged in</span>
-              <span class="g-sub">Windows 10 and 11</span>
-            </summary>
-            <div class="g-body">
-              <p>
-                Some Windows PCs switch off Wi-Fi as soon as an Ethernet cable is connected. To stop
-                that:
-              </p>
-              <ol class="os-notes">
-                <li>Press Win + R, type <code>gpedit.msc</code>, and press Enter.</li>
-                <li>
-                  Go to Computer Configuration → Administrative Templates → Network → Windows
-                  Connection Manager.
-                </li>
-                <li>
-                  Set “Minimize the number of simultaneous connections to the Internet or a Windows
-                  domain” to <strong>Disabled</strong>.
-                </li>
-              </ol>
-            </div>
-          </details>
-        </div>
-      </section>
-
-      <section class="support" id="support">
-        <div class="downloads-head">
-          <div class="title">Help keep Plexo free</div>
-        </div>
-        <p>
-          Plexo is free and open source, built and maintained by one developer. Keeping it going
-          costs real money: Apple and Microsoft developer licenses, so macOS and Windows stop
-          warning you when you install it, plus the time that goes into every release. I’d like your
-          honest take on how to cover that.
-        </p>
-
-        <div class="card poll" id="poll">
-          <p class="question">Would you be okay with small, non-intrusive ads in Plexo?</p>
-          <p class="sub">
-            Simple and out of the way: no pop-ups, no video, nothing that interrupts a download.
-          </p>
-          <div class="poll-choices" id="poll-choices">
-            <button type="button" data-vote="yes">Yes, that’s fine</button>
-            <button type="button" data-vote="no">No, I’d rather not</button>
-          </div>
-          <div class="poll-results" id="poll-results" hidden>
-            <div class="bar yes">
-              <div class="row">
-                <span>Yes, that’s fine <span class="mine" hidden>YOUR VOTE</span></span
-                ><span class="num"></span>
-              </div>
-              <div class="track"><div class="fill"></div></div>
-            </div>
-            <div class="bar no">
-              <div class="row">
-                <span>No, I’d rather not <span class="mine" hidden>YOUR VOTE</span></span
-                ><span class="num"></span>
-              </div>
-              <div class="track"><div class="fill"></div></div>
-            </div>
-          </div>
-          <div class="poll-meta">
-            <span class="live-dot off" id="poll-dot"></span>
-            <span id="poll-status">Anonymous · no sign-in, nothing about you is stored</span>
-          </div>
-        </div>
-
-        <div class="ways" id="ways" hidden>
-          <p class="lead" id="ways-lead">Other ways to support Plexo</p>
-          <div class="ways-grid">
-            <a class="way primary" href="https://github.com/sponsors/anmolkapil">
-              <strong>Sponsor on GitHub</strong>
-              One-off or monthly, any amount. Goes straight to licenses and development.
-            </a>
-            <a class="way" href="https://github.com/anmolkapil/plexo">
-              <strong>Star the repo</strong>
-              Helps more people find Plexo, and costs nothing.
-            </a>
-            <a class="way" href="https://github.com/anmolkapil/plexo/issues/new">
-              <strong>Report bugs, suggest features</strong>
-              Good reports make every release better.
-            </a>
-            <button type="button" class="way" id="share-btn">
-              <strong>Tell a friend</strong>
-              <span id="share-text">Copy a link to this page.</span>
-            </button>
-          </div>
-        </div>
-      </section>
-
-      <footer>
-        <div class="ver" id="version-label">PLEXO</div>
-        <div class="spacer"></div>
-        <a href="https://github.com/anmolkapil/plexo">Source</a>
-        <a href="https://github.com/anmolkapil/plexo/issues/new">Report an issue</a>
       </footer>
     </div>
-
-    <dialog class="poll-dialog" id="poll-dialog" aria-labelledby="poll-dialog-title">
-      <div class="body" id="poll-dialog-ask">
-        <div class="top-row">
-          <div class="eyebrow">QUICK POLL · 1 QUESTION</div>
+    <p id="share-status" class="sr-only" role="status"></p>
+    <dialog id="install-dialog" aria-labelledby="install-dialog-title">
+      <button type="button" class="dialog-close" aria-label="Close installation help">×</button>
+      <div class="download-dialog-heading">
+        <span class="download-dialog-icon" aria-hidden="true">↓</span>
+        <div>
+          <h2 id="install-dialog-title">Thanks for downloading Plexo</h2>
+          <p id="install-dialog-subtitle"></p>
         </div>
-        <h2 id="poll-dialog-title" tabindex="-1" autofocus>Help decide how Plexo is funded</h2>
-        <p>
-          Plexo is free and built by one developer. Apple and Microsoft developer licenses, and the
-          work on every release, cost money.
-        </p>
-        <p class="ask">
-          Would you be okay with small, non-intrusive ads in Plexo? No pop-ups, no video, nothing
-          that interrupts a download.
-        </p>
-        <div class="poll-choices">
-          <button type="button" data-dialog-vote="yes">Yes, that’s fine</button>
-          <button type="button" data-dialog-vote="no">No, I’d rather not</button>
-        </div>
-        <p class="error" id="poll-dialog-error" hidden>
-          Couldn’t send your vote. Check your connection and try again.
-        </p>
-        <button type="button" class="later" data-close>Not now</button>
       </div>
-      <div class="body" id="poll-dialog-thanks" hidden>
-        <div class="top-row">
-          <div class="eyebrow">VOTE COUNTED</div>
-        </div>
-        <h2>Thanks for voting</h2>
-        <p id="poll-dialog-thanks-text"></p>
-        <div class="poll-choices">
-          <button type="button" class="see-results" id="poll-dialog-results">
-            See live results
-          </button>
-        </div>
-        <button type="button" class="later" data-close>Close</button>
+      <div id="install-dialog-content"></div>
+      <div class="download-dialog-actions">
+        <span>
+          Didn’t start? <a id="download-retry" href="#">Try again</a> ·
+          <a id="download-other-builds" href="#downloads">Other builds</a>
+        </span>
+        <form method="dialog"><button class="btn-3d">Got it</button></form>
       </div>
     </dialog>
-
-    <script src="downloads.js"></script>
-    <script src="changelog.js"></script>
-    <script>
-      ;(function () {
-        var track = document.getElementById('shots-track')
-        var dots = document.querySelectorAll('#shots-dots .dot')
-        if (track && dots.length && 'IntersectionObserver' in window) {
-          var io = new IntersectionObserver(
-            function (entries) {
-              entries.forEach(function (entry) {
-                if (!entry.isIntersecting) return
-                var idx = Array.prototype.indexOf.call(track.children, entry.target)
-                dots.forEach(function (d, i) {
-                  d.classList.toggle('active', i === idx)
-                })
-              })
-            },
-            { root: track, threshold: 0.6 }
-          )
-          Array.prototype.forEach.call(track.children, function (li) {
-            io.observe(li)
-          })
-        }
-      })()
-
-      ;(function () {
-        // On narrow screens What's new is one row until tapped.
-        var aside = document.getElementById('whats-new')
-        var toggle = document.getElementById('whats-new-toggle')
-        toggle.addEventListener('click', function () {
-          toggle.setAttribute('aria-expanded', String(aside.classList.toggle('open')))
-        })
-
-        // A link to a guide (#mac-tethering) opens it.
-        function openTarget() {
-          var target = location.hash && document.getElementById(location.hash.slice(1))
-          if (target && target.tagName === 'DETAILS') target.open = true
-        }
-        window.addEventListener('hashchange', openTarget)
-        openTarget()
-      })()
-
-      ;(function () {
-        var REPO = 'anmolkapil/plexo'
-        var repoUrl = 'https://github.com/' + REPO
-        var D = window.PlexoDownloads
-
-        function $(id) {
-          return document.getElementById(id)
-        }
-
-        function el(tag, className, text) {
-          var node = document.createElement(tag)
-          if (className) node.className = className
-          if (text) node.textContent = text
-          return node
-        }
-
-        // Text with `code` spans, built without innerHTML.
-        function withCode(node, text) {
-          text.split('`').forEach(function (part, i) {
-            if (!part) return
-            node.appendChild(i % 2 ? el('code', '', part) : document.createTextNode(part))
-          })
-          return node
-        }
-
-        // Text with `code` spans and **bold** button names, built without innerHTML.
-        function rich(node, text) {
-          text.split('**').forEach(function (part, i) {
-            if (!part) return
-            node.appendChild(i % 2 ? el('strong', '', part) : withCode(el('span'), part))
-          })
-          return node
-        }
-
-        var WARNING_ICON =
-          '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="#e8bb6d" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/><path d="M12 9v4"/><path d="M12 17h.01"/></svg>'
-
-        // How to get past the unsigned-app warning the first time Plexo opens.
-        function firstLaunchBox(fl) {
-          var box = el('div', 'first-launch')
-          var warning = el('p', 'fl-warning')
-          warning.innerHTML = WARNING_ICON // a fixed icon, not page data
-          var line = el('span', '', fl.system + ' may say ')
-          line.appendChild(el('span', 'quote', '“' + fl.warning + '”'))
-          warning.appendChild(line)
-          box.appendChild(warning)
-          box.appendChild(rich(el('p'), fl.fix))
-          if (fl.command) box.appendChild(commandRow(fl.command))
-          if (fl.aside) box.appendChild(rich(el('p', 'fl-aside'), fl.aside))
-          return box
-        }
-
-        // Folded to one line until the visitor downloads; the download button opens it.
-        function firstLaunchDisclosure(fl) {
-          var details = el('details', 'fl-details')
-          details.id = 'first-launch'
-          var summary = el('summary')
-          summary.innerHTML = WARNING_ICON // a fixed icon, not page data
-          var text = el(
-            'span',
-            'fl-summary',
-            'Plexo isn’t signed yet, so opening it the first time takes one extra step.'
-          )
-          summary.appendChild(text)
-          summary.appendChild(el('span', 'how', 'See how'))
-          details.appendChild(summary)
-          details.appendChild(firstLaunchBox(fl))
-          details.addEventListener('toggle', function () {
-            summary.lastChild.textContent = details.open ? 'Hide' : 'See how'
-          })
-          $('primary-btn').addEventListener('click', function () {
-            details.open = true
-            details.classList.add('downloading')
-            text.textContent = 'Downloading. Next, open Plexo the first time:'
-          })
-          return details
-        }
-
-        function commandRow(command) {
-          var wrap = el('div', 'fl-command')
-          var code = el('code', '', command)
-          var copy = el('button', '', 'Copy')
-          copy.type = 'button'
-          copy.setAttribute('aria-label', 'Copy the command')
-          copy.addEventListener('click', function () {
-            function done() {
-              copy.textContent = 'Copied'
-              copy.classList.add('done')
-              setTimeout(function () {
-                copy.textContent = 'Copy'
-                copy.classList.remove('done')
-              }, 2000)
-            }
-            function selectIt() {
-              var range = document.createRange()
-              range.selectNodeContents(code)
-              var sel = window.getSelection()
-              sel.removeAllRanges()
-              sel.addRange(range)
-            }
-            if (navigator.clipboard && navigator.clipboard.writeText) {
-              navigator.clipboard.writeText(command).then(done, selectIt)
-            } else {
-              selectIt()
-            }
-          })
-          wrap.appendChild(code)
-          wrap.appendChild(copy)
-          return wrap
-        }
-
-        // Only Chromium browsers will say what chip this is; the rest leave it null.
-        function environment() {
-          var uaData = navigator.userAgentData
-          var hint =
-            uaData && uaData.getHighEntropyValues
-              ? uaData.getHighEntropyValues(['architecture']).catch(function () {
-                  return null
-                })
-              : Promise.resolve(null)
-          return hint.then(function (h) {
-            return D.detectEnvironment(navigator, h)
-          })
-        }
-
-        function row(asset) {
-          var r = el('div', 'asset-row' + (asset.recommended ? ' recommended' : ''))
-          var platform = el('div', 'platform', asset.title)
-          if (asset.recommended) platform.appendChild(el('span', 'rec', 'FOR YOUR COMPUTER'))
-          platform.appendChild(el('span', 'detail', asset.detail))
-          var file = el('div', 'file', asset.file + ' ')
-          if (asset.sizeText) file.appendChild(el('span', 'size', '· ' + asset.sizeText))
-          var dl = el('a', 'dl', 'Download')
-          dl.href = asset.url
-          r.appendChild(platform)
-          r.appendChild(file)
-          r.appendChild(dl)
-          return r
-        }
-
-        // Nothing to offer (no release yet, GitHub unreachable, or this page's own script missing):
-        // send the visitor to the Releases page rather than leave a spinner up.
-        function fallback(failed) {
-          $('asset-groups').textContent = ''
-          $('cta-alt').textContent = ''
-          $('first-launch-slot').textContent = ''
-          $('os-tabs').hidden = true
-          $('asset-groups').appendChild(
-            el(
-              'div',
-              'asset-note',
-              failed
-                ? 'Couldn’t load the latest release from GitHub — get Plexo from the Releases page.'
-                : 'No published build assets yet — check the Releases page on GitHub.'
-            )
-          )
-          $('asset-source').textContent = REPO.toUpperCase()
-          $('release-line').textContent = failed
-            ? 'Couldn’t check for the latest release.'
-            : 'No release published yet.'
-          $('version-label').textContent = 'PLEXO'
-          $('primary-title').textContent = 'View releases on GitHub'
-          $('primary-meta').textContent = repoUrl
-          $('primary-btn').href = repoUrl + '/releases'
-        }
-
-        function render(release, env) {
-          var groupsEl = $('asset-groups')
-          var sourceEl = $('asset-source')
-          var releaseLine = $('release-line')
-          var versionEl = $('version-label')
-          var primaryTitle = $('primary-title')
-          var primaryMeta = $('primary-meta')
-          var primaryBtn = $('primary-btn')
-          var alt = $('cta-alt')
-          var model = D.build(release, env)
-
-          groupsEl.textContent = ''
-          alt.textContent = ''
-          $('first-launch-slot').textContent = ''
-
-          if (!release || model.empty) return fallback()
-
-          var version = release.tag_name
-          var date = release.published_at
-            ? new Date(release.published_at).toLocaleDateString(undefined, {
-                year: 'numeric',
-                month: 'short',
-                day: 'numeric'
-              })
-            : ''
-          versionEl.textContent = 'PLEXO · ' + version
-          sourceEl.textContent = REPO.toUpperCase() + ' · ' + version.toUpperCase()
-          releaseLine.textContent = version + (date ? ' · ' + date : '')
-
-          if (model.primary) {
-            primaryTitle.textContent = model.primary.title
-            primaryMeta.textContent = model.primary.meta
-            primaryBtn.href = model.primary.asset.url
-          } else {
-            // Phones, tablets and anything we don't build for.
-            primaryTitle.textContent = model.desktop
-              ? 'Choose a download'
-              : 'Plexo is a desktop app'
-            primaryMeta.textContent = model.desktop
-              ? 'Nothing published for your system yet'
-              : 'Open this page on a Mac, Windows or Linux computer'
-            primaryBtn.href = '#downloads'
-          }
-
-          model.alternates.forEach(function (a) {
-            var link = el('a', '', a.text)
-            link.href = a.asset.url
-            alt.appendChild(link)
-          })
-          if (model.firstLaunch) {
-            $('first-launch-slot').appendChild(firstLaunchDisclosure(model.firstLaunch))
-          }
-
-          // One OS at a time, starting with the visitor's own.
-          var tabs = $('os-tabs')
-          var selected = model.groups.some(function (g) {
-            return g.os === env.os
-          })
-            ? env.os
-            : model.groups[0].os
-          var panels = []
-          tabs.textContent = ''
-          tabs.hidden = model.groups.length < 2
-          groupsEl.classList.toggle('tabbed', !tabs.hidden)
-
-          model.groups.forEach(function (g) {
-            var section = el('section', 'os-group')
-            section.id = 'os-' + g.os
-            section.setAttribute('role', 'tabpanel')
-            section.hidden = g.os !== selected
-            var tab = el('button', '', g.label)
-            tab.type = 'button'
-            tab.id = 'tab-' + g.os
-            tab.setAttribute('role', 'tab')
-            tab.setAttribute('aria-controls', section.id)
-            tab.setAttribute('aria-selected', String(g.os === selected))
-            if (g.os === env.os) tab.appendChild(el('span', 'yours', 'YOURS'))
-            tab.addEventListener('click', function () {
-              panels.forEach(function (p) {
-                p.section.hidden = p.os !== g.os
-                p.tab.setAttribute('aria-selected', String(p.os === g.os))
-              })
-            })
-            section.setAttribute('aria-labelledby', tab.id)
-            tabs.appendChild(tab)
-            panels.push({ os: g.os, tab: tab, section: section })
-            section.appendChild(el('h3', '', g.label))
-            var table = el('div', 'asset-table')
-            g.rows.forEach(function (asset) {
-              table.appendChild(row(asset))
-            })
-            section.appendChild(table)
-            // The visitor's own OS already has this under the download button.
-            if (g.firstLaunch && !(model.firstLaunch && g.os === env.os)) {
-              section.appendChild(firstLaunchBox(g.firstLaunch))
-            }
-            var notes = el('ul', 'os-notes')
-            g.notes.forEach(function (text) {
-              notes.appendChild(withCode(el('li'), text))
-            })
-            section.appendChild(notes)
-            groupsEl.appendChild(section)
-          })
-
-          if (release.prerelease) {
-            groupsEl.appendChild(
-              el(
-                'div',
-                'asset-note',
-                'Pre-release build. Expect rough edges, and file an issue if something breaks.'
-              )
-            )
-          }
-        }
-
-        function shortDate(iso) {
-          return iso
-            ? new Date(iso).toLocaleDateString(undefined, {
-                year: 'numeric',
-                month: 'short',
-                day: 'numeric'
-              })
-            : ''
-        }
-
-        // A release this page has no curated entry for: its own notes, minus the downloads table.
-        function itemsFromNotes(body) {
-          return String(body || '')
-            .split(/\n## |\*\*Full Changelog\*\*/)[0]
-            .split(/\n\s*\n/)
-            .map(function (p) {
-              return p.replace(/\*\*|__/g, '').trim()
-            })
-            .filter(Boolean)
-            .map(function (p) {
-              return { text: p }
-            })
-        }
-
-        // What's new in the latest release, and links to the ones before it on GitHub.
-        function renderChangelog(list) {
-          var changes = $('changes')
-          var older = $('older-list')
-          changes.textContent = ''
-          older.textContent = ''
-          var latest = list && list[0]
-          if (!latest) {
-            var li = el('li')
-            li.appendChild(el('p', '', 'Release notes for every version are on GitHub.'))
-            changes.appendChild(li)
-            return
-          }
-          var curated = (window.PlexoChangelog || []).filter(function (e) {
-            return e.version === latest.tag_name
-          })[0]
-          $('whats-new-ver').textContent =
-            latest.tag_name + (latest.published_at ? ' · ' + shortDate(latest.published_at) : '')
-          var items = curated ? curated.items : itemsFromNotes(latest.body)
-          items.forEach(function (item) {
-            var li = el('li')
-            if (item.title) {
-              var name = el('div', 'name')
-              name.appendChild(el('span', 'kind ' + item.kind, item.kind))
-              name.appendChild(document.createTextNode(item.title))
-              li.appendChild(name)
-            }
-            li.appendChild(withCode(el('p'), item.text))
-            changes.appendChild(li)
-          })
-          list.slice(1, 5).forEach(function (r) {
-            var a = el('a')
-            a.href = r.html_url
-            a.appendChild(el('span', '', r.tag_name))
-            a.appendChild(el('span', 'date', shortDate(r.published_at)))
-            var li = el('li')
-            li.appendChild(a)
-            older.appendChild(li)
-          })
-          $('older-label').hidden = list.length < 2
-          $('whats-new-count').textContent =
-            items.length + (items.length === 1 ? ' change' : ' changes') + ' ›'
-        }
-
-        if (!D) {
-          fallback(true)
-          renderChangelog(null)
-          return
-        }
-
-        Promise.all([
-          fetch('https://api.github.com/repos/' + REPO + '/releases?per_page=5').then(function (r) {
-            return r.ok ? r.json() : Promise.reject()
-          }),
-          environment()
-        ])
-          .then(function (results) {
-            var list = Array.isArray(results[0]) ? results[0] : []
-            render(list[0] || null, results[1])
-            renderChangelog(list)
-          })
-          .catch(function () {
-            fallback(true)
-            renderChangelog(null)
-          })
-      })()
-
-      // The ads poll. Votes are two public counters on Abacus (a free, keyless counter API), so
-      // nothing about the voter is sent or kept; this browser remembers its own vote so it can't
-      // vote twice by reloading.
-      ;(function () {
-        var API = 'https://abacus.jasoncameron.dev'
-        var NAMESPACE = 'anmolkapil-plexo'
-        var KEYS = { yes: 'ads-poll-yes', no: 'ads-poll-no' }
-        var STORE = 'plexo-ads-poll'
-        var REFRESH_MS = 15000
-
-        var poll = document.getElementById('poll')
-        var choices = poll.querySelectorAll('[data-vote]')
-        var results = document.getElementById('poll-results')
-        var statusEl = document.getElementById('poll-status')
-        var dot = document.getElementById('poll-dot')
-        var ways = document.getElementById('ways')
-        var waysLead = document.getElementById('ways-lead')
-        var counts = { yes: 0, no: 0 }
-
-        function stored() {
-          try {
-            var v = localStorage.getItem(STORE)
-            return v === 'yes' || v === 'no' ? v : null
-          } catch (e) {
-            return null
-          }
-        }
-
-        function remember(v) {
-          try {
-            localStorage.setItem(STORE, v)
-          } catch (e) {
-            /* Private mode: the vote still counts, it just isn't remembered. */
-          }
-        }
-
-        function counter(action, key) {
-          return fetch(API + '/' + action + '/' + NAMESPACE + '/' + key).then(function (r) {
-            // A counter nobody has hit yet doesn't exist.
-            if (r.status === 404) return 0
-            if (!r.ok) return Promise.reject()
-            return r.json().then(function (j) {
-              return Number(j.value) || 0
-            })
-          })
-        }
-
-        function live(ok, text) {
-          dot.classList.toggle('off', !ok)
-          statusEl.textContent = text
-        }
-
-        function paint() {
-          var total = counts.yes + counts.no
-          var mine = stored()
-          ;['yes', 'no'].forEach(function (k) {
-            var bar = results.querySelector('.bar.' + k)
-            var pct = total ? Math.round((counts[k] / total) * 100) : 0
-            bar.querySelector('.fill').style.width = pct + '%'
-            bar.querySelector('.num').textContent =
-              pct + '% · ' + counts[k] + (counts[k] === 1 ? ' vote' : ' votes')
-            bar.querySelector('.mine').hidden = mine !== k
-          })
-          if (mine) {
-            live(true, 'Live · ' + total + (total === 1 ? ' vote' : ' votes') + ' · anonymous')
-          } else if (total) {
-            live(
-              true,
-              total + (total === 1 ? ' vote' : ' votes') + ' so far · anonymous, no sign-in'
-            )
-          }
-        }
-
-        function refresh() {
-          if (document.hidden) return Promise.resolve()
-          return Promise.all([counter('get', KEYS.yes), counter('get', KEYS.no)])
-            .then(function (v) {
-              counts.yes = v[0]
-              counts.no = v[1]
-              paint()
-            })
-            .catch(function () {
-              if (stored())
-                live(false, 'Couldn’t load live results right now — your vote is saved.')
-            })
-        }
-
-        function showVoted(v) {
-          poll.querySelector('#poll-choices').hidden = true
-          results.hidden = false
-          ways.hidden = false
-          waysLead.textContent =
-            v === 'no'
-              ? 'Fair enough, thanks for saying so. Here’s how else you can help:'
-              : 'Thanks! And if you’d like to help in other ways too:'
-          paint()
-        }
-
-        // Resolves true once the vote is counted, false if it couldn't be sent.
-        function vote(v) {
-          Array.prototype.forEach.call(choices, function (b) {
-            b.disabled = true
-          })
-          live(true, 'Sending your vote…')
-          return counter('hit', KEYS[v])
-            .then(function (n) {
-              counts[v] = Math.max(n, counts[v] + 1)
-              remember(v)
-              showVoted(v)
-              refresh()
-              return true
-            })
-            .catch(function () {
-              Array.prototype.forEach.call(choices, function (b) {
-                b.disabled = false
-              })
-              live(false, 'Couldn’t send your vote — check your connection and try again.')
-              return false
-            })
-        }
-
-        Array.prototype.forEach.call(choices, function (b) {
-          b.addEventListener('click', function () {
-            vote(b.getAttribute('data-vote'))
-          })
-        })
-
-        var share = document.getElementById('share-btn')
-        share.addEventListener('click', function () {
-          var url = 'https://anmolkapil.github.io/plexo/'
-          var text = document.getElementById('share-text')
-          if (navigator.share) {
-            navigator.share({ title: 'Plexo', url: url }).catch(function () {})
-            return
-          }
-          if (!navigator.clipboard) {
-            text.textContent = url
-            return
-          }
-          navigator.clipboard.writeText(url).then(
-            function () {
-              text.textContent = 'Link copied — thank you!'
-            },
-            function () {
-              text.textContent = url
-            }
-          )
-        })
-
-        // Ask in a popup shortly after the page opens. "Not now" (or Esc, or a click outside) asks
-        // again on a later visit: never twice in one browser session, at least a day apart, and at
-        // most MAX_ASKS times. Voting ends it for good.
-        var dialog = document.getElementById('poll-dialog')
-        var ASKS = 'plexo-ads-poll-asks'
-        var SESSION = 'plexo-ads-poll-asked'
-        var LEGACY = 'plexo-ads-poll-prompted'
-        var PROMPT_DELAY_MS = 2000
-        var MIN_GAP_MS = 24 * 60 * 60 * 1000
-        var MAX_ASKS = 3
-
-        function asks() {
-          var a = JSON.parse(localStorage.getItem(ASKS) || 'null')
-          if (a && typeof a.count === 'number') return a
-          // Asked once by the page before this rule, date unknown.
-          return { count: localStorage.getItem(LEGACY) === '1' ? 1 : 0, last: 0 }
-        }
-
-        function shouldAsk() {
-          try {
-            if (sessionStorage.getItem(SESSION)) return false
-            var a = asks()
-            return a.count < MAX_ASKS && Date.now() - a.last >= MIN_GAP_MS
-          } catch (e) {
-            // Can't remember that we asked, so don't ask at all rather than on every visit.
-            return false
-          }
-        }
-
-        function markAsked() {
-          try {
-            var a = asks()
-            localStorage.setItem(ASKS, JSON.stringify({ count: a.count + 1, last: Date.now() }))
-            sessionStorage.setItem(SESSION, '1')
-            return true
-          } catch (e) {
-            return false
-          }
-        }
-
-        function closeDialog() {
-          if (dialog.open) dialog.close()
-        }
-
-        Array.prototype.forEach.call(dialog.querySelectorAll('[data-close]'), function (b) {
-          b.addEventListener('click', closeDialog)
-        })
-        dialog.addEventListener('click', function (e) {
-          // A click on the backdrop lands on the dialog element itself.
-          if (e.target === dialog) closeDialog()
-        })
-        var dialogChoices = dialog.querySelectorAll('[data-dialog-vote]')
-        Array.prototype.forEach.call(dialogChoices, function (b) {
-          b.addEventListener('click', function () {
-            var v = b.getAttribute('data-dialog-vote')
-            Array.prototype.forEach.call(dialogChoices, function (c) {
-              c.disabled = true
-            })
-            document.getElementById('poll-dialog-error').hidden = true
-            vote(v).then(function (ok) {
-              Array.prototype.forEach.call(dialogChoices, function (c) {
-                c.disabled = false
-              })
-              if (!ok) {
-                document.getElementById('poll-dialog-error').hidden = false
-                return
-              }
-              document.getElementById('poll-dialog-ask').hidden = true
-              document.getElementById('poll-dialog-thanks').hidden = false
-              document.getElementById('poll-dialog-thanks-text').textContent =
-                v === 'no'
-                  ? 'Fair enough, thanks for saying so. There are other ways to help, like sponsoring or starring the repo, right next to the results.'
-                  : 'That helps a lot. The live results, and other ways to help, are on this page.'
-            })
-          })
-        })
-        document.getElementById('poll-dialog-results').addEventListener('click', function () {
-          closeDialog()
-          document.getElementById('support').scrollIntoView({ behavior: 'smooth' })
-        })
-
-        if (!stored() && shouldAsk() && typeof dialog.showModal === 'function') {
-          setTimeout(function () {
-            // Not if they voted meanwhile, or are already looking at the poll.
-            if (stored() || location.hash === '#support') return
-            if (markAsked()) dialog.showModal()
-          }, PROMPT_DELAY_MS)
-        }
-
-        if (stored()) showVoted(stored())
-        refresh()
-        setInterval(refresh, REFRESH_MS)
-        document.addEventListener('visibilitychange', function () {
-          if (!document.hidden) refresh()
-        })
-      })()
-    </script>
+    <div id="download-help-toast" class="download-help-toast" role="status" hidden>
+      <span class="download-toast-icon" aria-hidden="true">↓</span>
+      <button id="download-help-reopen" type="button">
+        <strong>Plexo is downloading</strong>
+        <span>Need help opening it?</span>
+      </button>
+      <button id="download-help-dismiss" type="button" aria-label="Dismiss">×</button>
+    </div>
   </body>
 </html>
