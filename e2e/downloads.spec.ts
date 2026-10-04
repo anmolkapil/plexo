@@ -259,11 +259,11 @@ test.describe('which download is offered', () => {
       size: 100 * 1048576,
       url: BASE + name
     }))
-    const text = D.markdown(files, 'https://anmolkapil.github.io/plexo/')
+    const text = D.markdown(files, 'https://getplexo.app/')
     for (const name of SHIPPED) expect(text.split(BASE + name + ')')).toHaveLength(2)
     for (const name of NOISE) expect(text).not.toContain(name)
     expect(text).toContain('[Apple silicon]')
-    expect(text).toContain('https://anmolkapil.github.io/plexo/#downloads')
+    expect(text).toContain('https://getplexo.app/#downloads')
     expect(text).toContain('`xattr -dr com.apple.quarantine /Applications/Plexo.app`')
   })
 })
