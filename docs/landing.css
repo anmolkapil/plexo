@@ -689,12 +689,23 @@ summary:focus-visible,
   color: #0a0a0b;
 }
 #demo-motion {
-  padding: 10px 14px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  padding: 0;
   border: 1px solid #ffffff26;
   border-radius: 999px;
   background: #ffffff08;
   color: #ededef;
   min-height: 44px;
+  transition:
+    background 0.2s,
+    border-color 0.2s;
+}
+#demo-motion:hover {
+  border-color: rgba(243, 103, 18, 0.45);
+  background: rgba(243, 103, 18, 0.08);
 }
 .demo-caption {
   position: relative;
@@ -941,6 +952,12 @@ summary:focus-visible,
 }
 .architecture-card:first-child {
   border-top: 0;
+  border-top-left-radius: inherit;
+  border-top-right-radius: inherit;
+}
+.architecture-card:last-child {
+  border-bottom-left-radius: inherit;
+  border-bottom-right-radius: inherit;
 }
 .architecture-card h3 {
   font-size: 16px;
@@ -1266,6 +1283,10 @@ summary:focus-visible,
 .install-help summary:hover {
   background: rgba(255, 255, 255, 0.025);
 }
+.install-help summary:focus-visible {
+  border-radius: inherit;
+  outline-offset: -3px;
+}
 .install-help summary::-webkit-details-marker {
   display: none;
 }
@@ -1407,6 +1428,7 @@ summary:focus-visible,
 }
 .copy-command {
   flex: none;
+  width: 88px;
   min-height: 44px;
   padding: 0 16px;
   border: 0;
@@ -1424,6 +1446,12 @@ summary:focus-visible,
 }
 .copy-command:focus-visible {
   outline-offset: -3px;
+}
+.command-status:not(.sr-only) {
+  margin: 8px 0 0;
+  color: #ff8a3d;
+  font-size: 13px;
+  line-height: 1.5;
 }
 .install-fix,
 .dialog-fix {

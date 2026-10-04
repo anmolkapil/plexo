@@ -225,6 +225,14 @@
     button.setAttribute('aria-label', 'Copy command')
     return button
   }
+  function appendCommand(container, command) {
+    const row = element('div', 'command-row')
+    row.append(element('code', '', command), copyButton(command))
+    const status = element('p', 'command-status sr-only')
+    status.setAttribute('role', 'status')
+    status.setAttribute('aria-atomic', 'true')
+    container.append(row, status)
+  }
   function renderInstallGuideBody(os) {
     const guide = installGuides[os]
     const body = element('div', 'install-guide-body')
@@ -238,9 +246,7 @@
       appendRichText(text, description)
       copy.append(text)
       if (command) {
-        const commandRow = element('div', 'command-row')
-        commandRow.append(element('code', '', command), copyButton(command))
-        copy.append(commandRow)
+        appendCommand(copy, command)
       }
       item.append(copy)
       steps.append(item)
@@ -249,9 +255,7 @@
     if (guide.fix) {
       const fix = element('div', 'install-fix')
       fix.append(element('p', '', guide.fix[0]))
-      const commandRow = element('div', 'command-row')
-      commandRow.append(element('code', '', guide.fix[1]), copyButton(guide.fix[1]))
-      fix.append(commandRow)
+      appendCommand(fix, guide.fix[1])
       body.append(fix)
     }
     return body
@@ -296,7 +300,7 @@
         card.append(platform, element('span'), element('span'), link)
         list.append(card)
       })
-      panel.append(list)
+      panel.append(list, renderInstallGuide(os))
     })
   }
   placeholderPanels('Finding available builds…')
@@ -536,17 +540,36 @@
   $('download-help-dismiss').addEventListener('click', () => {
     downloadToast.hidden = true
   })
+  const copyStates = new WeakMap()
+  async function copyCommand(button) {
+    const state = copyStates.get(button) || { timer: null, request: 0 }
+    copyStates.set(button, state)
+    const request = ++state.request
+    window.clearTimeout(state.timer)
+    const status = button.closest('.command-row').nextElementSibling
+    status.textContent = ''
+    status.classList.add('sr-only')
+    try {
+      if (!navigator.clipboard?.writeText) throw new Error('Clipboard unavailable')
+      await navigator.clipboard.writeText(button.dataset.copy)
+      if (request !== state.request) return
+      button.textContent = 'Copied'
+      status.textContent = 'Command copied to clipboard.'
+      state.timer = window.setTimeout(() => {
+        button.textContent = 'Copy'
+        status.textContent = ''
+      }, 1800)
+    } catch {
+      if (request !== state.request) return
+      button.textContent = 'Copy'
+      status.classList.remove('sr-only')
+      status.textContent = 'Couldn’t copy. Select the command and copy it manually.'
+    }
+  }
   document.addEventListener('click', (event) => {
     const copy = event.target.closest('[data-copy]')
     if (copy) {
-      const command = copy.dataset.copy
-      navigator.clipboard?.writeText(command).then(
-        () => {
-          copy.textContent = 'Copied'
-          window.setTimeout(() => (copy.textContent = 'Copy'), 1800)
-        },
-        () => {}
-      )
+      copyCommand(copy)
       return
     }
     const link = event.target.closest('a')
@@ -590,8 +613,12 @@
     Math.max(0, value - wifiHistory[index])
   )
   function updateMotionButton() {
-    $('demo-motion').textContent = paused ? 'Play demo' : 'Pause demo'
+    const label = paused ? 'Play demo' : 'Pause demo'
+    $('demo-motion').setAttribute('aria-label', label)
+    $('demo-motion').title = label
     $('demo-motion').setAttribute('aria-pressed', String(paused))
+    $('demo-pause-icon').toggleAttribute('hidden', paused)
+    $('demo-play-icon').toggleAttribute('hidden', !paused)
     document.querySelector('.download-demo').classList.toggle('demo-paused', paused)
   }
   updateMotionButton()
