@@ -1,11 +1,12 @@
 import type { DownloadState, FinishedDownload, NetworkPreferences } from '@shared/types'
 import { ChevronRight, Pause, Play, Plus, RotateCw, X, type LucideIcon } from 'lucide-react'
 import { cn } from 'cn'
-import { memo, useCallback, useEffect, useState } from 'react'
+import { Fragment, memo, useCallback, useEffect, useState } from 'react'
 import { DownloadFilterMenu } from '../components/DownloadFilterMenu'
 import { CombineDiagram } from '../components/CombineDiagram'
 import { FixLinkDialog } from '../components/FixLinkDialog'
 import { LimitsDialog } from '../components/LimitsDialog'
+import { networkStatusText } from '../components/NetworkRow'
 import { NetworksMenu } from '../components/NetworksMenu'
 import { TorrentBadge } from '../components/TorrentBadge'
 import {
@@ -677,7 +678,20 @@ const DownloadRow = memo(function DownloadRow({
     )
       ? item.networks.map((network) => {
           const visual = networkVisual(network.id, network.kind, network.label)
-          return { id: network.id, on: network.enabled, color: visual.solid, name: visual.name }
+          return {
+            id: network.id,
+            on: network.enabled,
+            color: visual.solid,
+            name: visual.name,
+            // Its speed while it runs; otherwise whether it's on, or what's stopping it.
+            state: !network.enabled
+              ? 'Off'
+              : network.status !== 'on'
+                ? networkStatusText(network.status, network.transfer)
+                : item.status === 'downloading'
+                  ? formatSpeed(network.speedBytesPerSec)
+                  : 'On'
+          }
         })
       : null
   const speed =
@@ -717,22 +731,47 @@ const DownloadRow = memo(function DownloadRow({
             {(dots || speed) && (
               <div className="ml-auto flex shrink-0 items-center gap-2.5 pl-2">
                 {dots && (
-                  <span
-                    role="img"
-                    aria-label={`On ${dots
-                      .filter((dot) => dot.on)
-                      .map((dot) => dot.name)
-                      .join(', ')}`}
-                    className="flex items-center gap-1 rounded-full border border-border px-1.5 py-1"
-                  >
-                    {dots.map((dot) => (
-                      <span
-                        key={dot.id}
-                        className={cn('size-1.5 rounded-full', !dot.on && 'bg-muted-foreground/30')}
-                        style={dot.on ? { background: dot.color } : undefined}
-                      />
-                    ))}
-                  </span>
+                  <Tooltip>
+                    <TooltipTrigger
+                      render={
+                        <span
+                          role="img"
+                          aria-label={dots.map((dot) => `${dot.name} ${dot.state}`).join(', ')}
+                          className="flex items-center gap-1 rounded-full border border-border px-1.5 py-1"
+                        >
+                          {dots.map((dot) => (
+                            <span
+                              key={dot.id}
+                              className={cn(
+                                'size-1.5 rounded-full',
+                                !dot.on && 'bg-muted-foreground/30'
+                              )}
+                              style={dot.on ? { background: dot.color } : undefined}
+                            />
+                          ))}
+                        </span>
+                      }
+                    />
+                    <TooltipContent>
+                      <div className="grid grid-cols-[auto_auto_auto] items-center gap-x-2 gap-y-1">
+                        {dots.map((dot) => (
+                          <Fragment key={dot.id}>
+                            <span
+                              className={cn(
+                                'size-2 rounded-full',
+                                !dot.on && 'border border-current opacity-60'
+                              )}
+                              style={dot.on ? { background: dot.color } : undefined}
+                            />
+                            <span>{dot.name}</span>
+                            <span className="pl-3 text-right font-mono tabular-nums opacity-80">
+                              {dot.state}
+                            </span>
+                          </Fragment>
+                        ))}
+                      </div>
+                    </TooltipContent>
+                  </Tooltip>
                 )}
                 {speed && (
                   <span className="font-mono text-[12.5px] font-medium tabular-nums">{speed}</span>

@@ -27,6 +27,17 @@ const STATUS_TEXT: Record<Exclude<NetworkStatus, 'on'>, string> = {
   limit: 'Data limit reached'
 }
 
+/** What a network that isn't simply on says: here, and in the downloads list's tooltip. */
+// eslint-disable-next-line react-refresh/only-export-components -- one wording, shared
+export function networkStatusText(
+  status: Exclude<NetworkStatus, 'on'>,
+  transfer: 'http' | 'torrent'
+): string {
+  return status === 'unreachable' && transfer === 'torrent'
+    ? 'Can’t reach peers'
+    : STATUS_TEXT[status]
+}
+
 const rowClass = 'col-span-full grid grid-cols-subgrid items-center gap-3'
 
 function ProgressBar({
@@ -390,9 +401,7 @@ export function NetworkRow({
                     tabIndex={group.error ? 0 : undefined}
                     className={`rounded-sm font-mono text-[10px] whitespace-nowrap outline-none ${hasError ? 'text-destructive' : 'text-muted-foreground'}`}
                   >
-                    {group.status === 'unreachable' && group.transfer === 'torrent'
-                      ? 'Can’t reach peers'
-                      : STATUS_TEXT[group.status]}
+                    {networkStatusText(group.status, group.transfer)}
                   </span>
                 }
               />
