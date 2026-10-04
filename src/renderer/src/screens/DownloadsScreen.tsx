@@ -1,11 +1,12 @@
-import type { DownloadState, FinishedDownload } from '@shared/types'
+import type { DownloadState, FinishedDownload, NetworkPreferences } from '@shared/types'
 import { ChevronRight, Pause, Play, Plus, RotateCw, X, type LucideIcon } from 'lucide-react'
 import { cn } from 'cn'
-import { memo, useCallback, useEffect, useState } from 'react'
+import { Fragment, memo, useCallback, useEffect, useState } from 'react'
 import { DownloadFilterMenu } from '../components/DownloadFilterMenu'
 import { CombineDiagram } from '../components/CombineDiagram'
 import { FixLinkDialog } from '../components/FixLinkDialog'
 import { LimitsDialog } from '../components/LimitsDialog'
+import { networkStatusText } from '../components/NetworkRow'
 import { NetworksMenu } from '../components/NetworksMenu'
 import { TorrentBadge } from '../components/TorrentBadge'
 import {
@@ -143,6 +144,7 @@ export function DownloadsScreen(): React.JSX.Element {
   )
   // Stable, with the colors resolved once here, so a finished row skips every progress push.
   const networkVisual = useNetworkVisuals()
+  const networkPreferences = useAppStore((store) => store.networkPreferences)
   const selectRow = useCallback((id: string, on: boolean) => toggle([id], on), [toggle])
   const openRow = useCallback((id: string) => setView({ name: 'download', id }), [setView])
   const fixRow = useCallback((item: Item) => {
@@ -390,12 +392,8 @@ export function DownloadsScreen(): React.JSX.Element {
           const some = !all && ids.some((id) => selected.has(id))
           return (
             <section key={group.label} aria-label={group.label}>
-              <div className="group/group-header flex items-center gap-3 border-b-[0.5px] border-border pt-5 pb-3">
+              <div className="flex items-center gap-3 border-b-[0.5px] border-border pt-5 pb-3">
                 <Checkbox
-                  className={cn(
-                    chosen.length === 0 &&
-                      'opacity-0 group-focus-within/group-header:opacity-100 group-hover/group-header:opacity-100'
-                  )}
                   aria-label={
                     group.label === 'Needs attention'
                       ? 'Select all downloads needing attention'
@@ -433,10 +431,10 @@ export function DownloadsScreen(): React.JSX.Element {
                   item={item}
                   now={now}
                   selected={selected.has(item.id)}
-                  selecting={chosen.length > 0}
                   networkVisual={
                     isFinished(item) || item.status === 'completed' ? undefined : networkVisual
                   }
+                  networkPreferences={networkPreferences}
                   onSelect={selectRow}
                   onOpen={openRow}
                   onFix={fixRow}
@@ -560,8 +558,8 @@ const DownloadRow = memo(function DownloadRow({
   item,
   now,
   selected,
-  selecting,
   networkVisual,
+  networkPreferences,
   onSelect,
   onOpen,
   onFix,
@@ -570,10 +568,10 @@ const DownloadRow = memo(function DownloadRow({
   item: Item
   now: number
   selected: boolean
-  /** Something is selected: every checkbox shows, not just the hovered row's. */
-  selecting: boolean
-  /** Colors its progress bar; a finished row has none. */
+  /** Colors its progress bar and network dots; a finished row has none. */
   networkVisual?: ResolveNetworkVisual
+  /** The default networks (the networks menu), to tell a download set otherwise. */
+  networkPreferences: NetworkPreferences
   onSelect: (id: string, on: boolean) => void
   onOpen: (id: string) => void
   onFix: (item: Item) => void
@@ -609,7 +607,6 @@ const DownloadRow = memo(function DownloadRow({
         detail = [
           wanted > 0 && `${percent}%`,
           sizes,
-          formatSpeed(download.speedBytesPerSec),
           download.timeLeftSeconds !== undefined && formatEta(download.timeLeftSeconds)
         ]
           .filter(Boolean)
@@ -670,6 +667,38 @@ const DownloadRow = memo(function DownloadRow({
               color: networkVisual(network.id, network.kind, network.label).solid
             }))
 
+  // Set apart from the default networks: which it's on, at a glance. One on the defaults says
+  // nothing new, so it shows none.
+  const dots =
+    !finished &&
+    networkVisual &&
+    !isFinished(item) &&
+    item.networks.some(
+      (network) => network.enabled === Boolean(networkPreferences[network.id]?.off)
+    )
+      ? item.networks.map((network) => {
+          const visual = networkVisual(network.id, network.kind, network.label)
+          return {
+            id: network.id,
+            on: network.enabled,
+            color: visual.solid,
+            name: visual.name,
+            // Its speed while it runs; otherwise whether it's on, or what's stopping it.
+            state: !network.enabled
+              ? 'Off'
+              : network.status !== 'on'
+                ? networkStatusText(network.status, network.transfer)
+                : item.status === 'downloading'
+                  ? formatSpeed(network.speedBytesPerSec)
+                  : 'On'
+          }
+        })
+      : null
+  const speed =
+    !finished && !isFinished(item) && item.status === 'downloading'
+      ? formatSpeed(item.speedBytesPerSec)
+      : null
+
   return (
     <div
       data-selected={selected || undefined}
@@ -681,11 +710,6 @@ const DownloadRow = memo(function DownloadRow({
       )}
     >
       <Checkbox
-        className={cn(
-          !selecting &&
-            !selected &&
-            'opacity-0 group-focus-within/download-row:opacity-100 group-hover/download-row:opacity-100'
-        )}
         aria-label={`Select ${item.fileName}`}
         checked={selected}
         onCheckedChange={(on) => onSelect(item.id, on)}
@@ -704,6 +728,56 @@ const DownloadRow = memo(function DownloadRow({
               {item.fileName}
             </span>
             {item.kind === 'torrent' && <TorrentBadge />}
+            {(dots || speed) && (
+              <div className="ml-auto flex shrink-0 items-center gap-2.5 pl-2">
+                {dots && (
+                  <Tooltip>
+                    <TooltipTrigger
+                      render={
+                        <span
+                          role="img"
+                          aria-label={dots.map((dot) => `${dot.name} ${dot.state}`).join(', ')}
+                          className="flex items-center gap-1 rounded-full border border-border px-1.5 py-1"
+                        >
+                          {dots.map((dot) => (
+                            <span
+                              key={dot.id}
+                              className={cn(
+                                'size-1.5 rounded-full',
+                                !dot.on && 'bg-muted-foreground/30'
+                              )}
+                              style={dot.on ? { background: dot.color } : undefined}
+                            />
+                          ))}
+                        </span>
+                      }
+                    />
+                    <TooltipContent>
+                      <div className="grid grid-cols-[auto_auto_auto] items-center gap-x-2 gap-y-1">
+                        {dots.map((dot) => (
+                          <Fragment key={dot.id}>
+                            <span
+                              className={cn(
+                                'size-2 rounded-full',
+                                !dot.on && 'border border-current opacity-60'
+                              )}
+                              style={dot.on ? { background: dot.color } : undefined}
+                            />
+                            <span>{dot.name}</span>
+                            <span className="pl-3 text-right font-mono tabular-nums opacity-80">
+                              {dot.state}
+                            </span>
+                          </Fragment>
+                        ))}
+                      </div>
+                    </TooltipContent>
+                  </Tooltip>
+                )}
+                {speed && (
+                  <span className="font-mono text-[12.5px] font-medium tabular-nums">{speed}</span>
+                )}
+              </div>
+            )}
           </div>
           {segments.length > 0 && (
             <div
