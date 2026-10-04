@@ -105,7 +105,7 @@
       steps: [
         [
           '**AppImage:** make it executable, then run it.',
-          'chmod +x Plexo-*.AppImage && ./Plexo-*.AppImage'
+          'chmod +x plexo-*.AppImage && ./plexo-*.AppImage'
         ],
         ['**Debian / Ubuntu:** install the .deb with apt.', 'sudo apt install ./plexo_*.deb'],
         ['**Fedora / RHEL:** install the .rpm with dnf.', 'sudo dnf install ./plexo-*.rpm'],
