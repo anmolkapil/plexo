@@ -884,8 +884,28 @@
             </div>
           </div>
           <p class="demo-caption">
-            <button id="demo-motion" type="button" aria-pressed="false">Pause demo</button
-            ><span id="demo-status" class="sr-only">Downloading</span>
+            <button
+              id="demo-motion"
+              type="button"
+              aria-label="Pause demo"
+              title="Pause demo"
+              aria-pressed="false"
+            >
+              <svg
+                width="20"
+                height="20"
+                viewBox="0 0 24 24"
+                fill="currentColor"
+                aria-hidden="true"
+              >
+                <g id="demo-pause-icon">
+                  <rect x="6" y="5" width="4" height="14" rx="1" />
+                  <rect x="14" y="5" width="4" height="14" rx="1" />
+                </g>
+                <path id="demo-play-icon" d="M8 5v14l11-7Z" hidden />
+              </svg>
+            </button>
+            <span id="demo-status" class="sr-only">Downloading</span>
           </p>
         </section>
 

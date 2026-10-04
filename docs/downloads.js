@@ -44,7 +44,7 @@
     linux: [
       'AppImage: `chmod +x plexo-*.AppImage`, then run it. Recent Ubuntu needs FUSE 2 first: `sudo apt install libfuse2t64` (older releases call it `libfuse2`) — or use the .deb, which needs nothing extra.',
       '.deb: `sudo apt install ./plexo_*.deb`.',
-      'Fedora / RHEL: use the AppImage, and install FUSE 2 first with `sudo dnf install fuse-libs`.',
+      '.rpm (Fedora / RHEL): `sudo dnf install ./plexo-*.rpm`.',
       'Don’t open the AppImage with Disks (it isn’t a disk image — an “image is smaller than the target device” message means it was opened there). Make it executable and run it as above.',
       'Using more than one network needs Linux kernel 5.7 or newer (any current distro); on older kernels Plexo can only use the default network.'
     ]
@@ -77,7 +77,7 @@
         'appimage',
         'AppImage' + archSuffix(arch),
         'Runs on any distro, no install',
-        arch === 'arm64' ? 2 : 0
+        arch === 'arm64' ? 3 : 0
       )
     }
     if (/\.deb$/.test(n)) {
@@ -87,7 +87,7 @@
         'deb',
         'Debian / Ubuntu' + archSuffix(arch),
         '.deb package · Debian, Ubuntu, Mint',
-        arch === 'arm64' ? 3 : 1
+        arch === 'arm64' ? 4 : 1
       )
     }
     if (/\.rpm$/.test(n)) {
@@ -97,7 +97,7 @@
         'rpm',
         'Fedora / RHEL' + archSuffix(arch),
         '.rpm package · Fedora, RHEL, openSUSE',
-        arch === 'arm64' ? 5 : 4
+        arch === 'arm64' ? 5 : 2
       )
     }
     return null

@@ -435,7 +435,7 @@ test.describe('the download page', () => {
     }
   })
 
-  test('GitHub unreachable leaves usable links to release builds', async () => {
+  test('GitHub unreachable retains release links and installation help for every OS', async () => {
     const { page, close } = await openPage(BROWSERS.chromeWindows, { apiStatus: 500 })
     try {
       await expect(page.locator('#release-meta')).toContainText('Couldn’t load')
@@ -444,6 +444,76 @@ test.describe('the download page', () => {
         'href',
         'https://github.com/anmolkapil/plexo/releases'
       )
+      for (const os of ['macOS', 'Windows', 'Linux']) {
+        await page.getByRole('tab', { name: os }).click()
+        const panel = page.getByRole('tabpanel', { name: os })
+        await panel.locator('summary').click()
+        await expect(panel.locator('.install-guide-body')).toBeVisible()
+      }
+    } finally {
+      await close()
+    }
+  })
+
+  test('copy confirmation keeps its width and resets after the most recent click', async () => {
+    const { page, close } = await openPage(BROWSERS.chromeMac)
+    try {
+      await page.evaluate(() => {
+        Object.defineProperty(navigator, 'clipboard', {
+          value: {
+            writeText: async (text: string) => {
+              document.body.dataset.copiedCommand = text
+            }
+          }
+        })
+      })
+      await page.locator('#panel-mac summary').click()
+      const button = page.locator('#panel-mac .copy-command')
+      const status = page.locator('#panel-mac .command-status')
+      await button.click({ trial: true })
+      const width = (await button.boundingBox())?.width
+      await button.click()
+      await expect(button).toHaveText('Copied')
+      expect((await button.boundingBox())?.width).toBe(width)
+      expect(await page.locator('body').getAttribute('data-copied-command')).toBe(
+        await page.locator('#panel-mac code').textContent()
+      )
+      await expect(status).toHaveAttribute('role', 'status')
+      await expect(status).toHaveText('Command copied to clipboard.')
+      await page.waitForTimeout(1200)
+      await button.click()
+      await page.waitForTimeout(800)
+      await expect(button).toHaveText('Copied')
+      await expect(button).toHaveText('Copy')
+    } finally {
+      await close()
+    }
+  })
+
+  test('failed or unavailable clipboard access offers manual copying', async () => {
+    const { page, close } = await openPage(BROWSERS.chromeMac)
+    try {
+      await page.locator('#panel-mac summary').click()
+      for (const unavailable of [false, true]) {
+        await page.evaluate((missing) => {
+          Object.defineProperty(navigator, 'clipboard', {
+            configurable: true,
+            value: missing
+              ? undefined
+              : {
+                  writeText: async () => {
+                    throw new Error('Clipboard access denied')
+                  }
+                }
+          })
+        }, unavailable)
+        await page.locator('#panel-mac .copy-command').click()
+        const status = page.locator('#panel-mac .command-status')
+        await expect(status).toBeVisible()
+        await expect(status).not.toHaveClass(/sr-only/)
+        await expect(status).toHaveText('Couldn’t copy. Select the command and copy it manually.')
+        await expect(page.locator('#panel-mac .copy-command')).toHaveText('Copy')
+      }
     } finally {
       await close()
     }
