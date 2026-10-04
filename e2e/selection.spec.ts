@@ -58,7 +58,6 @@ test('mixed selection applies actions only to eligible downloads and keeps finis
   await expect(
     page.getByRole('button', { name: 'Cancel downloads… (2)', exact: true })
   ).toBeVisible()
-  await page.screenshot({ path: '/tmp/plexo-selected-downloads.png' })
   await plexo.page.getByRole('button', { name: 'Remove from list (1)', exact: true }).click()
   await expect(page.getByRole('button', { name: 'Open finished.bin', exact: true })).toBeHidden()
   expect(existsSync(finished.destinationPath)).toBe(true)
