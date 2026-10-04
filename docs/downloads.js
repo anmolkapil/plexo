@@ -44,6 +44,8 @@
     linux: [
       'AppImage: `chmod +x plexo-*.AppImage`, then run it. Recent Ubuntu needs FUSE 2 first: `sudo apt install libfuse2t64` (older releases call it `libfuse2`) — or use the .deb, which needs nothing extra.',
       '.deb: `sudo apt install ./plexo_*.deb`.',
+      'Fedora / RHEL: use the AppImage, and install FUSE 2 first with `sudo dnf install fuse-libs`.',
+      'Don’t open the AppImage with Disks (it isn’t a disk image — an “image is smaller than the target device” message means it was opened there). Make it executable and run it as above.',
       'Using more than one network needs Linux kernel 5.7 or newer (any current distro); on older kernels Plexo can only use the default network.'
     ]
   }
@@ -123,7 +125,16 @@
 
     // iPadOS reports itself as a Mac, with a touch screen.
     if (/Android|iPhone|iPad|iPod/i.test(s) || (/Mac/i.test(platform) && touch > 1)) {
-      return { os: 'mobile', arch: null }
+      var mobileArch = null
+      if (hint && hint.architecture) {
+        mobileArch =
+          hint.architecture === 'arm' ? 'arm64' : hint.architecture === 'x86' ? 'x64' : null
+      } else if (/x86_64|x64|amd64/i.test(s)) {
+        mobileArch = 'x64'
+      } else if (/arm|aarch64|iPhone|iPad|iPod/i.test(s) || (/Mac/i.test(platform) && touch > 1)) {
+        mobileArch = 'arm64'
+      }
+      return { os: 'mobile', arch: mobileArch }
     }
     if (/CrOS/.test(s)) return { os: 'other', arch: null }
 

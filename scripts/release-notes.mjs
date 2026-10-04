@@ -16,7 +16,7 @@ import { fileURLToPath } from 'node:url'
 const { PlexoDownloads: downloads } = createRequire(import.meta.url)('../docs/downloads.js')
 
 const REPO = 'anmolkapil/plexo'
-const SITE = 'https://anmolkapil.github.io/plexo/'
+const SITE = 'https://getplexo.app/'
 
 const [tag, arg] = process.argv.slice(2)
 if (!tag || !/^v\d/.test(tag)) {

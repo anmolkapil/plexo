@@ -1,0 +1,1770 @@
+@font-face {
+  font-family: 'Archivo';
+  src: url('assets/fonts/Archivo-Variable.woff2') format('woff2');
+  font-weight: 100 900;
+  font-display: swap;
+  font-stretch: 62% 125%;
+}
+@font-face {
+  font-family: 'Geist';
+  src: url('assets/fonts/Geist-Variable.woff2') format('woff2');
+  font-weight: 100 900;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'Geist Mono';
+  src: url('assets/fonts/GeistMono-Variable.woff2') format('woff2');
+  font-weight: 100 900;
+  font-display: swap;
+}
+
+body {
+  margin: 0;
+  background: #0a0a0b;
+}
+* {
+  box-sizing: border-box;
+}
+html {
+  color-scheme: dark;
+  scroll-behavior: smooth;
+}
+a {
+  color: inherit;
+  text-decoration: none;
+}
+.lnk {
+  background: linear-gradient(currentColor, currentColor) left calc(100% - 1px) / 0 1px no-repeat;
+  transition:
+    color 0.2s,
+    background-size 0.25s ease;
+}
+.lnk:hover {
+  color: #f36712;
+  background-size: 100% 1px;
+}
+.navlinks a {
+  position: relative;
+  color: #a1a1a8;
+  transition:
+    color 0.2s,
+    text-shadow 0.2s;
+}
+.navlinks a:hover {
+  color: #ededef;
+}
+.navlinks .nav-section-link::after {
+  position: absolute;
+  right: 0;
+  bottom: 4px;
+  left: 0;
+  width: 18px;
+  height: 2px;
+  margin: auto;
+  border-radius: 999px;
+  background: #f36712;
+  box-shadow: 0 0 12px rgba(243, 103, 18, 0.72);
+  content: '';
+  opacity: 0;
+  transform: scaleX(0.35);
+  transition:
+    opacity 0.2s,
+    transform 0.2s;
+}
+.navlinks .nav-section-link[aria-current='location'] {
+  color: #fff;
+  text-shadow: 0 0 18px rgba(255, 255, 255, 0.22);
+}
+.navlinks .nav-section-link[aria-current='location']::after {
+  opacity: 1;
+  transform: scaleX(1);
+}
+.menu-panel .nav-section-link {
+  border: 1px solid transparent;
+  color: #a1a1a8;
+  transition:
+    background 0.2s,
+    border-color 0.2s,
+    color 0.2s;
+}
+.menu-panel .nav-section-link[aria-current='location'] {
+  border-color: rgba(243, 103, 18, 0.2);
+  background: rgba(243, 103, 18, 0.1);
+  color: #fff;
+  box-shadow: inset 3px 0 #f36712;
+}
+.btn-primary {
+  transition:
+    background 0.2s,
+    transform 0.2s;
+}
+.btn-primary:hover {
+  background: #ff7d2e !important;
+  transform: translateY(-1px);
+}
+.btn-3d {
+  position: relative;
+  text-shadow: 0 1px 1px rgba(80, 25, 0, 0.35);
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.28),
+    inset 0 -1px 0 rgba(0, 0, 0, 0.18),
+    0 1px 2px rgba(0, 0, 0, 0.4),
+    0 10px 30px -12px rgba(243, 103, 18, 0.55);
+  transition:
+    transform 0.2s ease,
+    box-shadow 0.2s ease,
+    filter 0.2s ease;
+}
+.btn-3d:hover {
+  transform: translateY(-2px);
+  filter: brightness(1.06);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.32),
+    inset 0 -1px 0 rgba(0, 0, 0, 0.18),
+    0 1px 2px rgba(0, 0, 0, 0.4),
+    0 14px 40px -12px rgba(243, 103, 18, 0.7);
+}
+.btn-3d:active {
+  transform: translateY(1px);
+  filter: brightness(0.97);
+}
+.download-action .download-symbol {
+  transition: transform 0.2s ease;
+}
+.download-action:hover .download-symbol {
+  transform: translateY(2px);
+}
+.gh-btn {
+  transition:
+    background 0.2s,
+    transform 0.2s,
+    box-shadow 0.2s;
+}
+.gh-btn:hover {
+  background: linear-gradient(
+    160deg,
+    rgba(255, 255, 255, 0.32),
+    rgba(255, 255, 255, 0.09)
+  ) !important;
+  border-color: rgba(255, 255, 255, 0.35) !important;
+  transform: translateY(-1px);
+}
+.github-button {
+  flex: 0 0 44px;
+  box-sizing: border-box;
+  border: 1px solid rgba(255, 255, 255, 0.24) !important;
+  border-radius: 9999px !important;
+  background: linear-gradient(
+    145deg,
+    rgba(255, 255, 255, 0.18),
+    rgba(255, 255, 255, 0.07) 52%,
+    rgba(255, 255, 255, 0.035)
+  ) !important;
+  box-shadow: 0 8px 22px -10px rgba(0, 0, 0, 0.85) !important;
+  backdrop-filter: blur(14px) saturate(140%) !important;
+  -webkit-backdrop-filter: blur(14px) saturate(140%) !important;
+}
+.github-button svg {
+  width: 24px;
+  height: 24px;
+  overflow: visible;
+}
+.github-button:hover {
+  border-color: rgba(255, 255, 255, 0.32) !important;
+  background: linear-gradient(
+    145deg,
+    rgba(255, 255, 255, 0.24),
+    rgba(255, 255, 255, 0.1) 55%,
+    rgba(255, 255, 255, 0.05)
+  ) !important;
+}
+.srow {
+  transition: background 0.2s;
+}
+.srow:hover {
+  background: rgba(255, 255, 255, 0.03) !important;
+}
+.srow:hover svg:last-child {
+  color: #f36712 !important;
+}
+.tile {
+  transition:
+    border-color 0.2s,
+    background 0.2s;
+}
+.tile:hover {
+  border-color: rgba(243, 103, 18, 0.45) !important;
+  background: rgba(243, 103, 18, 0.05) !important;
+}
+.hero-t {
+  background: linear-gradient(180deg, #ffa066 0%, #f36712 70%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+.top-glow {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 820px;
+  pointer-events: none;
+  overflow: hidden;
+}
+.top-glow > div {
+  position: absolute;
+  inset: 0;
+}
+.tg-wide {
+  background: radial-gradient(
+    ellipse 70% 75% at 50% -10%,
+    rgba(150, 45, 8, 0.55) 0%,
+    rgba(110, 32, 6, 0.32) 40%,
+    rgba(60, 18, 4, 0.12) 65%,
+    transparent 85%
+  );
+}
+.tg-core {
+  background: radial-gradient(
+    ellipse 42% 52% at 50% -6%,
+    rgba(255, 150, 90, 0.9) 0%,
+    rgba(243, 103, 18, 0.7) 22%,
+    rgba(200, 70, 15, 0.38) 48%,
+    rgba(140, 40, 8, 0.12) 72%,
+    transparent 90%
+  );
+  filter: blur(8px);
+}
+.tg-sparks {
+  background-image:
+    radial-gradient(1.6px 1.6px at 31% 9%, rgba(255, 215, 180, 0.9), transparent),
+    radial-gradient(1.2px 1.2px at 38% 22%, rgba(255, 215, 180, 0.7), transparent),
+    radial-gradient(2px 2px at 44% 6%, rgba(255, 225, 195, 0.8), transparent),
+    radial-gradient(1.2px 1.2px at 52% 15%, rgba(255, 215, 180, 0.6), transparent),
+    radial-gradient(1.6px 1.6px at 58% 4%, rgba(255, 225, 195, 0.85), transparent),
+    radial-gradient(1.2px 1.2px at 63% 19%, rgba(255, 215, 180, 0.6), transparent),
+    radial-gradient(1.8px 1.8px at 67% 10%, rgba(255, 215, 180, 0.75), transparent),
+    radial-gradient(1.2px 1.2px at 35% 30%, rgba(255, 215, 180, 0.5), transparent),
+    radial-gradient(1.4px 1.4px at 60% 27%, rgba(255, 215, 180, 0.55), transparent),
+    radial-gradient(1px 1px at 48% 26%, rgba(255, 215, 180, 0.6), transparent);
+  animation: tgDrift 9s ease-in-out infinite alternate;
+}
+@keyframes tgDrift {
+  from {
+    transform: translateY(0);
+    opacity: 0.55;
+  }
+  to {
+    transform: translateY(14px);
+    opacity: 1;
+  }
+}
+.tg-fade {
+  background: linear-gradient(180deg, transparent 45%, #0a0a0b 100%);
+}
+@media (prefers-reduced-motion: reduce) {
+  .tg-sparks {
+    animation: none;
+  }
+}
+.h1-line {
+  display: block;
+  white-space: nowrap;
+}
+.menu-btn {
+  display: none;
+}
+.menu-panel a:hover {
+  background: rgba(255, 255, 255, 0.05);
+}
+.cells {
+  padding-left: 1px;
+}
+.cells > * {
+  margin: 0 0 -1px -1px;
+}
+.stack > *:first-child {
+  margin-bottom: -1px;
+}
+@media (max-width: 1008px) {
+  .feat-swap {
+    order: 2;
+  }
+  .feat-title {
+    min-height: 0 !important;
+  }
+}
+@media (max-width: 640px) {
+  .navlinks {
+    display: none !important;
+  }
+  .menu-btn {
+    display: grid !important;
+  }
+  .h1-line {
+    white-space: normal;
+  }
+}
+@media (min-width: 641px) {
+  .menu-panel {
+    display: none !important;
+  }
+}
+.dl-modal {
+  animation: dlIn 0.28s ease-out;
+}
+.dl-scrim {
+  animation: fadeIn 0.2s ease-out;
+}
+.dl-toast {
+  animation: dlUp 0.3s ease-out;
+}
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+@keyframes dlUp {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+@keyframes dlIn {
+  from {
+    opacity: 0;
+    transform: translateY(-8px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+.hatch {
+  background-image: repeating-linear-gradient(
+    135deg,
+    rgba(255, 255, 255, 0.055) 0 1px,
+    transparent 1px 11px
+  );
+}
+.giant {
+  background: linear-gradient(
+    180deg,
+    #f36712 0%,
+    rgba(243, 103, 18, 0.4) 45%,
+    rgba(243, 103, 18, 0) 92%
+  );
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  transition:
+    opacity 0.8s ease,
+    filter 0.8s ease;
+}
+.flow {
+  fill: none;
+  stroke-width: 3;
+  stroke-linecap: round;
+  stroke-dasharray: 6 8;
+  animation: plexoFlow 1s linear infinite;
+  transition: opacity 0.4s;
+}
+.flow.off {
+  animation-play-state: paused;
+  opacity: 0.16;
+}
+.flow-out {
+  fill: none;
+  stroke: #ededef;
+  stroke-width: 6.5;
+  stroke-linecap: round;
+  transition: opacity 0.4s;
+}
+.flow-arrow {
+  fill: #ededef;
+  transition: opacity 0.4s;
+}
+.flow-out.off {
+  opacity: 0.2;
+}
+@keyframes plexoFlow {
+  to {
+    stroke-dashoffset: -30;
+  }
+}
+.combine-ring {
+  fill: none;
+  stroke: #ededef;
+  stroke-opacity: 0.25;
+  stroke-width: 1.5;
+}
+.combine-dot {
+  fill: #ededef;
+}
+.area {
+  transition:
+    d 0.5s linear,
+    opacity 0.3s ease;
+}
+.area.off {
+  opacity: 0.18;
+}
+.area-wifi {
+  fill: rgba(243, 103, 18, 0.62);
+}
+.area-usb {
+  fill: rgba(200, 200, 206, 0.5);
+}
+.cline {
+  fill: none;
+  stroke: #ededef;
+  stroke-width: 2;
+  vector-effect: non-scaling-stroke;
+  transition: d 0.5s linear;
+}
+.gline {
+  stroke: rgba(255, 255, 255, 0.07);
+  stroke-width: 1;
+  vector-effect: non-scaling-stroke;
+}
+.bar {
+  transition: width 0.5s linear;
+}
+.shine {
+  position: absolute;
+  pointer-events: none;
+  z-index: 1;
+}
+.shine-tl {
+  top: -1px;
+  left: -1px;
+  width: 280px;
+  height: 210px;
+  border-top: 1px solid rgba(255, 255, 255, 0.82);
+  border-left: 1px solid rgba(255, 255, 255, 0.82);
+  border-top-left-radius: 40px;
+  background: none;
+  filter: drop-shadow(0 0 5px rgba(255, 255, 255, 0.2));
+  -webkit-mask-image: radial-gradient(230px 170px at 68px 44px, #000 0%, transparent 88%);
+  mask-image: radial-gradient(230px 170px at 68px 44px, #000 0%, transparent 88%);
+}
+.demo-frame {
+  max-width: none;
+  transform-origin: top left;
+  -webkit-mask-image: linear-gradient(180deg, #000 0, #000 calc(100% - 96px), transparent 100%);
+  mask-image: linear-gradient(180deg, #000 0, #000 calc(100% - 96px), transparent 100%);
+}
+.demo-stage {
+  position: relative;
+  overflow: hidden;
+}
+@media (prefers-reduced-motion: reduce) {
+  .flow {
+    animation: none;
+  }
+  .area,
+  .cline,
+  .bar {
+    transition: none;
+  }
+}
+
+:root {
+  color-scheme: dark;
+  --orange: #f36712;
+  --text: #ededef;
+  --muted: #a1a1a8;
+  font-family: 'Geist', sans-serif;
+}
+html {
+  scroll-padding-top: 110px;
+}
+body {
+  -webkit-font-smoothing: antialiased;
+}
+button,
+input {
+  font: inherit;
+}
+button {
+  cursor: pointer;
+}
+button,
+a,
+input,
+summary {
+  touch-action: manipulation;
+}
+[hidden] {
+  display: none !important;
+}
+a:focus-visible,
+button:focus-visible,
+input:focus-visible,
+summary:focus-visible,
+[tabindex]:focus-visible {
+  outline: 2px solid #ff8a3d;
+  outline-offset: 5px;
+}
+.skip-link {
+  position: fixed;
+  top: 8px;
+  left: 8px;
+  z-index: 100;
+  padding: 12px 18px;
+  background: #f36712;
+  border-radius: 12px;
+  transform: translateY(-150%);
+}
+.skip-link:focus {
+  transform: none;
+}
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
+.hero-actions {
+  position: relative;
+  margin-top: 40px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 14px;
+}
+.hero-action-row {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: 12px 28px;
+}
+.download-primary {
+  display: inline-flex;
+  align-items: center;
+  gap: 12px;
+  padding: 18px 34px;
+  border-radius: 999px;
+  background: linear-gradient(180deg, #f2711f, #dd5a0c 55%, #c94a06);
+  color: white;
+  font-weight: 600;
+  font-size: 18px;
+}
+.all-downloads {
+  display: inline-flex;
+  align-items: center;
+  min-height: 58px;
+  font-size: 15px;
+}
+#hero-download-info {
+  margin: 0;
+  font:
+    13px/1.6 'Geist Mono',
+    monospace;
+  color: #8c8c94;
+  max-width: 580px;
+}
+#hero-alternates {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 12px;
+}
+#hero-alternates a {
+  padding: 14px 24px;
+  border: 1px solid #ffffff29;
+  border-radius: 999px;
+  font-size: 15px;
+  background: #ffffff08;
+}
+#hero-alternates a:hover {
+  border-color: #f36712;
+}
+.flow-wifi {
+  stroke: #f36712;
+}
+.flow-usb {
+  stroke: #c8c8ce;
+}
+.source-wifi,
+.legend-wifi {
+  fill: #f36712;
+  background: #f36712;
+}
+.source-usb,
+.legend-usb {
+  fill: #c8c8ce;
+  background: #c8c8ce;
+}
+#wifi-diagram-speed,
+#wifi-speed {
+  color: #ff8a3d;
+}
+#usb-diagram-speed,
+#usb-speed {
+  color: #ededef;
+}
+#wifi-contribution {
+  background: #f36712 !important;
+}
+#usb-contribution {
+  background: #c8c8ce !important;
+}
+.wifi-row .n-name > span:first-child {
+  background: #f36712 !important;
+  box-shadow: 0 0 12px rgba(243, 103, 18, 0.65) !important;
+}
+.usb-row .n-name > span:first-child {
+  background: #c8c8ce !important;
+  box-shadow: 0 0 12px rgba(200, 200, 206, 0.45) !important;
+}
+.demo-paused .flow,
+.demo-paused .flow-out {
+  animation-play-state: paused;
+}
+.network-row.off {
+  opacity: 0.4;
+}
+.network-toggle {
+  position: relative;
+  flex: none;
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  appearance: none;
+  box-sizing: border-box;
+  border: 1px solid #ffffff29;
+  border-radius: 4px;
+  background: #ffffff08;
+  cursor: pointer;
+  touch-action: manipulation;
+  transition:
+    background 0.2s,
+    border-color 0.2s;
+}
+.network-toggle::after {
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 9px;
+  height: 5px;
+  border-left: 2px solid currentColor;
+  border-bottom: 2px solid currentColor;
+  content: '';
+  opacity: 0;
+  transform: rotate(-45deg) scale(0.75);
+  transition:
+    opacity 0.12s,
+    transform 0.16s ease-out;
+}
+.network-toggle:checked {
+  border: 0;
+  background: #f36712;
+  color: #0a0a0b;
+}
+.network-toggle:checked::after {
+  opacity: 1;
+  transform: rotate(-45deg) scale(1);
+}
+.network-toggle:focus-visible {
+  outline: 2px solid rgba(237, 237, 239, 0.75);
+  outline-offset: 3px;
+}
+.usb-row .network-toggle:checked {
+  background: #c8c8ce;
+  color: #0a0a0b;
+}
+#demo-motion {
+  padding: 10px 14px;
+  border: 1px solid #ffffff26;
+  border-radius: 999px;
+  background: #ffffff08;
+  color: #ededef;
+  min-height: 44px;
+}
+.demo-caption {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  margin: 12px 0 0;
+  color: #a1a1a8;
+  font-size: 13px;
+}
+.faq-item {
+  border-bottom: 1px solid #ffffff12;
+}
+.faq-item:last-child {
+  border-bottom: 0;
+}
+.faq-item summary {
+  list-style: none;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+  padding: 24px 0;
+  font-size: 17px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: color 0.2s ease;
+}
+.faq-item summary:hover {
+  color: #fff;
+}
+.faq-item summary::-webkit-details-marker {
+  display: none;
+}
+.faq-item summary span {
+  position: relative;
+  flex: none;
+  width: 20px;
+  height: 20px;
+  color: transparent;
+  font-size: 0;
+}
+.faq-item summary span::before,
+.faq-item summary span::after {
+  position: absolute;
+  top: 9px;
+  left: 3px;
+  width: 14px;
+  height: 1.5px;
+  border-radius: 999px;
+  background: #a1a1a8;
+  content: '';
+  transition:
+    background 0.2s,
+    transform 0.22s ease;
+}
+.faq-item summary span::after {
+  transform: rotate(90deg);
+}
+.faq-item[open] summary span::after {
+  transform: rotate(0deg) scaleX(0);
+}
+.faq-item::details-content {
+  block-size: 0;
+  overflow: hidden;
+  opacity: 0;
+  transition:
+    block-size 0.28s ease,
+    opacity 0.2s ease,
+    content-visibility 0.28s allow-discrete;
+}
+.faq-item[open]::details-content {
+  block-size: auto;
+  opacity: 1;
+}
+.faq-item p a {
+  color: #f58a45;
+  font-weight: 500;
+  text-decoration-line: underline;
+  text-decoration-color: rgba(245, 138, 69, 0.55);
+  text-decoration-thickness: 1px;
+  text-underline-offset: 3px;
+  transition:
+    color 0.2s ease,
+    text-decoration-color 0.2s ease;
+}
+.faq-item p a:hover {
+  color: #ffab72;
+  text-decoration-color: currentColor;
+}
+.downloads {
+  position: relative;
+  padding: 120px 24px 0;
+  max-width: 1248px;
+  margin: auto;
+}
+.section-heading {
+  text-align: center;
+}
+.section-tag {
+  display: inline-flex;
+  padding: 8px 18px;
+  border-radius: 999px;
+  border: 1px solid #ffffff24;
+  background: #151517;
+  font-size: 13px;
+  color: #c8c8ce;
+}
+.section-heading h2 {
+  margin: 24px auto 0;
+  font:
+    600 clamp(30px, 4.4vw, 60px)/1.06 'Archivo',
+    sans-serif;
+  font-stretch: 118%;
+  letter-spacing: -0.015em;
+  text-transform: uppercase;
+  text-wrap: balance;
+}
+.section-heading h2 span {
+  color: #f36712;
+}
+.section-heading p {
+  font-size: 14px;
+  color: #8c8c94;
+  margin-top: 20px;
+}
+.download-box {
+  max-width: 920px;
+  margin: 36px auto 0;
+}
+.os-tabs {
+  position: relative;
+  display: flex;
+  justify-content: center;
+  gap: 4px;
+  padding: 6px;
+  border: 1px solid #ffffff14;
+  border-radius: 999px;
+  background: #141416;
+  width: max-content;
+  max-width: 100%;
+  margin: auto;
+}
+.os-tabs::before {
+  position: absolute;
+  top: 6px;
+  bottom: 6px;
+  left: 0;
+  width: var(--tab-width, 0);
+  border-radius: 999px;
+  background: linear-gradient(180deg, #f2711f, #dd5a0c 55%, #c94a06);
+  box-shadow: inset 0 1px 0 #ffffff47;
+  content: '';
+  transform: translateX(var(--tab-left, 6px));
+  transition:
+    width 0.28s cubic-bezier(0.22, 1, 0.36, 1),
+    transform 0.28s cubic-bezier(0.22, 1, 0.36, 1);
+}
+.os-tabs button {
+  position: relative;
+  z-index: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  min-height: 44px;
+  padding: 0 28px;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: #c8c8ce;
+  font-size: 15px;
+  font-weight: 500;
+  cursor: pointer;
+  transition:
+    background 0.25s ease,
+    box-shadow 0.25s ease,
+    color 0.2s ease,
+    transform 0.2s ease;
+}
+.os-tabs button:not([aria-selected='true']):hover {
+  background: rgba(255, 255, 255, 0.05);
+  color: #fff;
+}
+.os-icon {
+  width: 19px;
+  height: 19px;
+  flex: none;
+  fill: currentColor;
+}
+.os-icon-apple {
+  width: 17px;
+  height: 20px;
+}
+.os-icon-terminal {
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.os-tabs [aria-selected='true'] {
+  background: transparent;
+  color: white;
+  box-shadow: none;
+}
+.release-meta {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px 0;
+  color: #a1a1a8;
+  font-size: 14px;
+}
+.release-meta a {
+  color: #ededef;
+  text-decoration: underline;
+  text-underline-offset: 4px;
+  text-decoration-color: rgba(237, 237, 239, 0.5);
+  transition:
+    color 0.2s,
+    text-decoration-color 0.2s,
+    text-underline-offset 0.2s;
+}
+.release-meta a:hover,
+.release-warning a:hover,
+.download-dialog-actions a:hover {
+  color: #ff8a3d;
+  text-decoration-color: #ff8a3d;
+  text-underline-offset: 6px;
+}
+.architecture-list {
+  display: flex;
+  flex-direction: column;
+  border: 1px solid #ffffff14;
+  border-radius: 24px;
+  background: #111113;
+  overflow: hidden;
+}
+.architecture-card {
+  padding: 22px 28px;
+  border-top: 1px solid #ffffff0f;
+}
+.architecture-card:first-child {
+  border-top: 0;
+}
+.architecture-card h3 {
+  font-size: 16px;
+  font-weight: 600;
+  margin: 0;
+}
+.architecture-card > p {
+  font-size: 13px;
+  color: #8c8c94;
+  margin: 4px 0 14px;
+}
+.asset-link {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  min-height: 44px;
+  padding: 12px 0;
+  border-top: 1px solid #ffffff0f;
+  font-size: 15px;
+}
+.asset-link:hover {
+  color: #ff8a3d;
+}
+.asset-link small {
+  font:
+    12px 'Geist Mono',
+    monospace;
+  color: #8c8c94;
+}
+.asset-link > span:last-child {
+  border: 1px solid #ffffff24;
+  border-radius: 999px;
+  min-width: 44px;
+  padding: 8px 14px;
+  text-align: center;
+}
+.os-note {
+  margin: 24px 0 0;
+  color: #8c8c94;
+  font-size: 14px;
+  line-height: 1.6;
+  text-align: center;
+}
+.install-help {
+  margin-top: 24px;
+  border: 1px solid #ffffff14;
+  border-radius: 20px;
+  padding: 20px 24px;
+  background: #111113;
+}
+.install-help summary {
+  font-size: 16px;
+  font-weight: 500;
+  cursor: pointer;
+}
+.install-help p {
+  font-size: 15px;
+  line-height: 1.6;
+  color: #a1a1a8;
+}
+.install-help code {
+  display: block;
+  overflow-wrap: anywhere;
+  padding: 14px;
+  border: 1px solid #ffffff14;
+  border-radius: 12px;
+  background: #0a0a0b;
+  font:
+    13px/1.6 'Geist Mono',
+    monospace;
+  color: #ededef;
+}
+.download-fallback {
+  color: #a1a1a8;
+}
+.release-link {
+  display: block;
+  margin: 24px auto 0;
+  text-align: center;
+  font-size: 14px;
+  color: #a1a1a8;
+}
+#install-dialog {
+  position: fixed;
+  width: min(860px, calc(100vw - 32px));
+  max-height: calc(100dvh - 48px);
+  padding: clamp(24px, 5vw, 40px);
+  border: 1px solid #ffffff26;
+  border-radius: 28px;
+  background: #111113;
+  color: #ededef;
+  box-shadow: 0 25px 90px #0009;
+}
+#install-dialog::backdrop {
+  background: #0009;
+  backdrop-filter: blur(8px);
+}
+#install-dialog h2 {
+  margin: 0 44px 24px 0;
+  font-size: 26px;
+}
+#install-dialog p {
+  line-height: 1.6;
+  color: #a1a1a8;
+}
+#install-dialog .install-help {
+  margin-top: 16px;
+}
+#install-dialog form {
+  margin-top: 24px;
+  text-align: right;
+}
+#install-dialog form button {
+  padding: 14px 28px;
+  border-radius: 999px;
+  background: linear-gradient(180deg, #f2711f, #c94a06);
+  color: white;
+  font-weight: 600;
+}
+.dialog-close {
+  position: absolute;
+  top: 20px;
+  right: 20px;
+  width: 44px;
+  height: 44px;
+  border: 1px solid #ffffff24;
+  border-radius: 999px;
+  background: #ffffff08;
+  color: #ededef;
+  font-size: 28px;
+}
+
+/* Downloads and first-launch help mirror the supplied reference's dense utility layout. */
+.section-heading .release-meta {
+  padding: 20px 0 0;
+}
+.release-meta.is-loaded .release-summary {
+  animation: releaseIn 0.4s ease-out both;
+}
+@keyframes releaseIn {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+}
+.release-summary {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 9px;
+}
+.release-kicker {
+  color: #a1a1a8;
+  font-size: 13px;
+}
+.release-details {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+.release-archive {
+  color: #8c8c94;
+  font-size: 13px;
+}
+.release-version {
+  color: #ededef;
+  font-family: 'Geist Mono', ui-monospace, monospace;
+}
+.detected-badge {
+  padding: 3px 10px;
+  border: 1px solid rgba(243, 103, 18, 0.45);
+  border-radius: 999px;
+  background: rgba(243, 103, 18, 0.14);
+  color: #ff8a3d;
+  font-size: 11px;
+  font-weight: 600;
+}
+.release-warning {
+  margin: 28px 0 0 !important;
+  color: #8c8c94 !important;
+  font-size: 13px !important;
+  text-align: center;
+}
+.release-warning a {
+  color: #ededef;
+  text-decoration: underline;
+  text-underline-offset: 4px;
+  text-decoration-color: rgba(237, 237, 239, 0.5);
+  transition:
+    color 0.2s,
+    text-decoration-color 0.2s,
+    text-underline-offset 0.2s;
+}
+.download-box {
+  max-width: 1200px;
+  margin-top: 40px;
+}
+.os-panel {
+  margin-top: 36px;
+}
+.architecture-notice {
+  max-width: 640px;
+  margin: 0 auto 20px;
+  padding: 14px 20px;
+  border: 1px solid rgba(243, 103, 18, 0.35);
+  border-radius: 16px;
+  background: rgba(243, 103, 18, 0.07);
+  color: #e4e4e8;
+  font-size: 14px;
+  line-height: 1.5;
+  text-align: center;
+}
+.architecture-list {
+  display: block;
+  max-width: 920px;
+  margin: 0 auto;
+  overflow-x: auto;
+}
+.architecture-card {
+  display: grid;
+  grid-template-columns: minmax(200px, 1.3fr) minmax(170px, 1fr) minmax(240px, 1.5fr) 140px;
+  align-items: center;
+  gap: 20px;
+  min-width: 760px;
+  padding: 16px 28px;
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
+  transition:
+    background 0.2s ease,
+    border-color 0.2s ease;
+}
+.architecture-card:first-child {
+  border-top: 0;
+}
+.architecture-card.recommended {
+  background: rgba(243, 103, 18, 0.06);
+}
+.architecture-card:hover {
+  background: rgba(255, 255, 255, 0.025);
+}
+.architecture-card.recommended:hover {
+  background: rgba(243, 103, 18, 0.09);
+}
+.os-panel:not([hidden]) {
+  animation: panelIn 0.24s ease-out both;
+}
+@keyframes panelIn {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+}
+.download-platform {
+  min-width: 0;
+}
+.download-platform-title {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.architecture-card h3 {
+  font-size: 16px;
+  font-weight: 600;
+}
+.architecture-card > .download-platform > p {
+  margin: 3px 0 0;
+  color: #8c8c94;
+  font-size: 13px;
+}
+.download-format {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  color: #ededef;
+  font-size: 15px;
+}
+.download-size {
+  color: #8c8c94;
+  font:
+    12px 'Geist Mono',
+    ui-monospace,
+    monospace;
+}
+.download-file {
+  overflow: hidden;
+  color: #8c8c94;
+  font:
+    13px 'Geist Mono',
+    ui-monospace,
+    monospace;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.asset-link.download-action {
+  justify-self: end;
+  justify-content: center;
+  gap: 8px;
+  min-height: 44px;
+  padding: 0 18px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.03);
+  color: #ededef;
+  font-size: 14px;
+  font-weight: 500;
+}
+.asset-link.download-action > span:last-child {
+  min-width: 0;
+  padding: 0;
+  border: 0;
+}
+.download-symbol {
+  color: #ff8a3d;
+  font-size: 17px;
+}
+.install-help {
+  max-width: 920px;
+  margin: 32px auto 0;
+  padding: 0;
+  overflow: hidden;
+  text-align: left;
+  interpolate-size: allow-keywords;
+}
+.install-help summary {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 16px 22px;
+  list-style: none;
+  cursor: pointer;
+  transition: background 0.2s ease;
+}
+.install-help summary:hover {
+  background: rgba(255, 255, 255, 0.025);
+}
+.install-help summary::-webkit-details-marker {
+  display: none;
+}
+.install-help-icon {
+  display: grid;
+  flex: none;
+  width: 36px;
+  height: 36px;
+  place-items: center;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.04);
+}
+.install-help-icon svg {
+  width: 18px;
+  height: 18px;
+  fill: none;
+  stroke: var(--orange);
+  stroke-width: 1.75;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.install-help-title {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 2px;
+}
+.install-help-title small {
+  color: #8c8c94;
+  font-size: 13px;
+  font-weight: 400;
+}
+.install-help-toggle {
+  position: relative;
+  flex: none;
+  width: 20px;
+  height: 20px;
+  color: transparent;
+  font-size: 0;
+}
+.install-help-toggle::before,
+.install-help-toggle::after {
+  position: absolute;
+  top: 9px;
+  left: 3px;
+  width: 14px;
+  height: 1.5px;
+  border-radius: 999px;
+  background: #a1a1a8;
+  content: '';
+  transition: transform 0.22s ease;
+}
+.install-help-toggle::after {
+  transform: rotate(90deg);
+}
+.install-help[open] .install-help-toggle::after {
+  transform: rotate(0deg) scaleX(0);
+}
+.install-help::details-content {
+  block-size: 0;
+  overflow: hidden;
+  opacity: 0;
+  transition:
+    block-size 0.28s ease,
+    opacity 0.2s ease,
+    content-visibility 0.28s allow-discrete;
+}
+.install-help[open]::details-content {
+  block-size: auto;
+  opacity: 1;
+}
+.install-guide-body {
+  padding: 4px clamp(22px, 4vw, 40px) clamp(22px, 4vw, 36px);
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
+}
+.install-guide-intro {
+  max-width: 680px;
+}
+.install-steps {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  margin: 26px 0 0;
+  padding: 0;
+  list-style: none;
+}
+.install-steps li {
+  display: flex;
+  align-items: flex-start;
+  gap: 14px;
+}
+.install-step-number {
+  display: grid;
+  flex: none;
+  width: 28px;
+  height: 28px;
+  place-items: center;
+  border: 1px solid rgba(243, 103, 18, 0.4);
+  border-radius: 999px;
+  background: rgba(243, 103, 18, 0.14);
+  color: #ff8a3d;
+  font:
+    13px 'Geist Mono',
+    ui-monospace,
+    monospace;
+}
+.install-step-copy {
+  flex: 1;
+  min-width: 0;
+}
+.install-step-copy p,
+.install-fix p {
+  margin: 3px 0 0;
+  color: #c8c8ce;
+  font-size: 15px;
+  line-height: 1.6;
+}
+.command-row {
+  display: flex;
+  align-items: center;
+  margin-top: 10px;
+  overflow: hidden;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 12px;
+  background: #0a0a0b;
+}
+.command-row code {
+  flex: 1;
+  min-width: 0;
+  padding: 12px 14px;
+  overflow-x: auto;
+  color: #ededef;
+  font:
+    13px 'Geist Mono',
+    ui-monospace,
+    monospace;
+  white-space: nowrap;
+}
+.copy-command {
+  flex: none;
+  min-height: 44px;
+  padding: 0 16px;
+  border: 0;
+  border-left: 1px solid rgba(255, 255, 255, 0.08);
+  background: transparent;
+  color: #c8c8ce;
+  font-size: 13px;
+}
+.install-fix,
+.dialog-fix {
+  margin-top: 26px;
+  padding: 16px 18px;
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  border-radius: 16px;
+  background: #17171a;
+}
+#install-dialog {
+  width: min(900px, calc(100vw - 32px));
+  max-height: calc(100dvh - 48px);
+  padding: clamp(22px, 4vw, 36px);
+  overflow: auto;
+  overscroll-behavior: contain;
+  background: #141416;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.06),
+    0 40px 120px -30px rgba(0, 0, 0, 0.9);
+}
+.download-dialog-heading {
+  display: flex;
+  align-items: flex-start;
+  gap: 14px;
+  padding-right: 44px;
+}
+.download-dialog-icon,
+.download-toast-icon {
+  display: grid;
+  flex: none;
+  width: 42px;
+  height: 42px;
+  place-items: center;
+  border: 1px solid rgba(243, 103, 18, 0.45);
+  border-radius: 999px;
+  background: rgba(243, 103, 18, 0.14);
+  color: #ff8a3d;
+  font-size: 20px;
+}
+#install-dialog h2 {
+  margin: 0;
+}
+#install-dialog-subtitle {
+  margin: 6px 0 0;
+}
+#install-dialog-content > .install-guide-body {
+  margin-top: 26px;
+  padding: 22px 0 0;
+}
+.download-dialog-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px 20px;
+  margin-top: 26px;
+  color: #8c8c94;
+  font-size: 14px;
+}
+.download-dialog-actions a {
+  color: #ededef;
+  text-decoration: underline;
+  text-underline-offset: 4px;
+  text-decoration-color: rgba(237, 237, 239, 0.5);
+  transition:
+    color 0.2s,
+    text-decoration-color 0.2s,
+    text-underline-offset 0.2s;
+}
+#install-dialog form {
+  margin: 0;
+}
+.download-help-toast {
+  position: fixed;
+  right: 20px;
+  bottom: 20px;
+  z-index: 55;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: min(380px, calc(100vw - 40px));
+  padding: 12px 8px 12px 14px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 18px;
+  background: rgba(22, 22, 24, 0.92);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.06),
+    0 20px 50px -20px rgba(0, 0, 0, 0.85);
+  backdrop-filter: blur(14px);
+  animation: dlUp 0.3s ease-out;
+}
+.download-help-toast > button {
+  border: 0;
+  background: transparent;
+}
+#download-help-reopen {
+  flex: 1;
+  min-width: 0;
+  min-height: 44px;
+  padding: 0;
+  text-align: left;
+}
+#download-help-reopen strong,
+#download-help-reopen span {
+  display: block;
+}
+#download-help-reopen strong {
+  color: #ededef;
+  font-size: 14px;
+}
+#download-help-reopen span {
+  margin-top: 2px;
+  color: #ff8a3d;
+  font-size: 13px;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+#download-help-dismiss {
+  width: 44px;
+  height: 44px;
+  color: #8c8c94;
+  font-size: 24px;
+}
+
+#features,
+#downloads,
+#faq,
+#support {
+  scroll-margin-top: 112px;
+}
+#faq {
+  interpolate-size: allow-keywords;
+}
+
+.motion-ready .reveal-on-scroll {
+  opacity: 0;
+  transform: translateY(16px);
+  transition:
+    opacity 0.55s ease,
+    transform 0.55s cubic-bezier(0.22, 1, 0.36, 1);
+  transition-delay: var(--reveal-delay, 0ms);
+}
+.motion-ready .reveal-on-scroll.is-visible {
+  opacity: 1;
+  transform: none;
+}
+.motion-ready #top > span,
+.motion-ready #top h1,
+.motion-ready #top > p,
+.motion-ready #top .hero-actions,
+.motion-ready #top .demo-wrap {
+  animation: heroIn 0.6s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+.motion-ready #top h1 {
+  animation-delay: 60ms;
+}
+.motion-ready #top > p {
+  animation-delay: 120ms;
+}
+.motion-ready #top .hero-actions {
+  animation-delay: 180ms;
+}
+.motion-ready #top .demo-wrap {
+  animation-delay: 240ms;
+}
+@keyframes heroIn {
+  from {
+    opacity: 0;
+    transform: translateY(12px);
+  }
+}
+.speed-pop {
+  animation: speedPop 0.28s ease-out;
+}
+@keyframes speedPop {
+  50% {
+    transform: scale(1.025);
+  }
+}
+a:focus-visible {
+  border-radius: 4px;
+  outline: 2px solid rgba(243, 103, 18, 0.85);
+  outline-offset: 4px;
+}
+
+@media (hover: hover) {
+  .feature-visual {
+    transition:
+      border-color 0.25s ease,
+      box-shadow 0.25s ease;
+  }
+  .feature-visual > div {
+    transition: transform 0.3s cubic-bezier(0.22, 1, 0.36, 1);
+  }
+  .feature-visual:hover {
+    border-color: rgba(243, 103, 18, 0.24) !important;
+    box-shadow: inset 0 1px rgba(255, 255, 255, 0.035);
+  }
+  .feature-visual:hover > div {
+    transform: translateY(-3px);
+  }
+}
+
+#mobile-menu {
+  position: absolute;
+  top: 100%;
+  left: 16px;
+  right: 16px;
+  max-width: 780px;
+  margin: 8px auto 0;
+}
+
+#mobile-menu .menu-panel {
+  box-sizing: border-box;
+}
+
+@media (min-width: 700px) and (max-width: 1008px) {
+  .cells {
+    grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+  }
+}
+
+@media (max-width: 900px) {
+  .architecture-list {
+    overflow: visible;
+  }
+  .architecture-card {
+    min-width: 0;
+    grid-template-columns: minmax(0, 1fr) minmax(150px, 0.9fr) auto;
+    gap: 8px 18px;
+  }
+  .download-platform {
+    grid-column: 1;
+    grid-row: 1;
+  }
+  .download-format {
+    grid-column: 2;
+    grid-row: 1;
+  }
+  .download-file {
+    grid-column: 1 / 3;
+    grid-row: 2;
+    min-width: 0;
+    overflow-wrap: anywhere;
+    white-space: normal;
+  }
+  .architecture-card .download-action {
+    grid-column: 3;
+    grid-row: 1 / 3;
+    align-self: center;
+  }
+}
+
+@media (max-width: 640px) {
+  #top {
+    padding-top: 64px !important;
+  }
+  #features,
+  #downloads,
+  #faq,
+  #support {
+    padding-top: 72px !important;
+  }
+  .os-tabs button {
+    flex: 1 1 auto;
+    min-width: 0;
+    gap: 8px;
+    padding: 0 14px;
+  }
+  .architecture-card {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 8px;
+    padding: 16px 20px;
+  }
+  .download-platform,
+  .download-format,
+  .download-file,
+  .architecture-card .download-action {
+    grid-column: 1;
+    grid-row: auto;
+  }
+  .architecture-card .download-action {
+    width: 100%;
+    margin-top: 6px;
+    justify-content: center;
+  }
+  .hatch {
+    height: 48px !important;
+  }
+  #top + .hatch {
+    margin-top: 72px !important;
+  }
+  .demo-wrap {
+    margin-top: 48px !important;
+  }
+  .feature-visual {
+    min-height: 0 !important;
+    padding: 18px !important;
+    border-radius: 28px !important;
+  }
+  .feat-title,
+  .stack > div:last-child {
+    padding: 28px 22px !important;
+    border-radius: 28px !important;
+  }
+  .srow {
+    gap: 12px !important;
+  }
+  #hero-download-info {
+    font-size: 12px;
+  }
+  .hero-actions {
+    margin-top: 28px;
+  }
+}
+
+@media (max-width: 360px) {
+  .os-tabs button {
+    gap: 6px;
+    padding-inline: 6px;
+    font-size: 13px;
+  }
+  .os-icon {
+    width: 17px;
+    height: 17px;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+  .motion-ready .reveal-on-scroll {
+    opacity: 1;
+    transform: none;
+  }
+  *,
+  *::before,
+  *::after {
+    animation: none !important;
+    transition: none !important;
+  }
+}

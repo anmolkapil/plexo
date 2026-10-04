@@ -1,0 +1,4 @@
+User-agent: *
+Allow: /
+
+Sitemap: https://getplexo.app/sitemap.xml
