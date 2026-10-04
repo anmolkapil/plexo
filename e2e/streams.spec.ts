@@ -1,11 +1,14 @@
 import { BLOCK, expect, test } from './fixtures'
+import type { DownloadState } from '../src/shared/types'
 
 // N. How many streams a download runs, decided while it runs (see concurrency.ts), against a
 // server that limits it in each of the ways that matter.
 
 test.describe('automatic stream count', () => {
-  const peakStreams = (plexo: { sessions: { chunks: unknown[] }[][] }): number =>
-    Math.max(...plexo.sessions.at(-1)!.map((state) => state.chunks.length))
+  const peakStreams = (plexo: { sessions: DownloadState[][] }): number =>
+    Math.max(
+      ...plexo.sessions.at(-1)!.map((state) => (state.kind === 'http' ? state.streams.length : 0))
+    )
 
   test('a server that turns extra connections away keeps the ones it accepted', async ({
     plexo,
@@ -23,9 +26,9 @@ test.describe('automatic stream count', () => {
     })
 
     await plexo.start(origin.url(), origin.sha256, { connections: 'auto' })
-    const state = await plexo.waitForStatus('completed', 40_000)
+    const state = await plexo.waitForHttpStatus('completed', 40_000)
     expect(peakStreams(plexo), 'more streams were tried').toBe(8)
-    expect(state.chunks).toHaveLength(4)
+    expect(state.streams).toHaveLength(4)
     expect(origin.log.some((request) => request.status === 503)).toBe(true)
   })
 
@@ -49,9 +52,9 @@ test.describe('automatic stream count', () => {
       })
 
       await plexo.start(origin.url(), origin.sha256, { connections: 'auto' })
-      const state = await plexo.waitForStatus('completed', 40_000)
+      const state = await plexo.waitForHttpStatus('completed', 40_000)
       expect(peakStreams(plexo), 'more streams were tried').toBe(8)
-      expect(state.chunks).toHaveLength(4)
+      expect(state.streams).toHaveLength(4)
     })
   })
 
@@ -71,18 +74,18 @@ test.describe('automatic stream count', () => {
       })
 
       await plexo.start(origin.url(), origin.sha256, { connections: 'auto' })
-      const state = await plexo.waitForStatus('completed', 40_000)
+      const state = await plexo.waitForHttpStatus('completed', 40_000)
       expect(origin.log.some((request) => request.status === 503)).toBe(true)
       // Every stream was turned away alike, so none was closed for it, and the count still grew.
       expect(peakStreams(plexo), 'the count grew once the server served').toBeGreaterThan(8)
-      expect(state.chunks.length).toBeGreaterThan(8)
+      expect(state.streams.length).toBeGreaterThan(8)
     })
   })
 
   test('a count picked on the start screen is kept rather than grown', async ({ plexo, serve }) => {
     const origin = await serve({ size: 96 * BLOCK, bytesPerSecond: 256 * 1024 })
     await plexo.start(origin.url(), origin.sha256, { connections: 'auto', streamsPerNetwork: 4 })
-    await plexo.waitForStatus('completed', 40_000)
+    await plexo.waitForHttpStatus('completed', 40_000)
     expect(peakStreams(plexo), 'Auto would have doubled to 8 and on').toBe(4)
   })
 })

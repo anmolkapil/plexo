@@ -23,6 +23,8 @@ export interface ChunkDownloadOptions {
   /** Called once the server has answered with usable headers: how long that took, and whether
    * the request went out on a connection an earlier one had already warmed up. */
   onResponse?: (info: { ttfbMs: number; reusedSocket: boolean }) => void
+  /** Told of every body byte received; answers how many ms to stop reading for (see Limits). */
+  throttle?: (bytes: number) => number
 }
 
 /** A response whose version doesn't match the download's. Nothing from it was written; the
@@ -129,7 +131,8 @@ export function downloadChunk(options: ChunkDownloadOptions): Promise<void> {
     onProgress,
     signal,
     acceptedVersions,
-    onResponse
+    onResponse,
+    throttle
   } = options
 
   return new Promise((resolve, reject) => {
@@ -283,6 +286,22 @@ export function downloadChunk(options: ChunkDownloadOptions): Promise<void> {
           // headers then freezes, or goes silent mid-stream.
           resetWatchdog()
 
+          // Reading stops while the disk catches up or a speed limit says to wait, and goes on
+          // once neither holds it. Neither says anything about the network: the watchdog stops
+          // until then.
+          let holds = 0
+          const hold = (): void => {
+            if (holds++ === 0) {
+              clearWatchdog()
+              res.pause()
+            }
+          }
+          const release = (): void => {
+            if (--holds > 0 || settled) return
+            resetWatchdog()
+            res.resume()
+          }
+
           // Written by hand rather than piped so an overlong body can be cut off
           // at the range boundary: an overlong response could overwrite the next block.
           res.on('data', (chunk: Buffer) => {
@@ -304,14 +323,13 @@ export function downloadChunk(options: ChunkDownloadOptions): Promise<void> {
                   else if (!settled) onProgress(progress)
                 })
               ) {
-                // Waiting on the disk says nothing about the network: the watchdog stops until
-                // the writer has caught up.
-                clearWatchdog()
-                res.pause()
-                fileStream.once('drain', () => {
-                  resetWatchdog()
-                  res.resume()
-                })
+                hold()
+                fileStream.once('drain', release)
+              }
+              const wait = throttle?.(usable.length) ?? 0
+              if (wait > 0) {
+                hold()
+                setTimeout(release, wait)
               }
             }
 

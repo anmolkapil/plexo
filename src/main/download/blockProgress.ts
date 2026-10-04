@@ -1,4 +1,4 @@
-import type { BlockState } from '../../shared/types'
+import type { HttpBlockState } from '../../shared/types'
 
 // A block's `bytesDownloaded` is its frontier: how much of it, from its first byte, is secured.
 // Near the end of a download two attempts can race for one block, so the frontier is the furthest
@@ -6,14 +6,14 @@ import type { BlockState } from '../../shared/types'
 // and always adds up to it — these three functions are the only ways either changes.
 
 /** Records that `networkId` delivered `bytes` more of this block. */
-function credit(block: BlockState, networkId: string, bytes: number): void {
+function credit(block: HttpBlockState, networkId: string, bytes: number): void {
   block.bytesByInterface[networkId] = (block.bytesByInterface[networkId] ?? 0) + bytes
 }
 
 /** Drops attribution for bytes that turned out not to be secured, so the per-network tallies
  * keep summing to the block's real byte count. The lost bytes are always at the tail, so they
  * come off `blamed` first (the network that wrote last) before spilling over to the rest. */
-function trim(block: BlockState, keepBytes: number, blamed?: string): void {
+function trim(block: HttpBlockState, keepBytes: number, blamed?: string): void {
   let attributed = 0
   for (const bytes of Object.values(block.bytesByInterface)) attributed += bytes
 
@@ -36,7 +36,7 @@ function trim(block: BlockState, keepBytes: number, blamed?: string): void {
 
 /** Moves the frontier forward to `position` (a byte offset into the block), crediting the bytes
  * it gains to `networkId`. Does nothing if something already got further. Returns the gain. */
-export function advanceBlock(block: BlockState, networkId: string, position: number): number {
+export function advanceBlock(block: HttpBlockState, networkId: string, position: number): number {
   const length = block.rangeEnd === null ? Infinity : block.rangeEnd - block.rangeStart + 1
   const next = Math.min(position, length)
   const gained = next - block.bytesDownloaded
@@ -49,7 +49,7 @@ export function advanceBlock(block: BlockState, networkId: string, position: num
 /** Pulls the frontier back to `position`, for bytes that turned out not to be there or a racing
  * attempt that lost. `blamed` is the network they came from.
  * Returns how much it removed. */
-export function retractBlock(block: BlockState, position: number, blamed?: string): number {
+export function retractBlock(block: HttpBlockState, position: number, blamed?: string): number {
   const removed = block.bytesDownloaded - position
   if (removed <= 0) return 0
   trim(block, position, blamed)

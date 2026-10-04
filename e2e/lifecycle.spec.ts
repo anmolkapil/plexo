@@ -22,12 +22,12 @@ test.describe('pause and resume @smoke', () => {
       await reached
 
       await plexo.api.pauseDownload(id)
-      const paused = await plexo.waitForStatus('paused')
+      const paused = await plexo.waitForHttpStatus('paused')
       expect(paused.speedBytesPerSec).toBe(0)
       origin.release()
 
       await plexo.api.resumeDownload(id)
-      await plexo.waitForStatus('completed')
+      await plexo.waitForHttpStatus('completed')
     })
   }
 
@@ -41,7 +41,7 @@ test.describe('pause and resume @smoke', () => {
       await plexo.api.resumeDownload(id)
     }
     origin.release()
-    await plexo.waitForStatus('completed')
+    await plexo.waitForHttpStatus('completed')
   })
 
   test('resuming while a paused stream is still winding down waits for it, not runs beside it', async ({
@@ -74,12 +74,12 @@ test.describe('pause and resume @smoke', () => {
     const id = await plexo.start(origin.url(), origin.sha256)
     await expect.poll(() => stalled, { message: 'the sample request hung' }).toBe(true)
     const pausing = plexo.api.pauseDownload(id)
-    await plexo.waitForStatus('paused')
+    await plexo.waitForHttpStatus('paused')
     await plexo.api.resumeDownload(id)
     await pausing
     // Two runs side by side would each try to finish the download, and the one left behind would
     // call it failed.
-    await plexo.waitForStatus('completed', 30_000)
+    await plexo.waitForHttpStatus('completed', 30_000)
   })
 })
 
@@ -93,16 +93,19 @@ test.describe('pause during a retry backoff', () => {
       failing && range && range.start === 4 * BLOCK ? { status: 500 } : 'ok'
     )
     const id = await plexo.start(origin.url(), origin.sha256, { connections: 2 })
-    await plexo.waitUntil((state) => state.chunks.some((chunk) => chunk.status === 'retrying'))
+    await plexo.waitUntil(
+      (state) =>
+        state.kind === 'http' && state.streams.some((stream) => stream.status === 'retrying')
+    )
 
     const before = Date.now()
     await plexo.api.pauseDownload(id)
-    await plexo.waitForStatus('paused', 2000)
+    await plexo.waitForHttpStatus('paused', 2000)
     expect(Date.now() - before).toBeLessThan(2000)
 
     failing = false
     await plexo.api.resumeDownload(id)
-    await plexo.waitForStatus('completed')
+    await plexo.waitForHttpStatus('completed')
   })
 })
 
@@ -115,13 +118,13 @@ test.describe('resume safety checks @smoke', () => {
   ): Promise<{
     id: string
     resumedAt: number
-    paused: import('../src/shared/types').DownloadState
+    paused: import('../src/shared/types').HttpDownloadState
   }> {
     const reached = origin.hold(5 * BLOCK)
     const id = await plexo.start(origin.url(), origin.sha256)
     await reached
     await plexo.api.pauseDownload(id)
-    const paused = await plexo.waitForStatus('paused')
+    const paused = await plexo.waitForHttpStatus('paused')
     change()
     origin.release()
     const resumedAt = origin.log.length
@@ -135,7 +138,7 @@ test.describe('resume safety checks @smoke', () => {
   }) => {
     const origin = await serve({ size: SIZE })
     await pauseThenChange(plexo, origin, () => origin.setContent(seededBytes(SIZE, 9), '"v2"'))
-    const state = await plexo.waitForStatus('error')
+    const state = await plexo.waitForHttpStatus('error')
     expect(state.error).toMatch(/changed/)
   })
 
@@ -147,11 +150,11 @@ test.describe('resume safety checks @smoke', () => {
     const { resumedAt, paused } = await pauseThenChange(plexo, origin, () =>
       origin.setContent(origin.content, '"migrated"')
     )
-    await plexo.waitForStatus('completed')
+    await plexo.waitForHttpStatus('completed')
 
     // Kept, not restarted: after resuming, no block that was already complete was fetched again
     // — only the small samples that confirmed the bytes match.
-    const done = (paused.blocks ?? []).filter((block) => block.status === 'completed')
+    const done = paused.blocks.filter((block) => block.status === 'completed')
     const afterResume = origin.log.slice(resumedAt)
     const refetchedDone = afterResume.filter((entry) =>
       done.some((block) => entry.range?.start === block.rangeStart && entry.bytesSent > 16 * 1024)
@@ -169,10 +172,10 @@ test.describe('resume safety checks @smoke', () => {
     const id = await plexo.start(origin.url(), origin.sha256)
     await reached
     await plexo.api.pauseDownload(id)
-    await plexo.waitForStatus('paused')
+    await plexo.waitForHttpStatus('paused')
     origin.release()
     await plexo.api.resumeDownload(id)
-    await plexo.waitForStatus('completed')
+    await plexo.waitForHttpStatus('completed')
   })
 
   test('resume against a server without range support', async ({ plexo, serve }) => {
@@ -181,10 +184,10 @@ test.describe('resume safety checks @smoke', () => {
     const id = await plexo.start(origin.url(), origin.sha256)
     await reached
     await plexo.api.pauseDownload(id)
-    await plexo.waitForStatus('paused')
+    await plexo.waitForHttpStatus('paused')
     origin.release()
     await plexo.api.resumeDownload(id)
-    await plexo.waitForStatus('completed', 10_000)
+    await plexo.waitForHttpStatus('completed', 10_000)
   })
 })
 
@@ -195,22 +198,22 @@ test.describe('cancel and remove @smoke', () => {
     const id = await plexo.start(origin.url(), origin.sha256)
     await reached
     await plexo.api.pauseDownload(id)
-    const paused = await plexo.waitForStatus('paused')
+    const paused = await plexo.waitForHttpStatus('paused')
     const staging = `${paused.destinationPath}.plexo`
     expect(existsSync(staging), 'pausing keeps the staging file').toBe(true)
     origin.release()
     await plexo.api.cancelDownload(id)
-    await plexo.waitForStatus('cancelled')
+    await plexo.waitForHttpStatus('cancelled')
     await expect.poll(() => existsSync(staging), { message: 'cancelling removes it' }).toBe(false)
   })
 
   test('remove after completion keeps the file', async ({ plexo, serve, dirs }) => {
     const origin = await serve({ size: SIZE })
     const id = await plexo.start(origin.url(), origin.sha256)
-    const state = await plexo.waitForStatus('completed')
+    const state = await plexo.waitForHttpStatus('completed')
     await plexo.api.removeDownload(id)
 
-    expect(await plexo.current()).toBeNull()
+    expect(await plexo.currentHttp()).toBeNull()
     expect(sha256(await readFile(state.destinationPath))).toBe(origin.sha256)
     await expect.poll(() => existsSync(join(dirs.userData, 'downloads', id))).toBe(false)
   })
@@ -220,11 +223,11 @@ test.describe('cancel and remove @smoke', () => {
     const reached = origin.hold(7 * BLOCK)
     const id = await plexo.start(origin.url(), origin.sha256)
     await reached
-    const { destinationPath } = (await plexo.current())!
+    const { destinationPath } = (await plexo.currentHttp())!
     await plexo.api.removeDownload(id)
     origin.release()
 
-    expect(await plexo.current()).toBeNull()
+    expect(await plexo.currentHttp()).toBeNull()
     await expect.poll(() => existsSync(destinationPath)).toBe(false)
     await expect.poll(() => existsSync(join(dirs.userData, 'downloads', id))).toBe(false)
   })

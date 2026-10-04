@@ -6,7 +6,7 @@ import {
   type SchedulerPolicy,
   type SchedulerState
 } from '../src/main/download/scheduler'
-import type { BlockState, BlockStatus, ChunkStatus } from '../src/shared/types'
+import type { HttpBlockState, HttpBlockStatus, HttpStreamStatus } from '../src/shared/types'
 
 // J. Who fetches what. Pure, so the races that decide it (which stream asked first, how far
 // along the holder is) are pinned down as inputs instead of left to timing.
@@ -15,7 +15,8 @@ const POLICY: SchedulerPolicy = { hedgeAfterMs: 5000, maxHedgesPerBlock: 2, star
 const NOW = 100_000
 const LENGTH = 1000
 
-const block = (index: number, status: BlockStatus = 'pending', bytes = 0): BlockState => ({
+const block = (index: number, status: HttpBlockStatus = 'pending', bytes = 0): HttpBlockState => ({
+  kind: 'http',
   index,
   rangeStart: index * LENGTH,
   rangeEnd: index * LENGTH + LENGTH - 1,
@@ -27,7 +28,7 @@ const block = (index: number, status: BlockStatus = 'pending', bytes = 0): Block
 const stream = (
   id: number,
   interfaceId: string,
-  status: ChunkStatus,
+  status: HttpStreamStatus,
   speedBytesPerSec = 0
 ): SchedulerState['streams'][number] => ({ id, interfaceId, status, speedBytesPerSec })
 
@@ -39,7 +40,7 @@ const attempt = (
 ): AttemptView => ({ kind, streamId, networkId, startedAt: NOW - ageMs })
 
 function state(parts: {
-  blocks: BlockState[]
+  blocks: HttpBlockState[]
   streams?: SchedulerState['streams']
   attempts?: [number, AttemptView[]][]
   avoid?: [number, string][]
@@ -112,14 +113,19 @@ test.describe('scheduler: taking the next block', () => {
     const networks = ['a', 'b', 'c']
     fc.assert(
       fc.property(
-        fc.array(fc.constantFrom<BlockStatus>('pending', 'downloading', 'completed'), {
+        fc.array(fc.constantFrom<HttpBlockStatus>('pending', 'downloading', 'completed'), {
           minLength: 1,
           maxLength: 8
         }),
         fc.array(
           fc.record({
             interfaceId: fc.constantFrom(...networks),
-            status: fc.constantFrom<ChunkStatus>('pending', 'downloading', 'retrying', 'paused')
+            status: fc.constantFrom<HttpStreamStatus>(
+              'pending',
+              'downloading',
+              'retrying',
+              'paused'
+            )
           }),
           { minLength: 1, maxLength: 8 }
         ),
@@ -311,7 +317,7 @@ test.describe('scheduler: racing a slow block', () => {
       fc.property(
         fc.array(
           fc.record({
-            status: fc.constantFrom<BlockStatus>('pending', 'downloading', 'completed'),
+            status: fc.constantFrom<HttpBlockStatus>('pending', 'downloading', 'completed'),
             bytes: fc.integer({ min: 0, max: LENGTH }),
             holderNetwork: fc.constantFrom(...networks),
             holderAge: fc.integer({ min: 0, max: 20_000 }),

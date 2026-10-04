@@ -26,6 +26,10 @@ export const testKnobs = {
   slowForMs: positiveNumber('PLEXO_E2E_SLOW_FOR_MS', 10_000),
   silentAfterMs: positiveNumber('PLEXO_E2E_SILENT_MS', 5_000),
   hedgeAfterMs: positiveNumber('PLEXO_E2E_HEDGE_MS', 2_000),
+  /** How long a magnet link may take to find peers that send its metadata. */
+  magnetTimeoutMs: positiveNumber('PLEXO_E2E_MAGNET_MS', 3 * 60_000),
+  /** Tests turn the DHT off, so a run never reaches out to the internet's DHT nodes. */
+  torrentDht: env['PLEXO_E2E_DHT'] !== '0',
   /** Skips the real GitHub check and pretends this version is available, for exercising the
    * update banner without needing an actual newer release published. */
   forceUpdateVersion: env['PLEXO_FORCE_UPDATE_VERSION']
@@ -53,9 +57,13 @@ export function testInterfaces(): NetworkInterfaceInfo[] | null {
     .map((entry) => {
       const [id, address, subnet, kind] = entry.split('=')
       const inferredKind =
-        kind === 'wifi' || id.toLowerCase().includes('wi-fi') || id.toLowerCase().includes('wifi')
-          ? ('wifi' as const)
-          : ('ethernet' as const)
+        kind === 'usb'
+          ? ('usb' as const)
+          : kind === 'wifi' ||
+              id.toLowerCase().includes('wi-fi') ||
+              id.toLowerCase().includes('wifi')
+            ? ('wifi' as const)
+            : ('ethernet' as const)
       return {
         id,
         device: id,

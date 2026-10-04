@@ -36,7 +36,7 @@ test.describe('racing a slow block', () => {
 
     const started = Date.now()
     await plexo.start(origin.url(), origin.sha256, { connections: 4 })
-    await plexo.waitForStatus('completed', 10_000)
+    await plexo.waitForHttpStatus('completed', 10_000)
     expect(Date.now() - started).toBeLessThan(10_000)
 
     const requests = origin.chunkRequests().filter((r) => inSlowBlock(r.range))
@@ -56,7 +56,7 @@ test.describe('racing a slow block', () => {
     )
 
     await plexo.start(origin.url(), origin.sha256, { connections: 4 })
-    await plexo.waitForStatus('completed', 10_000)
+    await plexo.waitForHttpStatus('completed', 10_000)
 
     const requests = origin.chunkRequests().filter((r) => inSlowBlock(r.range))
     expect(requests.length).toBeGreaterThanOrEqual(2)
@@ -84,11 +84,11 @@ test.describe('racing a slow block', () => {
       .toBeGreaterThanOrEqual(2)
 
     await plexo.api.pauseDownload(id)
-    const paused = await plexo.waitForStatus('paused')
-    expect(paused.chunks.some((chunk) => chunk.hedge)).toBe(false)
+    const paused = await plexo.waitForHttpStatus('paused')
+    expect(paused.streams.some((chunk) => chunk.hedge)).toBe(false)
 
     await plexo.api.resumeDownload(id)
-    await plexo.waitForStatus('completed', 15_000)
+    await plexo.waitForHttpStatus('completed', 15_000)
   })
 
   test('a second network rescues a block the first is crawling through, and is credited for it', async ({
@@ -106,7 +106,7 @@ test.describe('racing a slow block', () => {
     })
 
     await plexo.start(origin.url(), origin.sha256, { networks: ['a', 'b'], connections: 1 })
-    const state = await plexo.waitForStatus('completed', 10_000)
+    const state = await plexo.waitForHttpStatus('completed', 10_000)
 
     const shared = (state.blocks ?? []).filter(
       (block) => (block.bytesByInterface['a'] ?? 0) > 0 && (block.bytesByInterface['b'] ?? 0) > 0

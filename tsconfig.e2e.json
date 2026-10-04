@@ -1,6 +1,11 @@
 {
   "extends": "@electron-toolkit/tsconfig/tsconfig.node.json",
-  "include": ["e2e/**/*", "playwright.config.ts", "src/preload/globals.d.ts"],
+  "include": [
+    "e2e/**/*",
+    "playwright.config.ts",
+    "src/preload/globals.d.ts",
+    "src/main/download/torrent/modules.d.ts"
+  ],
   "compilerOptions": {
     "noEmit": true,
     "lib": ["ESNext", "DOM"]

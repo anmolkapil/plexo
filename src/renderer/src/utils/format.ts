@@ -1,4 +1,12 @@
-import type { ChunkState, DownloadNetwork, DownloadState } from '@shared/types'
+import type {
+  DownloadNetwork,
+  DownloadState,
+  FinishedDownload,
+  HttpDownloadNetwork,
+  HttpDownloadState,
+  TorrentDownloadNetwork,
+  TorrentDownloadState
+} from '@shared/types'
 
 const UNITS = ['B', 'KB', 'MB', 'GB', 'TB']
 
@@ -17,10 +25,8 @@ export function formatSpeed(bytesPerSec: number): string {
   return `${formatBytes(bytesPerSec)}/s`
 }
 
-export function formatEta(remainingBytes: number, bytesPerSec: number): string {
-  if (bytesPerSec <= 0 || remainingBytes <= 0) return '—'
-  const seconds = remainingBytes / bytesPerSec
-  if (!Number.isFinite(seconds)) return '—'
+export function formatEta(seconds: number): string {
+  if (!Number.isFinite(seconds) || seconds <= 0) return '—'
   if (seconds < 60) return `${Math.max(1, Math.ceil(seconds))}s`
   const totalSec = Math.round(seconds)
   const mins = Math.floor(totalSec / 60)
@@ -29,6 +35,22 @@ export function formatEta(remainingBytes: number, bytesPerSec: number): string {
   const hrs = Math.floor(mins / 60)
   const remMins = mins % 60
   return `${hrs}h ${remMins}m`
+}
+
+/** "3 files", or "2 of 4 files" when only some were chosen. */
+export function describeFileCount(chosen: number, total: number): string {
+  const files = `${total} ${total === 1 ? 'file' : 'files'}`
+  return chosen === total ? files : `${chosen} of ${files}`
+}
+
+/** A torrent file's path within the torrent's own folder, which every path starts with. */
+export function pathInTorrent(path: string): string {
+  return path.split(/[\\/]/).slice(1).join('/') || path
+}
+
+/** What a download fetches: all of it, bar a torrent's pieces no chosen file needs. */
+export function wantedBytes(download: DownloadState | FinishedDownload): number {
+  return download.totalBytes - (download.kind === 'torrent' ? download.skippedBytes : 0)
 }
 
 export function formatPercent(bytesDownloaded: number, totalBytes: number): number {
@@ -41,10 +63,48 @@ export function fileNameFromPath(path: string): string {
 }
 
 /** Short uppercase file-type badge from a name's extension, e.g. "Xcode_16.2.xip" -> "XIP", "photo.jpeg" -> "JPEG". */
+/** A download that is a folder: a torrent's, of its files. */
+export function isFolder(download: DownloadState | FinishedDownload): boolean {
+  return download.kind === 'torrent' && download.folder
+}
+
 export function fileExtensionBadge(fileName: string): string {
   const dotIndex = fileName.lastIndexOf('.')
   if (dotIndex <= 0 || dotIndex === fileName.length - 1) return 'FILE'
   return fileName.slice(dotIndex + 1, dotIndex + 5).toUpperCase()
+}
+
+/** When something happened, as a list shows it: "Just now", "12 min ago", "Today 08:55",
+ * "Yesterday 21:10", or the date. */
+export function formatWhen(time: number, now: number): string {
+  const minutes = Math.floor((now - time) / 60_000)
+  if (minutes < 1) return 'Just now'
+  if (minutes < 60) return `${minutes} min ago`
+  const date = new Date(time)
+  const clock = date.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })
+  const days = Math.round(
+    (new Date(now).setHours(0, 0, 0, 0) - new Date(time).setHours(0, 0, 0, 0)) / 86_400_000
+  )
+  if (days === 0) return `Today ${clock}`
+  if (days === 1) return `Yesterday ${clock}`
+  return date.toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' })
+}
+
+/** What Plexo can download: a web link, a magnet link, or a .torrent file on this computer. */
+export function acceptedLink(text: string): string | null {
+  const link = text.trim()
+  if (/^(https?:\/\/|magnet:\?)/i.test(link)) return link
+  if (/^(\/|[a-z]:\\).*\.torrent$/i.test(link)) return link
+  return null
+}
+
+/** Where a link's download comes from, in a word: its host. */
+export function sourceOf(url: string): string {
+  try {
+    return new URL(url).host
+  } catch {
+    return url
+  }
 }
 
 /** m:ss, or h:mm:ss past an hour. */
@@ -71,17 +131,26 @@ export function dirnameOf(path: string): string {
   return path.slice(0, index)
 }
 
-/** A download's network with the streams it runs: what one row on screen shows. */
-export interface NetworkGroup extends DownloadNetwork {
-  chunks: ChunkState[]
+export interface HttpNetworkGroup extends HttpDownloadNetwork {
+  streams: HttpDownloadState['streams']
 }
 
-export function groupByNetwork(
-  download: Pick<DownloadState, 'networks' | 'chunks'>
-): NetworkGroup[] {
+export interface TorrentNetworkGroup extends TorrentDownloadNetwork {
+  peers: TorrentDownloadState['peers']
+}
+
+export type NetworkGroup = HttpNetworkGroup | TorrentNetworkGroup
+
+export function groupByNetwork(download: DownloadState): NetworkGroup[] {
+  if (download.kind === 'http') {
+    return download.networks.map((network) => ({
+      ...network,
+      streams: download.streams.filter((stream) => stream.interfaceId === network.id)
+    }))
+  }
   return download.networks.map((network) => ({
     ...network,
-    chunks: download.chunks.filter((chunk) => chunk.interfaceId === network.id)
+    peers: download.peers.filter((peer) => peer.interfaceId === network.id)
   }))
 }
 
@@ -107,76 +176,15 @@ export function toDisplayPath(path: string, homeDir: string): string {
   return path
 }
 
-const IPC_INVOKE_PREFIX = /^Error invoking remote method '[^']*':\s*/
-const NESTED_ERROR_PREFIX = /^Error:\s*/
+export { describeError } from '@shared/errors'
 
-const ERROR_HINTS: Array<{ pattern: RegExp; message: string }> = [
-  {
-    pattern: /Download is incomplete/,
-    message: 'The download did not finish every range. Try downloading again.'
-  },
-  {
-    pattern: /Download file size does not match/,
-    message: 'The downloaded file did not match its expected size, so Plexo did not publish it.'
-  },
-  {
-    pattern: /ENOTFOUND|EAI_AGAIN/,
-    message: 'Could not resolve that host — check the URL and your connection.'
-  },
-  {
-    pattern: /ECONNREFUSED/,
-    message: 'The server refused the connection — it may be down or blocking requests.'
-  },
-  {
-    pattern: /ECONNRESET|socket hang up/,
-    message: 'The connection was reset by the server — try again in a moment.'
-  },
-  {
-    pattern: /ETIMEDOUT|ESOCKETTIMEDOUT/,
-    message: 'The connection timed out — check your network and try again.'
-  },
-  {
-    pattern: /CERT|SSL|TLS/i,
-    message: "The server's security certificate could not be verified."
-  },
-  {
-    pattern: /Invalid URL|ERR_INVALID_URL/,
-    message: 'That doesn’t look like a valid URL.'
-  },
-  {
-    pattern: /Server responded with status 401/,
-    message: 'This link requires you to sign in — Plexo can’t download it.'
-  },
-  {
-    pattern: /Server responded with status 403/,
-    message: 'Access to this file was denied by the server.'
-  },
-  {
-    pattern: /Server responded with status 404/,
-    message: 'That file could not be found — check the link and try again.'
-  },
-  {
-    pattern: /Server responded with status 4\d\d/,
-    message: 'The server rejected this request — check the link and try again.'
-  },
-  {
-    pattern: /Server responded with status 5\d\d/,
-    message: 'The server is having trouble right now — try again later.'
-  }
-]
+const LINK_REFUSED = /status (401|403|404|410) for range request/
 
-/** Electron wraps a rejected IPC call as "Error invoking remote method 'x': Error: <message>" —
- * strip that framework noise and translate common network errors and internal consistency-check
- * failures into plain English. Used for both the pre-download probe and a download's own
- * `error` field, so a failure partway through a transfer reads exactly as friendly as one caught
- * before it started. */
-export function describeError(error: unknown): string {
-  const raw = error instanceof Error ? error.message : String(error)
-  const stripped = raw.replace(IPC_INVOKE_PREFIX, '').replace(NESTED_ERROR_PREFIX, '')
-
-  for (const { pattern, message } of ERROR_HINTS) {
-    if (pattern.test(stripped)) return message
-  }
-
-  return stripped
+/** A download whose link the server now refuses: a fresh link to the same file picks it up. */
+export function linkExpired(download: DownloadState): boolean {
+  return (
+    download.kind === 'http' &&
+    download.status === 'error' &&
+    LINK_REFUSED.test(download.error ?? '')
+  )
 }

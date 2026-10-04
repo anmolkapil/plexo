@@ -1,6 +1,6 @@
 {
   "name": "plexo",
-  "version": "1.0.0-rc.11",
+  "version": "1.0.0-rc.12",
   "description": "Speed up downloads by combining multiple network connections in parallel",
   "main": "./out/main/index.js",
   "author": "Anmol Kapil",
@@ -18,7 +18,7 @@
     "predev": "install-electron",
     "dev": "electron-vite dev",
     "build": "npm run typecheck && electron-vite build",
-    "postinstall": "install-electron && electron-builder install-app-deps",
+    "postinstall": "patch-package && install-electron && electron-builder install-app-deps",
     "build:unpack": "npm run build && electron-builder --dir",
     "build:win": "npm run build && electron-builder --win",
     "build:mac": "electron-vite build && electron-builder --mac",
@@ -30,10 +30,14 @@
     "@base-ui/react": "^1.8.0",
     "@electron-toolkit/preload": "^3.0.2",
     "@electron-toolkit/utils": "^4.0.0",
+    "bittorrent-peerid": "2.0.2",
+    "fs-chunk-store": "5.0.1",
     "class-variance-authority": "^0.7.1",
     "cn": "^0.3.0",
     "koffi": "^2.16.3",
     "lucide-react": "^1.47.0",
+    "parse-torrent": "11.0.24",
+    "webtorrent": "3.0.21",
     "zustand": "^5.0.15"
   },
   "devDependencies": {
@@ -54,6 +58,7 @@
     "eslint-plugin-react-hooks": "^7.0.1",
     "eslint-plugin-react-refresh": "^0.4.24",
     "fast-check": "^4.10.1",
+    "patch-package": "8.0.1",
     "prettier": "^3.7.4",
     "react": "^19.2.1",
     "react-dom": "^19.2.1",
@@ -66,6 +71,7 @@
     "electron-winstaller@5.4.0": true,
     "esbuild@0.25.12": true,
     "esbuild@0.28.2": true,
-    "fsevents@2.3.3": true
+    "fsevents@2.3.3": true,
+    "node-datachannel@0.32.3": true
   }
 }

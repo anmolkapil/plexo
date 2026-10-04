@@ -1,31 +1,25 @@
 import type { DownloadState } from '@shared/types'
-import { useEffect, useState } from 'react'
+import { Folder } from 'lucide-react'
+import { memo, useEffect, useState } from 'react'
 import { BlockGrid } from '../components/BlockGrid'
 import { ColorBadge } from '../components/ColorBadge'
 import { CombineDiagram } from '../components/CombineDiagram'
 import { CyclableChip } from '../components/CyclableChip'
 import { HeroBand } from '../components/HeroBand'
 import { NetworkRow } from '../components/NetworkRow'
-import { ScreenFooter } from '../components/ScreenFooter'
+import { DetailHeader } from '../components/DetailHeader'
 import { ThroughputChart } from '../components/ThroughputChart'
+import { TorrentFiles } from '../components/TorrentFiles'
+import { TorrentBadge } from '../components/TorrentBadge'
 import { TruncatedText } from '../components/TruncatedText'
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-  AlertDialogTrigger
-} from '../components/ui/alert-dialog'
-import { Button, buttonVariants } from '../components/ui/button'
+import { Button } from '../components/ui/button'
 import { Tooltip, TooltipContent, TooltipTrigger } from '../components/ui/tooltip'
 import { useNetworkVisuals } from '../hooks/useNetworkVisuals'
 import { useAppStore } from '../store/useAppStore'
 import { KIND_PALETTE, NETWORK_ROW_GRID_COLUMNS } from '../theme'
 import {
+  describeError,
+  describeFileCount,
   dirnameOf,
   fileExtensionBadge,
   formatBytes,
@@ -33,15 +27,17 @@ import {
   formatPercent,
   formatSpeed,
   groupByNetwork,
+  isFolder,
   networksInPlay,
   splitFormattedBytes,
-  toDisplayPath
+  toDisplayPath,
+  wantedBytes
 } from '../utils/format'
 
 /** Inline "·" separator between adjacent stats. `shrink` pins it at its natural width inside a
  * flex row that might otherwise squeeze it (footer rows), matching each call site's prior style. */
-function Dot({ shrink }: { shrink?: boolean }): React.JSX.Element {
-  return <span className={`opacity-35 ${shrink ? 'shrink-0' : ''}`}>·</span>
+function Dot(): React.JSX.Element {
+  return <span className="opacity-35">·</span>
 }
 
 function InlineStat({ label, value }: { label: string; value: string }): React.JSX.Element {
@@ -90,19 +86,32 @@ function waitingFor(download: DownloadState): string | null {
   if (download.status !== 'downloading') return null
   const enabled = download.networks.filter((network) => network.enabled)
   if (enabled.some((network) => network.status === 'on')) return null
-  return enabled.some((network) => network.status === 'unreachable')
-    ? 'Can’t reach the server. Retrying…'
+  if (enabled.some((network) => network.status === 'unreachable')) {
+    return download.kind === 'torrent'
+      ? 'Can’t reach peers. Retrying…'
+      : 'Can’t reach the server. Retrying…'
+  }
+  return enabled.length > 0 && enabled.every((network) => network.status === 'limit')
+    ? 'Every network in use has reached its data limit. Raise one in Speed & data limits.'
     : 'Waiting for a network. Reconnect one or switch one on.'
 }
 
-export function DownloadingScreen({ download }: { download: DownloadState }): React.JSX.Element {
+// Memoized: App re-renders on every download's progress, and this one's grid and tables are
+// the heaviest thing on screen. Its download keeps its object until its own update arrives.
+export const DownloadingScreen = memo(function DownloadingScreen({
+  download
+}: {
+  download: DownloadState
+}): React.JSX.Element {
   const homeDir = useAppStore((store) => store.homeDir)
-  const speedHistory = useAppStore((store) => store.speedHistory)
-  const speedHistoryByInterface = useAppStore((store) => store.speedHistoryByInterface)
-  const peakSpeedBytesPerSec = useAppStore((store) => store.peakSpeedBytesPerSec)
+  const speedHistory = download.speedHistory ?? {}
+  const peakSpeedBytesPerSec = download.peakSpeedBytesPerSec
   const networkVisual = useNetworkVisuals()
-  const isPaused = download.status === 'paused'
-  const percent = formatPercent(download.bytesDownloaded, download.totalBytes)
+  const isQueued = download.status === 'queued'
+  // Waiting in the queue looks like a pause: nothing moves.
+  const isPaused = download.status === 'paused' || isQueued
+  const isTorrent = download.kind === 'torrent'
+  const percent = formatPercent(download.bytesDownloaded, wantedBytes(download))
   const knownSize = download.totalBytes > 0
   const [now, setNow] = useState(() => Date.now())
 
@@ -116,6 +125,7 @@ export function DownloadingScreen({ download }: { download: DownloadState }): Re
   // status away from 'paused' (an ETag re-check over the network for a real download) — with no
   // feedback in between, a slow check reads as the button not having registered the click.
   const [resuming, setResuming] = useState(false)
+  const [filesOpen, setFilesOpen] = useState(false)
   useEffect(() => {
     if (!isPaused || download.error) {
       // eslint-disable-next-line react-hooks/set-state-in-effect
@@ -125,14 +135,15 @@ export function DownloadingScreen({ download }: { download: DownloadState }): Re
 
   useEffect(() => {
     if (isPaused) {
-      document.title = knownSize ? `Plexo — Paused (${percent}%)` : 'Plexo — Paused'
+      const label = isQueued ? 'Queued' : 'Paused'
+      document.title = knownSize ? `Plexo — ${label} (${percent}%)` : `Plexo — ${label}`
     } else {
       document.title = knownSize ? `Plexo — ${percent}%` : 'Plexo — downloading'
     }
     return () => {
       document.title = 'Plexo'
     }
-  }, [percent, knownSize, isPaused])
+  }, [percent, knownSize, isPaused, isQueued])
 
   const totalPausedMs =
     (download.totalPausedMs || 0) +
@@ -140,15 +151,13 @@ export function DownloadingScreen({ download }: { download: DownloadState }): Re
   const elapsedSeconds = Math.max(0, (now - download.startedAt - totalPausedMs) / 1000)
 
   const handlePauseResume = (): void => {
-    if (isPaused) {
+    // A queued one is paused out of the queue, as a running one is.
+    if (isPaused && !isQueued) {
       setResuming(true)
       void window.plexo.resumeDownload(download.id)
     } else {
       void window.plexo.pauseDownload(download.id)
     }
-  }
-  const handleConfirmCancel = (): void => {
-    void window.plexo.cancelDownload(download.id)
   }
 
   const effectiveSpeed = isPaused ? 0 : download.speedBytesPerSec
@@ -163,7 +172,9 @@ export function DownloadingScreen({ download }: { download: DownloadState }): Re
   const waiting = waitingFor(download)
 
   const totalRetries = rows.reduce((sum, row) => sum + row.retries, 0)
-  const remainingBytes = knownSize ? Math.max(0, download.totalBytes - download.bytesDownloaded) : 0
+  const remainingBytes = knownSize
+    ? Math.max(0, wantedBytes(download) - download.bytesDownloaded)
+    : 0
 
   const avgSpeedBytesPerSec = elapsedSeconds > 0 ? download.bytesDownloaded / elapsedSeconds : 0
 
@@ -194,14 +205,28 @@ export function DownloadingScreen({ download }: { download: DownloadState }): Re
   const activeChipOption =
     chipOptions.length > 0 ? chipOptions[chipModeIndex % chipOptions.length] : null
 
-  const statusBadge = isPaused ? { label: 'PAUSED', palette: KIND_PALETTE.usb } : null
+  const statusBadge = isPaused
+    ? { label: isQueued ? 'QUEUED' : 'PAUSED', palette: KIND_PALETTE.usb }
+    : null
 
-  const throughputStatusLabel = isPaused ? null : `LAST ${speedHistory.length}S`
-  const pauseResumeLabel = resuming ? 'Resuming…' : isPaused ? 'Resume' : 'Pause'
+  const throughputStatusLabel = isPaused
+    ? null
+    : `LAST ${Object.values(speedHistory)[0]?.length ?? 0}S`
+  const pauseResumeLabel = resuming ? 'Resuming…' : isPaused && !isQueued ? 'Resume' : 'Pause'
 
   return (
     <div className="flex h-full flex-col bg-background">
-      {/* Hero band — always visible at top */}
+      <DetailHeader download={download}>
+        <Button
+          type="button"
+          variant={isPaused && !isQueued ? 'default' : 'secondary'}
+          onClick={handlePauseResume}
+          disabled={resuming}
+        >
+          {pauseResumeLabel}
+        </Button>
+      </DetailHeader>
+      {/* Hero band — always visible under the header */}
       <HeroBand>
         <div className="flex items-center gap-[14px]">
           <CombineDiagram
@@ -224,7 +249,13 @@ export function DownloadingScreen({ download }: { download: DownloadState }): Re
               <div className="flex items-center gap-2 font-mono text-[10px] leading-none font-medium tabular-nums text-muted-foreground">
                 <InlineStat label="AVG" value={formatSpeed(avgSpeedBytesPerSec)} />
                 <Dot />
-                <InlineStat label="PEAK" value={formatSpeed(peakSpeedBytesPerSec)} />
+                {/* A dash until a speed has been held long enough to call it the peak. */}
+                <InlineStat
+                  label="PEAK"
+                  value={
+                    peakSpeedBytesPerSec === undefined ? '—' : formatSpeed(peakSpeedBytesPerSec)
+                  }
+                />
               </div>
               {isPaused || waiting
                 ? (download.error || waiting) && (
@@ -232,7 +263,7 @@ export function DownloadingScreen({ download }: { download: DownloadState }): Re
                       role="alert"
                       className="mt-0.5 font-sans text-[11px] leading-[1.2] font-medium text-destructive"
                     >
-                      {download.error ?? waiting}
+                      {download.error ? describeError(download.error) : waiting}
                     </div>
                   )
                 : activeChipOption && (
@@ -262,7 +293,7 @@ export function DownloadingScreen({ download }: { download: DownloadState }): Re
                 interfaceId: g.id,
                 solid: visuals[i].solid
               }))}
-              historyByInterface={speedHistoryByInterface}
+              historyByInterface={speedHistory}
             />
           </div>
         </div>
@@ -272,17 +303,24 @@ export function DownloadingScreen({ download }: { download: DownloadState }): Re
       <div className="shrink-0 p-[16px_20px_0px]">
         <div className="flex items-center gap-[14px]">
           <div className="flex size-11 shrink-0 items-center justify-center rounded-[10px] border-[0.5px] border-[var(--border-strong)] bg-card font-mono text-[10.5px] leading-none font-bold tracking-[0.04em] text-[var(--text-secondary)]">
-            {fileExtensionBadge(download.fileName)}
+            {isFolder(download) ? (
+              <Folder aria-label="Folder" className="size-[18px]" />
+            ) : (
+              fileExtensionBadge(download.fileName)
+            )}
           </div>
-          <div className="min-w-0 flex-1">
-            <TruncatedText
-              text={download.fileName}
-              className="font-sans text-[15px] leading-[1.3] font-semibold tracking-[-0.01em] text-foreground"
-            />
-            <div className="mt-1 flex items-center gap-[7px] font-mono text-[12.5px] leading-[1.2] tabular-nums text-[var(--text-secondary)]">
+          <div className="flex min-w-0 flex-1 flex-col gap-1.5">
+            <div className="flex min-w-0 items-center gap-2">
+              <TruncatedText
+                text={download.fileName}
+                className="font-sans text-[15px] leading-[1.3] font-semibold tracking-[-0.01em] text-foreground"
+              />
+              {isTorrent && <TorrentBadge />}
+            </div>
+            <div className="flex min-w-0 items-center gap-[7px] font-mono text-[12.5px] leading-[1.2] tabular-nums text-[var(--text-secondary)]">
               <span>
                 {formatBytes(download.bytesDownloaded)}
-                {knownSize ? ` of ${formatBytes(download.totalBytes)}` : ''}
+                {knownSize ? ` of ${formatBytes(wantedBytes(download))}` : ''}
               </span>
               {knownSize && (
                 <>
@@ -290,11 +328,38 @@ export function DownloadingScreen({ download }: { download: DownloadState }): Re
                   <span className="font-semibold text-foreground">{percent}%</span>
                 </>
               )}
-              {!isPaused && knownSize && effectiveSpeed > 0 && (
+              {isTorrent && (
+                <>
+                  <Dot />
+                  <span>
+                    {download.peers.length} {download.peers.length === 1 ? 'peer' : 'peers'}
+                  </span>
+                </>
+              )}
+              {/* Several files: they open below. One is the name above. */}
+              {download.kind === 'torrent' && download.files.total > 1 && (
+                <>
+                  <Dot />
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="xs"
+                    onClick={() => setFilesOpen((open) => !open)}
+                    aria-expanded={filesOpen}
+                    className="h-auto cursor-pointer rounded-[4px] border-[0.5px] bg-card px-[7px] py-[3px] font-mono text-[10.5px] leading-none font-medium text-[var(--text-secondary)] aria-expanded:bg-secondary dark:bg-card"
+                  >
+                    {describeFileCount(download.files.chosen, download.files.total)}{' '}
+                    <span aria-hidden className="text-[7.5px] opacity-75">
+                      {filesOpen ? '▲' : '▼'}
+                    </span>
+                  </Button>
+                </>
+              )}
+              {!isPaused && download.timeLeftSeconds !== undefined && (
                 <>
                   <Dot />
                   <span className="text-[var(--text-secondary)]">
-                    {formatEta(remainingBytes, effectiveSpeed)} left
+                    {formatEta(download.timeLeftSeconds)} left
                   </span>
                 </>
               )}
@@ -312,22 +377,57 @@ export function DownloadingScreen({ download }: { download: DownloadState }): Re
                   {statusBadge.label}
                 </ColorBadge>
               )}
+              {totalRetries > 0 && (
+                <>
+                  <Dot />
+                  <span className="text-[var(--color-usb)]">
+                    {totalRetries} {totalRetries === 1 ? 'retry' : 'retries'}
+                  </span>
+                </>
+              )}
+              {/* Last and to the right: the one part that gives way when the line runs short. */}
+              <Tooltip>
+                <TooltipTrigger
+                  render={
+                    <span className="ml-auto flex min-w-0 items-center gap-1.5 pl-3 text-[11px] text-muted-foreground">
+                      <Folder aria-hidden className="size-3 shrink-0" />
+                      <span className="sr-only">Saving to</span>
+                      <span className="truncate">
+                        {toDisplayPath(dirnameOf(download.destinationPath), homeDir)}
+                      </span>
+                    </span>
+                  }
+                />
+                <TooltipContent>Saving to: {download.destinationPath}</TooltipContent>
+              </Tooltip>
             </div>
           </div>
         </div>
+        {download.kind === 'torrent' && filesOpen && (
+          <TorrentFiles
+            downloadId={download.id}
+            pieces={download.pieces}
+            selected={download.files.selected}
+          />
+        )}
       </div>
 
-      {/* Block grid + network table — share remaining flexible space, scroll internally */}
-      <div className="flex min-h-0 flex-1 flex-col overflow-y-auto px-5 pt-3 pb-2">
+      {/* Block grid: pinned with the file info. It's capped in height and scrolls itself. */}
+      <div className="shrink-0 px-5 pt-3">
         <BlockGrid
-          blocks={download.blocks}
+          blocks={download.kind === 'http' ? download.blocks : download.pieces}
           groups={groups}
           visuals={visuals}
           knownSize={knownSize}
           remainingBytes={remainingBytes}
           isPaused={isPaused}
+          pieces={isTorrent}
         />
+      </div>
 
+      {/* Network table: only its rows scroll, under their column headers. Edge to edge: its rows
+          pad themselves. */}
+      <div className="flex min-h-0 flex-1 flex-col overflow-y-auto pb-2">
         <div className="mt-3">
           <div
             role="table"
@@ -337,11 +437,31 @@ export function DownloadingScreen({ download }: { download: DownloadState }): Re
           >
             <div
               role="row"
-              className="col-span-full grid grid-cols-subgrid gap-x-3 border-b border-border pt-2.5 pb-[7px] font-mono text-[9.5px] leading-none tracking-[0.12em] text-muted-foreground uppercase"
+              className="sticky top-0 z-10 col-span-full grid grid-cols-subgrid gap-x-3 border-b border-border bg-background pt-2.5 pb-[7px] font-mono text-[9.5px] leading-none tracking-[0.12em] text-muted-foreground uppercase"
             >
               <div role="columnheader" aria-label="Status" />
               <div role="columnheader">Network</div>
-              <div role="columnheader">Progress</div>
+              <div role="columnheader">
+                {isTorrent ? (
+                  <Tooltip>
+                    <TooltipTrigger
+                      render={
+                        <button
+                          type="button"
+                          className="rounded-sm text-inherit uppercase focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
+                        >
+                          Progress
+                        </button>
+                      }
+                    />
+                    <TooltipContent>
+                      Percentage of the download completed with verified data from this network.
+                    </TooltipContent>
+                  </Tooltip>
+                ) : (
+                  'Progress'
+                )}
+              </div>
               <div role="columnheader" className="text-right">
                 Share
               </div>
@@ -349,7 +469,7 @@ export function DownloadingScreen({ download }: { download: DownloadState }): Re
                 Speed
               </div>
               <div role="columnheader" className="pr-5 text-right">
-                Downloaded
+                {isTorrent ? 'Transferred' : 'Downloaded'}
               </div>
             </div>
             {rows.map((row, index) => (
@@ -362,8 +482,8 @@ export function DownloadingScreen({ download }: { download: DownloadState }): Re
                     ? (row.bytesDownloaded / totalDownloadedByNetworks) * 100
                     : 0
                 }
-                totalBytes={download.totalBytes}
-                blocks={download.blocks}
+                totalBytes={wantedBytes(download)}
+                blocks={download.kind === 'http' ? download.blocks : undefined}
                 onSwitch={(enabled) =>
                   void window.plexo.setDownloadNetwork(download.id, row.id, enabled)
                 }
@@ -372,64 +492,6 @@ export function DownloadingScreen({ download }: { download: DownloadState }): Re
           </div>
         </div>
       </div>
-
-      {/* Footer is always pinned at the bottom, never scrolled off-screen */}
-      <ScreenFooter>
-        <div className="flex min-w-0 flex-1 items-center gap-[7px] overflow-hidden font-mono text-[11px] leading-[1.4] text-muted-foreground">
-          <Tooltip>
-            <TooltipTrigger
-              render={
-                <span className="shrink-0 whitespace-nowrap">
-                  Saving to {toDisplayPath(dirnameOf(download.destinationPath), homeDir)}
-                </span>
-              }
-            />
-            <TooltipContent>Saving to: {download.destinationPath}</TooltipContent>
-          </Tooltip>
-          <Dot shrink />
-          <span className="shrink-0">Resumable</span>
-          {totalRetries > 0 && (
-            <>
-              <Dot shrink />
-              <span className="shrink-0 text-[var(--color-usb)]">
-                {totalRetries} {totalRetries === 1 ? 'retry' : 'retries'}
-              </span>
-            </>
-          )}
-        </div>
-        <Button
-          type="button"
-          variant={isPaused ? 'default' : 'secondary'}
-          onClick={handlePauseResume}
-          disabled={resuming}
-        >
-          {pauseResumeLabel}
-        </Button>
-        <AlertDialog>
-          <AlertDialogTrigger
-            render={
-              <Button type="button" variant="destructive">
-                Cancel
-              </Button>
-            }
-          />
-          <AlertDialogContent>
-            <AlertDialogHeader>
-              <AlertDialogTitle>Cancel this download?</AlertDialogTitle>
-              <AlertDialogDescription>Progress will be lost.</AlertDialogDescription>
-            </AlertDialogHeader>
-            <AlertDialogFooter>
-              <AlertDialogCancel>Keep downloading</AlertDialogCancel>
-              <AlertDialogAction
-                className={buttonVariants({ variant: 'destructive', size: 'sm' })}
-                onClick={handleConfirmCancel}
-              >
-                Cancel download
-              </AlertDialogAction>
-            </AlertDialogFooter>
-          </AlertDialogContent>
-        </AlertDialog>
-      </ScreenFooter>
     </div>
   )
-}
+})

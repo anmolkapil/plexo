@@ -54,20 +54,31 @@ export const DANGER = 'var(--color-danger)'
 // the same column, which is routinely wider than the collapsed row's "<name> · N streams" — so
 // the track (and everything right of it) would jump wider the instant you expand. 190px already
 // covers that expanded content, so expanding never grows the track further.
-export const NETWORK_ROW_GRID_COLUMNS = '30px minmax(190px, max-content) 1fr 48px 78px 160px'
+// Keep a speed value and its unit together, including torrent direction arrows. Let unusually
+// long values grow the track rather than wrap or overflow into the adjacent byte totals.
+export const NETWORK_ROW_GRID_COLUMNS =
+  '30px minmax(190px, max-content) 1fr 48px minmax(104px, max-content) 160px'
+
+/** A swatch's colors, as CSS custom properties (main.css): a light and a dark value each. */
+function swatch<Id extends string>(
+  id: Id,
+  label: string
+): { id: Id; label: string; solid: string; onSolid: string } {
+  return { id, label, solid: `var(--swatch-${id})`, onSolid: `var(--swatch-${id}-onsolid)` }
+}
 
 // A curated set of user-selectable network colors, distinct from (and in addition to) the
 // kind defaults above — each ships its own on-solid text color so it's legible without having
-// to compute contrast for an arbitrary user-picked hue at runtime.
+// to compute contrast for an arbitrary user-picked hue at runtime, in light mode and dark.
 export const NETWORK_COLOR_SWATCHES = [
-  { id: 'teal', label: 'Teal', solid: '#4ea89a', onSolid: '#10201d' },
-  { id: 'amber', label: 'Amber', solid: '#d8a44c', onSolid: '#221806' },
-  { id: 'steel', label: 'Steel', solid: '#7e93bd', onSolid: '#141a26' },
-  { id: 'rose', label: 'Rose', solid: '#c97b7b', onSolid: '#210f0f' },
-  { id: 'violet', label: 'Violet', solid: '#9c8fd6', onSolid: '#17131f' },
-  { id: 'lime', label: 'Lime', solid: '#a3c66a', onSolid: '#161f0d' },
-  { id: 'cyan', label: 'Cyan', solid: '#6db8c9', onSolid: '#0d1a1e' },
-  { id: 'coral', label: 'Coral', solid: '#d99168', onSolid: '#241209' }
+  swatch('teal', 'Teal'),
+  swatch('amber', 'Amber'),
+  swatch('steel', 'Steel'),
+  swatch('rose', 'Rose'),
+  swatch('violet', 'Violet'),
+  swatch('lime', 'Lime'),
+  swatch('cyan', 'Cyan'),
+  swatch('coral', 'Coral')
 ] as const
 
 export type NetworkColorId = (typeof NETWORK_COLOR_SWATCHES)[number]['id']
@@ -162,3 +173,6 @@ export function resolveNetworkVisual(
     name
   }
 }
+
+/** In px. Drawn inside the window, so popups have to keep clear of it themselves. */
+export const TITLE_BAR_HEIGHT = window.plexo.platform === 'darwin' ? 32 : 44

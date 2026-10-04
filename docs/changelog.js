@@ -10,6 +10,41 @@
 
   root.PlexoChangelog = [
     {
+      version: 'v1.0.0-rc.12',
+      items: [
+        {
+          kind: 'new',
+          title: 'Torrents',
+          text: 'Open magnet links and `.torrent` files. Peers spread across your networks, and you can choose which files to download before it starts or while it runs.'
+        },
+        {
+          kind: 'new',
+          title: 'A download queue',
+          text: 'Two downloads run at once by default, or set one to eight. The rest wait and start on their own, and finished downloads stay in the list after a restart.'
+        },
+        {
+          kind: 'new',
+          title: 'Speed and data limits',
+          text: 'Set a total speed limit, a limit per network, and Slow mode for calls. Give a network a daily, weekly or monthly data allowance and Plexo stops using it once it is spent.'
+        },
+        {
+          kind: 'new',
+          title: 'Act on many downloads at once',
+          text: 'Select downloads to pause, resume, retry, cancel, remove them from the list, or move their files to the Trash.'
+        },
+        {
+          kind: 'new',
+          title: 'Fix expired links',
+          text: 'Paste a fresh link to the same file and the download carries on from where it stopped.'
+        },
+        {
+          kind: 'improved',
+          title: 'A more compact window',
+          text: 'Slimmer title bar and header. Speed, the queue, Slow mode, free space and the update button now sit in the bar along the bottom.'
+        }
+      ]
+    },
+    {
       version: 'v1.0.0-rc.11',
       items: [
         {

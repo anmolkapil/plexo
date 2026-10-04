@@ -1,4 +1,4 @@
-import type { BlockState, ChunkState } from '../../shared/types'
+import type { HttpBlockState, HttpStreamState } from '../../shared/types'
 
 // Who should fetch what, decided from a snapshot of the download and nothing else — no I/O, no
 // clock of its own — so every rule here can be checked against exact situations.
@@ -22,8 +22,8 @@ export interface AttemptView {
 }
 
 export interface SchedulerState {
-  blocks: readonly BlockState[]
-  streams: readonly Pick<ChunkState, 'id' | 'interfaceId' | 'status' | 'speedBytesPerSec'>[]
+  blocks: readonly HttpBlockState[]
+  streams: readonly Pick<HttpStreamState, 'id' | 'interfaceId' | 'status' | 'speedBytesPerSec'>[]
   /** Attempts in flight, by block index. */
   attempts: ReadonlyMap<number, readonly AttemptView[]>
   /** For a block whose last attempt on some network delivered nothing, that network. */
@@ -53,7 +53,7 @@ export interface Requester {
 
 export interface Work {
   kind: 'primary' | 'hedge'
-  block: BlockState
+  block: HttpBlockState
 }
 
 /** The first waiting block — except that one whose last attempt on this network delivered
@@ -61,7 +61,7 @@ export interface Work {
  * Otherwise a network that isn't answering would be handed the same block again and again, by
  * whichever of its streams asked first, while healthy networks sat idle beside it. With no other
  * network free the block is taken anyway, so it can never be stranded. */
-function nextWaitingBlock(state: SchedulerState, networkId: string): BlockState | undefined {
+function nextWaitingBlock(state: SchedulerState, networkId: string): HttpBlockState | undefined {
   // A pending stream is one waiting for work (see ChunkStatus).
   const otherNetworkFree = state.streams.some(
     (stream) => stream.interfaceId !== networkId && stream.status === 'pending'
@@ -80,14 +80,14 @@ function nextHedgeTarget(
   who: Requester,
   now: number,
   policy: SchedulerPolicy
-): BlockState | undefined {
+): HttpBlockState | undefined {
   // Only when everything left is already being fetched.
   if (state.blocks.some((block) => block.status === 'pending')) return undefined
 
   const speedOf = (streamId: number): number =>
     state.streams.find((stream) => stream.id === streamId)?.speedBytesPerSec ?? 0
 
-  let target: BlockState | undefined
+  let target: HttpBlockState | undefined
   let latest = 0
   for (const [index, attempts] of state.attempts) {
     const block = state.blocks[index]

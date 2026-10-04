@@ -1,4 +1,4 @@
-import { contextBridge, ipcRenderer, type IpcRendererEvent } from 'electron'
+import { contextBridge, ipcRenderer, webUtils, type IpcRendererEvent } from 'electron'
 import { IpcChannels } from '../shared/ipc-channels'
 import type { IpcContract } from '../shared/ipc-contract'
 import type {
@@ -30,23 +30,51 @@ const plexoApi = {
   updateSettings: (patch: AppSettings) => invoke('updateSettings', patch),
   probeUrl: (url: string) => invoke('probeUrl', url),
   chooseDestinationFolder: (defaultPath: string) => invoke('chooseDestinationFolder', defaultPath),
+  chooseTorrentFile: () => invoke('chooseTorrentFile'),
+  /** Where a file dropped on the window is on disk ('' for one that isn't a file). */
+  pathForFile: (file: File) => webUtils.getPathForFile(file),
   readClipboardText: () => invoke('readClipboardText'),
-  revealInFolder: (filePath: string) => invoke('revealInFolder', filePath),
+  revealDownload: (id: string) => invoke('revealDownload', id),
   startDownload: (request: IpcContract['startDownload']['args'][0]) =>
     invoke('startDownload', request),
-  getCurrentDownload: () => invoke('getCurrentDownload'),
+  listDownloads: () => invoke('listDownloads'),
+  listHistory: () => invoke('listHistory'),
+  clearHistory: () => invoke('clearHistory'),
+  networkUsage: () => invoke('networkUsage'),
+  resetNetworkUsage: (id) => invoke('resetNetworkUsage', id),
+  freeSpace: (dir: string) => invoke('freeSpace', dir),
+  torrentFiles: (downloadId: string) => invoke('torrentFiles', downloadId),
+  chooseTorrentFiles: (downloadId: string, selected: number[]) =>
+    invoke('chooseTorrentFiles', downloadId, selected),
   pauseDownload: (downloadId: string) => invoke('pauseDownload', downloadId),
   resumeDownload: (downloadId: string) => invoke('resumeDownload', downloadId),
+  relinkDownload: (downloadId: string, url: string) => invoke('relinkDownload', downloadId, url),
   setDownloadNetwork: (downloadId: string, networkId: string, enabled: boolean) =>
     invoke('setDownloadNetwork', downloadId, networkId, enabled),
   cancelDownload: (downloadId: string) => invoke('cancelDownload', downloadId),
-  removeDownload: (downloadId: string) => invoke('removeDownload', downloadId),
+  removeDownload: (downloadId: string, options?: { trashFile?: boolean }) =>
+    invoke('removeDownload', downloadId, options),
   checkForUpdate: () => invoke('checkForUpdate'),
+  takePendingLink: () => invoke('takePendingLink'),
+
+  /** The OS handed Plexo a link (a magnet link, a .torrent): takePendingLink() has it. */
+  onLinkReceived: (callback: () => void): (() => void) => {
+    const listener = (): void => callback()
+    ipcRenderer.on(IpcChannels.linkReceived, listener)
+    return () => ipcRenderer.removeListener(IpcChannels.linkReceived, listener)
+  },
 
   onDownloadUpdated: (callback: (update: DownloadUpdate) => void): (() => void) => {
     const listener = (_event: IpcRendererEvent, update: DownloadUpdate): void => callback(update)
     ipcRenderer.on(IpcChannels.downloadUpdated, listener)
     return () => ipcRenderer.removeListener(IpcChannels.downloadUpdated, listener)
+  },
+
+  /** A download was added to the finished ones or forgotten: listHistory() has them. */
+  onHistoryChanged: (callback: () => void): (() => void) => {
+    const listener = (): void => callback()
+    ipcRenderer.on(IpcChannels.historyChanged, listener)
+    return () => ipcRenderer.removeListener(IpcChannels.historyChanged, listener)
   },
 
   onNetworksChanged: (callback: (networks: NetworkInterfaceInfo[]) => void): (() => void) => {

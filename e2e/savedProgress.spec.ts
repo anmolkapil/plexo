@@ -1,7 +1,7 @@
 import { expect, test } from '@playwright/test'
-import { planBlocks } from '../src/main/download/plan'
-import { restoreBlocks, saveBlocks } from '../src/main/download/savedProgress'
-import type { BlockState } from '../src/shared/types'
+import { planBlocks, planPieces } from '../src/main/download/plan'
+import { restoreBlocks, restorePieces, saveBlocks } from '../src/main/download/savedProgress'
+import type { HttpBlockState } from '../src/shared/types'
 
 // P. What a download's saved progress says, and what it's trusted to say when read back.
 
@@ -9,7 +9,7 @@ const MIB = 1024 * 1024
 const plan = { totalBytes: 10 * MIB, blockSizeBytes: 4 * MIB, totalBlocks: 3 }
 
 /** A download of `plan` with some progress: block 0 done by two networks, block 1 partway. */
-function inProgress(): BlockState[] {
+function inProgress(): HttpBlockState[] {
   const blocks = planBlocks(plan.totalBytes, plan.blockSizeBytes)
   Object.assign(blocks[0], {
     status: 'completed',
@@ -59,7 +59,7 @@ test.describe('saved progress', () => {
     const saved = saveBlocks(inProgress())
     for (const blockSizeBytes of [0, -1, NaN, 1.5, undefined]) {
       expect(
-        restoreBlocks({ ...plan, blockSizeBytes }, saved),
+        restoreBlocks({ ...plan, blockSizeBytes: blockSizeBytes as number }, saved),
         String(blockSizeBytes)
       ).toBeUndefined()
     }
@@ -85,5 +85,25 @@ test.describe('saved progress', () => {
         restored.every((block) => block.bytesDownloaded === 0 && block.status === 'pending')
       ).toBe(true)
     }
+  })
+
+  test('torrent checkpoints restore verified bytes, never provisional bytes', () => {
+    const pieces = planPieces(250, 100)
+    Object.assign(pieces[0], {
+      status: 'completed',
+      bytesDownloaded: 100,
+      bytesByInterface: { wifi: 100 }
+    })
+    Object.assign(pieces[1], { status: 'downloading', provisionalBytes: 75 })
+    const restored = restorePieces(
+      { totalBytes: 250, pieceLength: 100, totalPieces: 3 },
+      saveBlocks(pieces)
+    )!
+    expect(restored.map((piece) => [piece.status, piece.bytesDownloaded])).toEqual([
+      ['completed', 100],
+      ['pending', 0],
+      ['pending', 0]
+    ])
+    expect(restored.every((piece) => piece.provisionalBytes === 0)).toBe(true)
   })
 })

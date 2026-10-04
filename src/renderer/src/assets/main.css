@@ -72,6 +72,25 @@
   --color-neutral-text: #4b5563;
   --color-neutral-onsolid: #ffffff;
 
+  /* Network colors a user can pick (theme.ts NETWORK_COLOR_SWATCHES): deep enough on white for a
+     white glyph, as the kinds' are. Teal, amber and steel are the kinds' own. */
+  --swatch-teal: #1f8a70;
+  --swatch-teal-onsolid: #ffffff;
+  --swatch-amber: #d97706;
+  --swatch-amber-onsolid: #ffffff;
+  --swatch-steel: #4f64a5;
+  --swatch-steel-onsolid: #ffffff;
+  --swatch-rose: #b5525a;
+  --swatch-rose-onsolid: #ffffff;
+  --swatch-violet: #6c5ac4;
+  --swatch-violet-onsolid: #ffffff;
+  --swatch-lime: #5b8a1e;
+  --swatch-lime-onsolid: #ffffff;
+  --swatch-cyan: #0e7d93;
+  --swatch-cyan-onsolid: #ffffff;
+  --swatch-coral: #c4572a;
+  --swatch-coral-onsolid: #ffffff;
+
   --color-accent: #d97706;
   --color-accent-onsolid: #ffffff;
   --color-success: #1f8a70;
@@ -173,6 +192,23 @@
     --color-neutral-border: #3a3f44;
     --color-neutral-text: #a9adb2;
     --color-neutral-onsolid: #16181a;
+
+    --swatch-teal: #4ea89a;
+    --swatch-teal-onsolid: #10201d;
+    --swatch-amber: #d8a44c;
+    --swatch-amber-onsolid: #221806;
+    --swatch-steel: #7e93bd;
+    --swatch-steel-onsolid: #141a26;
+    --swatch-rose: #c97b7b;
+    --swatch-rose-onsolid: #210f0f;
+    --swatch-violet: #9c8fd6;
+    --swatch-violet-onsolid: #17131f;
+    --swatch-lime: #a3c66a;
+    --swatch-lime-onsolid: #161f0d;
+    --swatch-cyan: #6db8c9;
+    --swatch-cyan-onsolid: #0d1a1e;
+    --swatch-coral: #d99168;
+    --swatch-coral-onsolid: #241209;
 
     --color-accent: #d8a44c;
     --color-accent-onsolid: #1b1408;

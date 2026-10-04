@@ -1,4 +1,4 @@
-import type { BlockState } from '../../shared/types'
+import type { HttpBlockState, TorrentPieceState } from '../../shared/types'
 
 // How a download is cut into blocks, and how many streams a network starts on them. Pure, so
 // every rule here can be checked against exact situations. How many streams a network ends up
@@ -101,8 +101,9 @@ export function startingStreams(
 
 /** The blocks a file of `totalBytes` is cut into, none of them started. An unknown size is one
  * block, open-ended to the end of the file. */
-export function planBlocks(totalBytes: number, blockSizeBytes: number): BlockState[] {
-  const fresh = (index: number, rangeStart: number, rangeEnd: number | null): BlockState => ({
+export function planBlocks(totalBytes: number, blockSizeBytes: number): HttpBlockState[] {
+  const fresh = (index: number, rangeStart: number, rangeEnd: number | null): HttpBlockState => ({
+    kind: 'http',
     index,
     rangeStart,
     rangeEnd,
@@ -114,5 +115,24 @@ export function planBlocks(totalBytes: number, blockSizeBytes: number): BlockSta
   return Array.from({ length: Math.ceil(totalBytes / blockSizeBytes) }, (_, index) => {
     const rangeStart = index * blockSizeBytes
     return fresh(index, rangeStart, Math.min(rangeStart + blockSizeBytes, totalBytes) - 1)
+  })
+}
+
+/** A torrent's pieces. Unlike HTTP blocks, received bytes are provisional until the piece's hash
+ * verifies, so the live count is kept separately from durable progress. */
+export function planPieces(totalBytes: number, pieceLength: number): TorrentPieceState[] {
+  if (totalBytes <= 0 || pieceLength <= 0) return []
+  return Array.from({ length: Math.ceil(totalBytes / pieceLength) }, (_, index) => {
+    const rangeStart = index * pieceLength
+    return {
+      kind: 'torrent',
+      index,
+      rangeStart,
+      rangeEnd: Math.min(rangeStart + pieceLength, totalBytes) - 1,
+      status: 'pending',
+      bytesDownloaded: 0,
+      bytesByInterface: {},
+      provisionalBytes: 0
+    }
   })
 }
