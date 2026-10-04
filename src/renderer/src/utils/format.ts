@@ -25,10 +25,8 @@ export function formatSpeed(bytesPerSec: number): string {
   return `${formatBytes(bytesPerSec)}/s`
 }
 
-export function formatEta(remainingBytes: number, bytesPerSec: number): string {
-  if (bytesPerSec <= 0 || remainingBytes <= 0) return '—'
-  const seconds = remainingBytes / bytesPerSec
-  if (!Number.isFinite(seconds)) return '—'
+export function formatEta(seconds: number): string {
+  if (!Number.isFinite(seconds) || seconds <= 0) return '—'
   if (seconds < 60) return `${Math.max(1, Math.ceil(seconds))}s`
   const totalSec = Math.round(seconds)
   const mins = Math.floor(totalSec / 60)

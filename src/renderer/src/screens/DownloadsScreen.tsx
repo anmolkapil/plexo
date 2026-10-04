@@ -610,9 +610,7 @@ const DownloadRow = memo(function DownloadRow({
           wanted > 0 && `${percent}%`,
           sizes,
           formatSpeed(download.speedBytesPerSec),
-          wanted > 0 &&
-            download.speedBytesPerSec > 0 &&
-            formatEta(wanted - download.bytesDownloaded, download.speedBytesPerSec)
+          download.timeLeftSeconds !== undefined && formatEta(download.timeLeftSeconds)
         ]
           .filter(Boolean)
           .join(' · ')

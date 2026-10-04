@@ -48,6 +48,7 @@ import {
   Meters,
   recomputeAggregates,
   updateSpeeds,
+  updateTimeLeft,
   type Transfer,
   type TransferHost,
   type HttpTransferTarget,
@@ -1256,6 +1257,7 @@ export class DownloadManager {
     // handler per tick onto each one still running, held until it ends.
     const watched = new WeakSet<Promise<void>>()
     let wake: { resolve: () => void; reject: (error: unknown) => void } | null = null
+    let tickedAt = Date.now()
 
     while (
       runtime.state.status === 'downloading' &&
@@ -1276,7 +1278,10 @@ export class DownloadManager {
       if ((runtime.state.status as DownloadStatus) !== 'downloading') break
       const now = Date.now()
       // The only place speeds are read: on this clock, never as bytes arrive (see Meter).
-      if (updateSpeeds(runtime, now)) this.scheduleUpdate(runtime)
+      const speedsChanged = updateSpeeds(runtime, now)
+      const timeLeftChanged = updateTimeLeft(runtime.state, (now - tickedAt) / 1000)
+      tickedAt = now
+      if (speedsChanged || timeLeftChanged) this.scheduleUpdate(runtime)
       runtime.bestSpeedSeen = Math.max(runtime.bestSpeedSeen, runtime.state.speedBytesPerSec)
       if (now - runtime.speedSampledAt >= 1000) {
         runtime.speedSampledAt = now

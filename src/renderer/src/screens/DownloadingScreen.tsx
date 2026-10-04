@@ -355,11 +355,11 @@ export const DownloadingScreen = memo(function DownloadingScreen({
                   </Button>
                 </>
               )}
-              {!isPaused && knownSize && effectiveSpeed > 0 && (
+              {!isPaused && download.timeLeftSeconds !== undefined && (
                 <>
                   <Dot />
                   <span className="text-[var(--text-secondary)]">
-                    {formatEta(remainingBytes, effectiveSpeed)} left
+                    {formatEta(download.timeLeftSeconds)} left
                   </span>
                 </>
               )}

@@ -177,9 +177,46 @@ export function updateSpeeds(runtime: TransferTarget, now: number): boolean {
   return changed
 }
 
+// How far time left moves toward a new estimate in a second: further down than up, so a speed-up
+// shows at once while a wobble doesn't add minutes. Firefox's shares per update
+// (DownloadUtils.getTimeLeft), here per second so the tick's pace doesn't change them.
+const TIME_LEFT_DOWN = 0.3
+const TIME_LEFT_UP = 0.1
+
+/** Time left, `elapsedSeconds` after `previous`, given a fresh `estimate`. */
+export function smoothTimeLeft(
+  previous: number | undefined,
+  elapsedSeconds: number,
+  estimate: number
+): number {
+  // Between estimates it counts down on its own.
+  const expected = previous === undefined ? 0 : previous - elapsedSeconds
+  // The first estimate, or far under what's expected (a slow start or resume picking up): as is.
+  if (expected <= 0 || estimate <= expected / 2) return estimate
+  const share = estimate < expected ? TIME_LEFT_DOWN : TIME_LEFT_UP
+  return expected + (estimate - expected) * (1 - (1 - share) ** elapsedSeconds)
+}
+
+/** Brings time left up to date from the speed, `elapsedSeconds` after it last was. Read on the
+ * download's clock, with the speeds. Says whether it changed. */
+export function updateTimeLeft(state: DownloadState, elapsedSeconds: number): boolean {
+  const wanted = state.totalBytes - (state.kind === 'torrent' ? state.skippedBytes : 0)
+  const before = state.timeLeftSeconds
+  state.timeLeftSeconds =
+    state.totalBytes > 0 && state.speedBytesPerSec > 0
+      ? smoothTimeLeft(
+          before,
+          elapsedSeconds,
+          Math.max(0, wanted - state.bytesDownloaded) / state.speedBytesPerSec
+        )
+      : undefined
+  return state.timeLeftSeconds !== before
+}
+
 /** Nothing is moving: a paused or stopped download reads 0 everywhere. */
 export function clearSpeeds(state: DownloadState): void {
   state.speedBytesPerSec = 0
+  state.timeLeftSeconds = undefined
   const connections = state.kind === 'http' ? state.streams : state.peers
   for (const connection of connections) connection.speedBytesPerSec = 0
   for (const network of state.networks) network.speedBytesPerSec = 0

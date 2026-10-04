@@ -197,6 +197,9 @@ interface DownloadStateBase {
   totalBytes: number
   bytesDownloaded: number
   speedBytesPerSec: number
+  /** Seconds left at this speed, smoothed (see updateTimeLeft); unset when there's no telling:
+   * the size unknown, or nothing moving. */
+  timeLeftSeconds?: number
   status: DownloadStatus
   error?: string
   /** For an error: whether resuming can pick up where it stopped. False when the progress was
