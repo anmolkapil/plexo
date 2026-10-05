@@ -553,6 +553,18 @@ summary:focus-visible,
   flex-wrap: wrap;
   gap: 12px 28px;
 }
+.product-hunt-badge {
+  display: block;
+  width: 250px;
+  max-width: 100%;
+  position: relative;
+  margin: 20px auto 0;
+}
+.product-hunt-badge img {
+  display: block;
+  width: 100%;
+  height: auto;
+}
 .download-primary {
   display: inline-flex;
   align-items: center;
@@ -583,6 +595,9 @@ summary:focus-visible,
   flex-wrap: wrap;
   justify-content: center;
   gap: 12px;
+}
+#hero-alternates:empty {
+  display: none;
 }
 #hero-alternates a {
   padding: 14px 24px;
@@ -1599,6 +1614,7 @@ summary:focus-visible,
   transform: none;
 }
 .motion-ready #top > span,
+.motion-ready #top > .product-hunt-badge,
 .motion-ready #top h1,
 .motion-ready #top > p,
 .motion-ready #top .hero-actions,
@@ -1708,7 +1724,7 @@ a:focus-visible {
 
 @media (max-width: 640px) {
   #top {
-    padding-top: 64px !important;
+    padding-top: 24px !important;
   }
   #features,
   #downloads,
@@ -1746,7 +1762,7 @@ a:focus-visible {
     margin-top: 72px !important;
   }
   .demo-wrap {
-    margin-top: 48px !important;
+    margin-top: 16px !important;
   }
   .feature-visual {
     min-height: 0 !important;
