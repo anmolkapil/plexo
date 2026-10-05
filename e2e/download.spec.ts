@@ -122,7 +122,12 @@ test.describe('happy paths @smoke', () => {
 test.describe('file names @smoke', () => {
   const cases: [string, string, RegExp][] = [
     ['path traversal is flattened', 'attachment; filename="../../evil.sh"', /^\.\._\.\._evil\.sh$/],
-    ['control characters are replaced', 'attachment; filename="a%0Ab.txt"', /^a_b\.txt$/]
+    ['control characters are replaced', 'attachment; filename="a%0Ab.txt"', /^a_b\.txt$/],
+    [
+      'an ISO-8859-1 filename* is decoded',
+      "attachment; filename*=iso-8859-1'en'%A3%20rates.txt",
+      /^£ rates\.txt$/
+    ]
   ]
   for (const [label, disposition, expected] of cases) {
     test(label, async ({ plexo, serve, dirs }) => {

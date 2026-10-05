@@ -65,12 +65,19 @@ function requestOneByte(url: URL, deadline: number): Promise<ProbeResponse> {
 function parseContentDispositionFilename(disposition: string): string | null {
   // RFC 6266 / RFC 5987: filename* takes precedence over filename
   // format: filename*=charset'language'encoded-value
-  const extMatch = /\bfilename\*=(?:[a-zA-Z0-9_-]+)'[^']*'([^;\s]+)/i.exec(disposition)
-  if (extMatch?.[1]) {
+  const extMatch = /\bfilename\*=([a-zA-Z0-9_-]+)'[^']*'([^;\s]+)/i.exec(disposition)
+  if (extMatch?.[2]) {
+    // RFC 5987 requires both UTF-8 and ISO-8859-1. decodeURIComponent only reads UTF-8, so a
+    // Latin-1 byte like %A3 (£) would throw and leave the raw escapes as the name.
+    if (/^iso-8859-1$/i.test(extMatch[1])) {
+      return extMatch[2].replace(/%([0-9a-f]{2})/gi, (_, hex: string) =>
+        String.fromCharCode(parseInt(hex, 16))
+      )
+    }
     try {
-      return decodeURIComponent(extMatch[1])
+      return decodeURIComponent(extMatch[2])
     } catch {
-      return extMatch[1]
+      return extMatch[2]
     }
   }
 
