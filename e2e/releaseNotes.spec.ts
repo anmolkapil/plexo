@@ -9,6 +9,8 @@ const builds = (version: string): string[] => [
   `plexo-${version}-setup.exe`,
   `plexo-${version}-x64.dmg`,
   `plexo-${version}-x86_64.AppImage`,
+  `plexo-${version}.aarch64.rpm`,
+  `plexo-${version}.x86_64.rpm`,
   `plexo_${version}_amd64.deb`,
   `plexo_${version}_arm64.deb`
 ]
@@ -38,6 +40,8 @@ test.describe('release artifact selection @smoke', () => {
         'latest.yml',
         `plexo-${version}-arm64.dmg.blockmap`,
         `plexo-${version}-setup.exe.blockmap`,
+        `plexo-${version}.aarch64.rpm.blockmap`,
+        `plexo-${version}.x86_64.rpm.blockmap`,
         `plexo_${version}_amd64.snap`
       ]
       const script = prepareRelease(root, [...expected, ...otherBuilds, ...noise])
