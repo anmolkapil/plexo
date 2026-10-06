@@ -148,8 +148,13 @@ export function CompleteScreen({
       <div className="mx-5 mb-4 flex flex-col gap-2">
         <h2 className={sectionHeaderClass}>Speed over the download</h2>
         <ThroughputChart
-          order={groups.map((g, i) => ({ interfaceId: g.id, solid: visuals[i].solid }))}
+          order={groups.map((g, i) => ({
+            interfaceId: g.id,
+            solid: visuals[i].solid,
+            name: visuals[i].name
+          }))}
           historyByInterface={download.speedHistory ?? {}}
+          finished
         />
       </div>
 

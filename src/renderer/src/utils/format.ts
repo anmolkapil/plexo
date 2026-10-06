@@ -39,6 +39,40 @@ export function formatSpeed(bytesPerSec: number, unit: SpeedUnit): string {
   return `${value.toFixed(digits(value))} ${BIT_UNITS[exponent]}`
 }
 
+// Bytes a second in each unit formatSpeed reads in.
+const SPEED_UNIT_BYTES: Record<string, number> = {
+  'B/s': 1,
+  'KB/s': 1024,
+  'MB/s': 1024 ** 2,
+  'GB/s': 1024 ** 3,
+  'TB/s': 1024 ** 4,
+  bps: 1 / 8,
+  Kbps: 1e3 / 8,
+  Mbps: 1e6 / 8,
+  Gbps: 1e9 / 8,
+  Tbps: 1e12 / 8
+}
+
+/** A speed axis for speeds up to `max`: 2 or 3 gridlines at round steps (1, 2, 2.5 or 5 × 10ⁿ) in
+ * the unit formatSpeed would read `max` in, the top one just clearing it, each labelled with it. */
+export function speedTicks(
+  max: number,
+  unit: SpeedUnit
+): { top: number; ticks: { value: number; label: string }[] } {
+  if (!(max > 0)) return { top: 1, ticks: [] }
+  const label = formatSpeed(max, unit).split(' ')[1]
+  const size = SPEED_UNIT_BYTES[label]
+  const third = max / size / 3
+  const power = 10 ** Math.floor(Math.log10(third))
+  const step = [1, 2, 2.5, 5, 10].map((m) => m * power).find((s) => s >= third)!
+  const count = Math.ceil(max / size / step)
+  const ticks = Array.from({ length: count }, (_, i) => {
+    const value = Number(((i + 1) * step).toFixed(2))
+    return { value: value * size, label: `${value} ${label}` }
+  })
+  return { top: count * step * size, ticks }
+}
+
 /** A speed someone set, as a round figure: whole from 10 up, never a trailing ".0". 58.7 Mbps
  * reads as something measured; 59 Mbps as something chosen. */
 export function formatSpeedLimit(bytesPerSec: number, unit: SpeedUnit): string {

@@ -302,7 +302,8 @@ export const DownloadingScreen = memo(function DownloadingScreen({
             <ThroughputChart
               order={groups.map((g, i) => ({
                 interfaceId: g.id,
-                solid: visuals[i].solid
+                solid: visuals[i].solid,
+                name: visuals[i].name
               }))}
               historyByInterface={speedHistory}
             />
