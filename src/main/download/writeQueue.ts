@@ -1,8 +1,17 @@
 import { Writable } from 'node:stream'
 
 const MiB = 1024 * 1024
-const BATCH_BYTES = MiB
-const FLUSH_MS = 10
+/** HTTP write tuning, in MiB. Payload is allocated on demand; limits include in-flight writes.
+ * Keep perFileMiB <= sharedMiB. These caps exclude Electron, stream and OS-cache memory. */
+export const HTTP_WRITE_CONFIG = {
+  perFileMiB: 32,
+  sharedMiB: 128,
+  batchMiB: 1,
+  flushMs: 10
+} as const
+
+const BATCH_BYTES = HTTP_WRITE_CONFIG.batchMiB * MiB
+const FLUSH_MS = HTTP_WRITE_CONFIG.flushMs
 /** Charges queued AND in-flight payloads. Unadmitted packets stay under stream backpressure. */
 export class WriteBudget {
   used = 0
@@ -11,8 +20,8 @@ export class WriteBudget {
   private readonly waiters = new Set<() => void>()
 
   constructor(
-    readonly limit = 32 * MiB,
-    readonly perFile = 8 * MiB
+    readonly limit = HTTP_WRITE_CONFIG.sharedMiB * MiB,
+    readonly perFile = HTTP_WRITE_CONFIG.perFileMiB * MiB
   ) {}
 
   acquire(file: WriteQueue, bytes: number, signal: AbortSignal): Promise<() => void> {
