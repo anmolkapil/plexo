@@ -338,6 +338,9 @@ export interface AppSettings {
 export type SpeedUnit = 'bytes' | 'bits'
 
 export const DOWNLOADS_AT_ONCE = { default: 2, min: 1, max: 8 }
+/** Seconds of speed history a download keeps (a sample a second), and so the span the throughput
+ * chart always shows. */
+export const SPEED_HISTORY_SECONDS = 60
 export const DEFAULT_SLOW_MODE_SPEED = 2 * 1024 ** 2
 
 /** Everything the renderer needs for its first paint, read synchronously by the preload so no

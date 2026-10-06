@@ -1,4 +1,4 @@
-import type { DownloadState } from '@shared/types'
+import { SPEED_HISTORY_SECONDS, type DownloadState } from '@shared/types'
 import { Folder } from 'lucide-react'
 import { memo, useEffect, useState } from 'react'
 import { BlockGrid } from '../components/BlockGrid'
@@ -220,9 +220,7 @@ export const DownloadingScreen = memo(function DownloadingScreen({
     ? { label: isQueued ? 'QUEUED' : 'PAUSED', palette: KIND_PALETTE.usb }
     : null
 
-  const throughputStatusLabel = isPaused
-    ? null
-    : `LAST ${Object.values(speedHistory)[0]?.length ?? 0}S`
+  const throughputStatusLabel = isPaused ? null : `LAST ${SPEED_HISTORY_SECONDS}S`
   const pauseResumeLabel = resuming ? 'Resuming…' : isPaused && !isQueued ? 'Resume' : 'Pause'
 
   return (
@@ -247,6 +245,9 @@ export const DownloadingScreen = memo(function DownloadingScreen({
               speedBytesPerSec: isPaused ? 0 : group.speedBytesPerSec
             }))}
             paused={isPaused}
+            // Half the band for the networks merging into the total, half for the chart: on a
+            // wide window the merge gets the room, not just the chart.
+            fill
           />
 
           <div className="flex min-w-[130px] shrink-0 flex-col gap-[7px]">
