@@ -1,8 +1,10 @@
-import type { HttpBlockState, HttpStreamState, NetworkStatus } from '@shared/types'
+import type { HttpBlockState, HttpStreamState, NetworkStatus, SpeedUnit } from '@shared/types'
 import { useState } from 'react'
 import { DANGER, type NetworkVisual } from '../theme'
 import type { HttpNetworkGroup, NetworkGroup, TorrentNetworkGroup } from '../utils/format'
-import { describeError, formatBytes, formatSpeed } from '../utils/format'
+import { describeError, formatBytes, formatSpeedOfLimit } from '../utils/format'
+import { useFormatSpeed } from '../hooks/useFormatSpeed'
+import { useAppStore } from '../store/useAppStore'
 import { ColorBadge } from './ColorBadge'
 import { NetworkEditPopover } from './NetworkEditPopover'
 import { TruncatedText } from './TruncatedText'
@@ -99,6 +101,7 @@ function HttpStreamRows({
   visual: NetworkVisual
   blocks?: HttpBlockState[]
 }): React.JSX.Element {
+  const formatSpeed = useFormatSpeed()
   return (
     <>
       {group.streams.map((stream, index) => {
@@ -207,6 +210,35 @@ function shareOf(part: number, whole: number): string {
   return percent === 0 ? '<1%' : `${percent}%`
 }
 
+/** "8.0 / 10.0 MB/s": a network's speed against the limit set on it, the limit quieter. */
+function SpeedOfLimit({
+  speed,
+  limit,
+  unit
+}: {
+  speed: number
+  limit: number
+  unit: SpeedUnit
+}): React.JSX.Element {
+  const [value, max] = formatSpeedOfLimit(speed, limit, unit)
+  return (
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <span>
+            {value}
+            <span className="font-medium text-muted-foreground">
+              <span className="sr-only">, limited to {max}</span>
+              <span aria-hidden> / {max}</span>
+            </span>
+          </span>
+        }
+      />
+      <TooltipContent>Limited to {max}</TooltipContent>
+    </Tooltip>
+  )
+}
+
 /** Download, and upload once there is any: the arrows only when both are shown. */
 function TwoWay({
   down,
@@ -214,7 +246,7 @@ function TwoWay({
   showUp,
   labels
 }: {
-  down: string
+  down: React.ReactNode
   up: string
   showUp: boolean
   labels: [string, string]
@@ -244,6 +276,7 @@ function PeerRows({
   group: TorrentNetworkGroup
   visual: NetworkVisual
 }): React.JSX.Element {
+  const formatSpeed = useFormatSpeed()
   // What the network's peers have sent between them: each one's share of it.
   const received = group.peers.reduce((sum, peer) => sum + peer.bytesDownloaded, 0)
   return (
@@ -334,6 +367,9 @@ export function NetworkRow({
   blocks,
   onSwitch
 }: NetworkRowProps): React.JSX.Element {
+  const formatSpeed = useFormatSpeed()
+  const speedUnit = useAppStore((store) => store.speedUnit)
+  const speedLimit = useAppStore((store) => store.networkPreferences[group.id]?.speedLimit)
   const [expanded, setExpanded] = useState(false)
   const connections = group.transfer === 'http' ? group.streams : group.peers
   const isActive =
@@ -432,7 +468,21 @@ export function NetworkRow({
           style={{ color: isActive ? visual.text : 'var(--text-tertiary)' }}
         >
           <TwoWay
-            down={isActive ? formatSpeed(group.speedBytesPerSec) : '—'}
+            down={
+              speedLimit === undefined ? (
+                isActive ? (
+                  formatSpeed(group.speedBytesPerSec)
+                ) : (
+                  '—'
+                )
+              ) : (
+                <SpeedOfLimit
+                  speed={isActive ? group.speedBytesPerSec : 0}
+                  limit={speedLimit}
+                  unit={speedUnit}
+                />
+              )
+            }
             // Like down: a dash while nothing is going out. Each direction is idle on its own.
             up={
               group.transfer === 'torrent' && group.uploadSpeedBytesPerSec > 0

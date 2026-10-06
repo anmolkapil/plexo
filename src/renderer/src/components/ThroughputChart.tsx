@@ -1,4 +1,4 @@
-import { formatSpeed } from '../utils/format'
+import { useFormatSpeed } from '../hooks/useFormatSpeed'
 
 const WIDTH = 560
 const HEIGHT = 130
@@ -14,6 +14,7 @@ export function ThroughputChart({
   order,
   historyByInterface
 }: ThroughputChartProps): React.JSX.Element {
+  const formatSpeed = useFormatSpeed()
   const length = Math.max(
     0,
     ...order.map((entry) => historyByInterface[entry.interfaceId]?.length ?? 0)

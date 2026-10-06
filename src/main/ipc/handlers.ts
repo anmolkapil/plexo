@@ -137,6 +137,7 @@ export function registerIpcHandlers(getWindow: () => BrowserWindow | null): Down
         speedLimit: settings.speedLimit,
         slowMode: settings.slowMode ?? false,
         slowModeSpeed: settings.slowModeSpeed ?? DEFAULT_SLOW_MODE_SPEED,
+        speedUnit: settings.speedUnit ?? 'bytes',
         destinationDir: destinationExists ? destinationDir : undefined
       } satisfies InitialState
     } catch (error) {
@@ -149,7 +150,8 @@ export function registerIpcHandlers(getWindow: () => BrowserWindow | null): Down
         networkPreferences: {},
         downloadsAtOnce: DOWNLOADS_AT_ONCE.default,
         slowMode: false,
-        slowModeSpeed: DEFAULT_SLOW_MODE_SPEED
+        slowModeSpeed: DEFAULT_SLOW_MODE_SPEED,
+        speedUnit: 'bytes'
       } satisfies InitialState
     }
   })

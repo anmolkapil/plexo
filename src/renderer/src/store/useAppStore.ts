@@ -7,6 +7,7 @@ import type {
   NetworkInterfaceInfo,
   NetworkPreference,
   NetworkPreferences,
+  SpeedUnit,
   ThemeSource,
   UpdateInfo
 } from '@shared/types'
@@ -52,6 +53,8 @@ interface AppStore {
   speedLimit: number | undefined
   slowMode: boolean
   slowModeSpeed: number
+  /** Persisted — MB/s or Mbps, for every speed shown. */
+  speedUnit: SpeedUnit
 
   /** Lifted out of the Idle screen so it survives a swap to/from the No-connections screen. */
   draftUrl: string
@@ -83,6 +86,7 @@ interface AppStore {
   setSpeedLimit: (bytesPerSec: number | undefined) => void
   setSlowMode: (on: boolean) => void
   setSlowModeSpeed: (bytesPerSec: number) => void
+  setSpeedUnit: (unit: SpeedUnit) => void
   setDraftUrl: (url: string) => void
   setDestinationDir: (dir: string) => void
 }
@@ -119,6 +123,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
   speedLimit: initial.speedLimit,
   slowMode: initial.slowMode,
   slowModeSpeed: initial.slowModeSpeed,
+  speedUnit: initial.speedUnit,
 
   draftUrl: '',
   startedUrl: '',
@@ -230,6 +235,11 @@ export const useAppStore = create<AppStore>((set, get) => ({
   setSlowModeSpeed: (slowModeSpeed) => {
     set({ slowModeSpeed })
     persist({ slowModeSpeed })
+  },
+
+  setSpeedUnit: (speedUnit) => {
+    set({ speedUnit })
+    persist({ speedUnit })
   },
 
   setDraftUrl: (draftUrl) => set({ draftUrl }),

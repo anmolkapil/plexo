@@ -3,7 +3,8 @@ import { useState } from 'react'
 import { useLatencyPolling, useNetworkUsage } from '../hooks/useNetworks'
 import { useNetworkVisuals } from '../hooks/useNetworkVisuals'
 import { useAppStore } from '../store/useAppStore'
-import { formatSpeed } from '../utils/format'
+import { formatSpeedOfLimit } from '../utils/format'
+import { useFormatSpeed } from '../hooks/useFormatSpeed'
 import { UsageBar } from './LimitsDialog'
 import { NetworkEditPopover } from './NetworkEditPopover'
 import { Popover, PopoverContent, PopoverTrigger } from './ui/popover'
@@ -18,6 +19,14 @@ export function NetworksMenu({
   /** Opens Speed & data limits on that network's page, or General for null. */
   onOpenLimits: (page: string | null) => void
 }): React.JSX.Element {
+  const formatSpeed = useFormatSpeed()
+  const speedUnit = useAppStore((store) => store.speedUnit)
+  /** "8.0 / 10.0 MB/s" against a network's own limit, so it shows without opening the limits. */
+  const speedText = (speed: number, limit: number | undefined): string => {
+    if (limit === undefined) return speed > 0 ? formatSpeed(speed) : 'Idle'
+    const [value, max] = formatSpeedOfLimit(speed, limit, speedUnit)
+    return speed > 0 ? `${value} / ${max}` : `Idle · limit ${max}`
+  }
   const interfaces = useAppStore((store) => store.interfaces)
   const preferences = useAppStore((store) => store.networkPreferences)
   const setNetworkPreference = useAppStore((store) => store.setNetworkPreference)
@@ -115,7 +124,7 @@ export function NetworksMenu({
                       ? 'Data limit reached'
                       : [
                           iface.displayName,
-                          speed > 0 ? formatSpeed(speed) : 'Idle',
+                          speedText(speed, preference?.speedLimit),
                           typeof latencies[iface.id] === 'number' &&
                             `${Math.round(latencies[iface.id]!)} ms`
                         ]

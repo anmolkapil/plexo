@@ -25,14 +25,13 @@ import {
   formatBytes,
   formatEta,
   formatPercent,
-  formatSpeed,
   groupByNetwork,
   isFolder,
   networksInPlay,
-  splitFormattedBytes,
   toDisplayPath,
   wantedBytes
 } from '../utils/format'
+import { useFormatSpeed } from '../hooks/useFormatSpeed'
 
 /** Inline "·" separator between adjacent stats. `shrink` pins it at its natural width inside a
  * flex row that might otherwise squeeze it (footer rows), matching each call site's prior style. */
@@ -103,7 +102,11 @@ export const DownloadingScreen = memo(function DownloadingScreen({
 }: {
   download: DownloadState
 }): React.JSX.Element {
+  const formatSpeed = useFormatSpeed()
   const homeDir = useAppStore((store) => store.homeDir)
+  const speedLimit = useAppStore((store) => store.speedLimit)
+  const slowMode = useAppStore((store) => store.slowMode)
+  const slowModeSpeed = useAppStore((store) => store.slowModeSpeed)
   const speedHistory = download.speedHistory ?? {}
   const peakSpeedBytesPerSec = download.peakSpeedBytesPerSec
   const networkVisual = useNetworkVisuals()
@@ -161,7 +164,14 @@ export const DownloadingScreen = memo(function DownloadingScreen({
   }
 
   const effectiveSpeed = isPaused ? 0 : download.speedBytesPerSec
-  const speed = splitFormattedBytes(effectiveSpeed)
+  const [speedValue, speedUnit] = formatSpeed(effectiveSpeed).split(' ')
+  // The cap over every download, beside the speed it holds down — slow mode named, so a low
+  // number explains itself.
+  const speedCap = slowMode
+    ? ` · SLOW MODE ${formatSpeed(slowModeSpeed)}`
+    : speedLimit !== undefined
+      ? ` · LIMIT ${formatSpeed(speedLimit)}`
+      : ''
   // Every network is a row, for switching it on or off; the charts draw only those in play.
   const rows = groupByNetwork(download)
   const rowVisuals = rows.map((row) => networkVisual(row.id, row.kind, row.label))
@@ -241,9 +251,9 @@ export const DownloadingScreen = memo(function DownloadingScreen({
           <div className="flex min-w-[130px] shrink-0 flex-col gap-[7px]">
             <>
               <BigStat
-                label="TOTAL SPEED"
-                value={isPaused ? '—' : speed.value}
-                unit={isPaused ? undefined : `${speed.unit}/s`}
+                label={`TOTAL SPEED${speedCap}`}
+                value={isPaused ? '—' : speedValue}
+                unit={isPaused ? undefined : speedUnit}
                 valueClass={isPaused ? 'text-muted-foreground' : 'text-foreground'}
               />
               <div className="flex items-center gap-2 font-mono text-[10px] leading-none font-medium tabular-nums text-muted-foreground">

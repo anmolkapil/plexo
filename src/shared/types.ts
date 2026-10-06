@@ -330,7 +330,12 @@ export interface AppSettings {
   /** While on, slowModeSpeed stands in for speedLimit: a one-click lower limit for calls. */
   slowMode?: boolean
   slowModeSpeed?: number
+  /** How speeds are shown everywhere; sizes stay in bytes either way. */
+  speedUnit?: SpeedUnit
 }
+
+/** bytes: MB/s. bits: Mbps, as internet plans and speed tests count them. */
+export type SpeedUnit = 'bytes' | 'bits'
 
 export const DOWNLOADS_AT_ONCE = { default: 2, min: 1, max: 8 }
 export const DEFAULT_SLOW_MODE_SPEED = 2 * 1024 ** 2
@@ -346,6 +351,7 @@ export interface InitialState {
   speedLimit?: number
   slowMode: boolean
   slowModeSpeed: number
+  speedUnit: SpeedUnit
   /** The last folder picked, if it still exists — otherwise the renderer uses downloadsDir. */
   destinationDir?: string
 }

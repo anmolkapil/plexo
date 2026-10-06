@@ -10,10 +10,10 @@ import {
   dirnameOf,
   formatBytes,
   formatDuration,
-  formatSpeed,
   toDisplayPath,
   wantedBytes
 } from '../utils/format'
+import { useFormatSpeed } from '../hooks/useFormatSpeed'
 
 const sectionHeaderClass =
   'font-mono text-[10px] leading-none tracking-[0.16em] text-muted-foreground uppercase'
@@ -24,6 +24,7 @@ export function CompleteScreen({
   /** Just finished, or as history keeps it. */
   download: DownloadState | FinishedDownload
 }): React.JSX.Element {
+  const formatSpeed = useFormatSpeed()
   const homeDir = useAppStore((store) => store.homeDir)
   const networkVisual = useNetworkVisuals()
   const missing = 'missing' in download && download.missing === true

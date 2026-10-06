@@ -10,7 +10,8 @@ import { useEffect, useId, useState } from 'react'
 import { useNetworkUsage } from '../hooks/useNetworks'
 import { useNetworkVisuals } from '../hooks/useNetworkVisuals'
 import { useAppStore } from '../store/useAppStore'
-import { describeError, formatBytes, formatSpeed } from '../utils/format'
+import { describeError, formatBytes } from '../utils/format'
+import { useFormatSpeed } from '../hooks/useFormatSpeed'
 import {
   AlertDialog,
   AlertDialogContent,
@@ -41,9 +42,14 @@ const GENERAL_DEFAULTS = {
   downloadsAtOnce: DOWNLOADS_AT_ONCE.default
 } satisfies Partial<Draft>
 
-const KB = 1024
 const MB = 1024 ** 2
 const GB = 1024 ** 3
+
+/** A speed is typed in the unit picked in the footer; anything under one is a decimal. */
+const SPEED_UNITS = {
+  bytes: { label: 'MB/s', bytes: MB },
+  bits: { label: 'Mbps', bytes: 1000 ** 2 / 8 }
+}
 
 const sectionClass = 'flex flex-col gap-2.5 border-t-[0.5px] border-border py-3'
 const headingClass = 'font-sans text-[14px] leading-none font-semibold'
@@ -58,7 +64,6 @@ function NumberInput({
   unitBytes,
   label,
   disabled = false,
-  showUnit = true,
   onChange
 }: {
   bytes: number
@@ -66,11 +71,11 @@ function NumberInput({
   unitBytes: number
   label: string
   disabled?: boolean
-  showUnit?: boolean
   onChange: (bytes: number) => void
 }): React.JSX.Element {
-  // Keep the draft as typed; changing units remounts it using the same byte value.
-  const [text, setText] = useState(() => String(bytes / unitBytes))
+  // Keep the draft as typed; changing units remounts it using the same byte value. Rounded, as
+  // bytes saved in one unit rarely come out whole in another (20 MB/s is 167.77216 Mbps).
+  const [text, setText] = useState(() => String(Number((bytes / unitBytes).toFixed(2))))
   return (
     <span className="flex items-center gap-2">
       <Input
@@ -86,7 +91,7 @@ function NumberInput({
         }}
         className="w-20 text-right font-mono tabular-nums"
       />
-      {showUnit && <span className="font-mono text-[12px] text-muted-foreground">{unit}</span>}
+      <span className="font-mono text-[12px] text-muted-foreground">{unit}</span>
     </span>
   )
 }
@@ -102,38 +107,22 @@ function SpeedInput({
   disabled?: boolean
   onChange: (bytes: number) => void
 }): React.JSX.Element {
-  const [unit, setUnit] = useState<'KB/s' | 'MB/s'>(() => (bytes < MB ? 'KB/s' : 'MB/s'))
+  const unit = SPEED_UNITS[useAppStore((store) => store.speedUnit)]
   return (
-    <div className="flex items-center gap-2">
-      <NumberInput
-        key={unit}
-        bytes={bytes}
-        unit={unit}
-        unitBytes={unit === 'KB/s' ? KB : MB}
-        label={`${label}, in ${unit}`}
-        disabled={disabled}
-        showUnit={false}
-        onChange={onChange}
-      />
-      <ToggleGroup
-        aria-label={`${label} unit`}
-        value={[unit]}
-        disabled={disabled}
-        onValueChange={(values) => {
-          if (values[0] === 'KB/s' || values[0] === 'MB/s') setUnit(values[0])
-        }}
-        size="sm"
-        spacing={0.5}
-        className="bg-secondary p-0.5"
-      >
-        <ToggleGroupItem value="KB/s">KB/s</ToggleGroupItem>
-        <ToggleGroupItem value="MB/s">MB/s</ToggleGroupItem>
-      </ToggleGroup>
-    </div>
+    <NumberInput
+      key={unit.label}
+      bytes={bytes}
+      unit={unit.label}
+      unitBytes={unit.bytes}
+      label={`${label}, in ${unit.label}`}
+      disabled={disabled}
+      onChange={onChange}
+    />
   )
 }
 
-/** No limit, or an editable limit. Turning it off retains the last value while open. */
+/** No limit, or an editable limit: a speed when no unit is given. Turning it off retains the
+ * last value while open. */
 function LimitChoice({
   label,
   value,
@@ -147,8 +136,8 @@ function LimitChoice({
   label: string
   value: number | undefined
   fallback: number
-  unit: string
-  unitBytes: number
+  unit?: string
+  unitBytes?: number
   onChange: (bytes: number | undefined) => void
 }): React.JSX.Element {
   const name = useId()
@@ -184,7 +173,7 @@ function LimitChoice({
           />
           Limit to
         </label>
-        {unit === 'MB/s' ? (
+        {unit === undefined || unitBytes === undefined ? (
           <SpeedInput
             key={enabled ? 'on' : 'off'}
             bytes={value ?? lastValue}
@@ -240,8 +229,6 @@ function GeneralPage({
           label="Total speed"
           value={speedLimit}
           fallback={20 * MB}
-          unit="MB/s"
-          unitBytes={MB}
           onChange={(speedLimit) => change({ speedLimit })}
         />
       </section>
@@ -387,8 +374,6 @@ function NetworkPage({
           label={`${name} speed`}
           value={preference?.speedLimit}
           fallback={10 * MB}
-          unit="MB/s"
-          unitBytes={MB}
           onChange={(speedLimit) => change({ speedLimit })}
         />
       </section>
@@ -525,7 +510,11 @@ export function UsageBar({
 }
 
 /** One line under a network's name: its limits, or that it has reached one. */
-function describeLimits(preference: NetworkPreference | undefined, used: number): string {
+function describeLimits(
+  preference: NetworkPreference | undefined,
+  used: number,
+  formatSpeed: (bytesPerSec: number) => string
+): string {
   if (preference?.dataLimit !== undefined && used >= preference.dataLimit) {
     return 'Data limit reached'
   }
@@ -574,6 +563,7 @@ function LimitsEditor({
   onPageChange: (page: string | null) => void
   onClose: () => void
 }): React.JSX.Element {
+  const formatSpeed = useFormatSpeed()
   const interfaces = useAppStore((store) => store.interfaces)
   const [draft, setDraft] = useState<Draft>(() => {
     const { speedLimit, slowMode, slowModeSpeed, downloadsAtOnce, networkPreferences } =
@@ -657,7 +647,7 @@ function LimitsEditor({
           <div className={navLabelClass}>Networks</div>
           {interfaces.map((iface) => {
             const visual = networkVisual(iface.id, iface.kind, iface.displayName)
-            const detail = describeLimits(preferences[iface.id], usage[iface.id] ?? 0)
+            const detail = describeLimits(preferences[iface.id], usage[iface.id] ?? 0, formatSpeed)
             return navItem(
               iface.id,
               visual.solid,

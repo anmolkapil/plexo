@@ -30,13 +30,13 @@ import {
   formatBytes,
   formatEta,
   formatPercent,
-  formatSpeed,
   formatWhen,
   isFolder,
   linkExpired,
   sourceOf,
   wantedBytes
 } from '../utils/format'
+import { useFormatSpeed } from '../hooks/useFormatSpeed'
 
 type Item = DownloadState | FinishedDownload
 
@@ -577,6 +577,7 @@ const DownloadRow = memo(function DownloadRow({
   onFix: (item: Item) => void
   onAgain: (item: Item) => void
 }): React.JSX.Element {
+  const formatSpeed = useFormatSpeed()
   const finished = isFinished(item) || item.status === 'completed'
   const badge = isFolder(item) ? 'DIR' : fileExtensionBadge(item.fileName)
   const wanted = wantedBytes(item)
