@@ -154,7 +154,7 @@ export function CompleteScreen({
             name: visuals[i].name
           }))}
           historyByInterface={download.speedHistory ?? {}}
-          finished
+          endsAt="end"
         />
       </div>
 

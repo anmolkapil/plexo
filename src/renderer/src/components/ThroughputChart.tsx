@@ -11,8 +11,9 @@ const labelClass = 'font-mono text-[9px] leading-none text-muted-foreground tabu
 interface ThroughputChartProps {
   order: Array<{ interfaceId: string; solid: string; name: string }>
   historyByInterface: Record<string, number[]>
-  /** The download's last minute, ending when it did, rather than one running now. */
-  finished?: boolean
+  /** Where the minute ends: now, or — the history only grows while it downloads — where it
+   * paused, or where it finished. So a paused download's last speed never reads as "now". */
+  endsAt?: 'now' | 'pause' | 'end'
 }
 
 /** Stacked area chart of recent throughput, split by physical network — the "whole divided
@@ -21,7 +22,7 @@ interface ThroughputChartProps {
 export function ThroughputChart({
   order,
   historyByInterface,
-  finished = false
+  endsAt = 'now'
 }: ThroughputChartProps): React.JSX.Element {
   const formatSpeed = useFormatSpeed()
   const speedUnit = useAppStore((store) => store.speedUnit)
@@ -165,10 +166,8 @@ export function ThroughputChart({
               >
                 <span className="text-[10px] text-muted-foreground">
                   {secondsAgo === 0
-                    ? finished
-                      ? 'End'
-                      : 'Now'
-                    : `${secondsAgo}s ${finished ? 'before the end' : 'ago'}`}
+                    ? `${endsAt[0].toUpperCase()}${endsAt.slice(1)}`
+                    : `${secondsAgo}s ${endsAt === 'now' ? 'ago' : `before the ${endsAt}`}`}
                 </span>
                 {order.map((entry) => (
                   <span key={entry.interfaceId} className="flex items-center gap-2">
@@ -189,9 +188,9 @@ export function ThroughputChart({
         </div>
         <div className={`mt-1 flex justify-between ${labelClass}`}>
           <span>
-            {SPEED_HISTORY_SECONDS}s {finished ? 'before the end' : 'ago'}
+            {SPEED_HISTORY_SECONDS}s {endsAt === 'now' ? 'ago' : `before the ${endsAt}`}
           </span>
-          <span>{finished ? 'end' : 'now'}</span>
+          <span>{endsAt}</span>
         </div>
       </div>
     </div>

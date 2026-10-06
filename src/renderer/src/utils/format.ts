@@ -85,8 +85,12 @@ export function formatSpeedLimit(bytesPerSec: number, unit: SpeedUnit): string {
  * limit is a set figure, so no ".0" on it. */
 export function formatDataUsage(used: number, limit: number): string {
   const max = formatBytes(limit).replace('.0 ', ' ')
-  const [value, unit] = formatBytes(used).split(' ')
-  return max.endsWith(` ${unit}`) ? `${value} of ${max}` : `${formatBytes(used)} of ${max}`
+  const [rounded, unit] = formatBytes(used).split(' ')
+  // Down, not to the nearest: 4.96 GB of a 5 GB limit read "5.0 of 5 GB" while data was left.
+  const exponent = UNITS.indexOf(unit)
+  const value =
+    exponent === 0 ? rounded : (Math.floor((used / 1024 ** exponent) * 10) / 10).toFixed(1)
+  return max.endsWith(` ${unit}`) ? `${value} of ${max}` : `${value} ${unit} of ${max}`
 }
 
 /** A speed against its limit, ["8.0", "10 MB/s"] for "8.0 / 10 MB/s": the unit said once

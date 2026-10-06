@@ -306,6 +306,7 @@ export const DownloadingScreen = memo(function DownloadingScreen({
                 name: visuals[i].name
               }))}
               historyByInterface={speedHistory}
+              endsAt={isPaused ? 'pause' : 'now'}
             />
           </div>
         </div>
