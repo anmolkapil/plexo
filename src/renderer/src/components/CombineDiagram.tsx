@@ -1,4 +1,3 @@
-import { useLayoutEffect, useState } from 'react'
 import { useFormatSpeed } from '../hooks/useFormatSpeed'
 
 const ROW_HEIGHT = 36
@@ -9,9 +8,6 @@ const DOT_GAP = 8
 const CURVE_GAP = 6
 const CURVE_LEN = 64
 const STREAM_LEN = 42
-// The most `fill` lengthens the curves and the stream by, between them: past it they're only
-// flatter, not clearer.
-const MAX_FILL_EXTRA = 400
 const END_PAD = 8
 const MIN_LABEL_X = 68
 const MAX_LABEL_CHARS = 18
@@ -33,28 +29,13 @@ export interface CombineDiagramNetwork {
 export function CombineDiagram({
   networks,
   muted = false,
-  paused = false,
-  fill = false
+  paused = false
 }: {
   networks: CombineDiagramNetwork[]
   muted?: boolean
   paused?: boolean
-  /** Takes the room it's given (flex-1) and lengthens the merge to use it, the arrow kept against
-   * whatever follows; otherwise it's drawn at its natural size. */
-  fill?: boolean
 }): React.JSX.Element {
   const formatSpeed = useFormatSpeed()
-  const [node, setNode] = useState<HTMLDivElement | null>(null)
-  const [room, setRoom] = useState(0)
-  // Measured before paint, so the first frame isn't drawn short and then stretched.
-  useLayoutEffect(() => {
-    if (!node) return
-    const measure = (): void => setRoom(node.clientWidth)
-    measure()
-    const observer = new ResizeObserver(measure)
-    observer.observe(node)
-    return () => observer.disconnect()
-  }, [node])
   const height = Math.max(78, networks.length * ROW_HEIGHT + 10)
   const midY = height / 2
 
@@ -65,13 +46,11 @@ export function CombineDiagram({
   const LABEL_X = Math.max(MIN_LABEL_X, longestLabelChars * CHAR_WIDTH + LABEL_EDGE_PAD)
   const DOT_X = LABEL_X + DOT_GAP
   const CURVE_START_X = DOT_X + CURVE_GAP
-  const naturalWidth = CURVE_START_X + CURVE_LEN + STREAM_LEN + END_PAD
-  const extra = fill ? Math.min(MAX_FILL_EXTRA, Math.max(0, room - naturalWidth)) : 0
-  const COMBINE_X = CURVE_START_X + CURVE_LEN + extra / 2
-  const STREAM_END_X = COMBINE_X + STREAM_LEN + extra / 2
+  const COMBINE_X = CURVE_START_X + CURVE_LEN
+  const STREAM_END_X = COMBINE_X + STREAM_LEN
   const WIDTH = STREAM_END_X + END_PAD
 
-  const diagram = (
+  return (
     <svg
       viewBox={`0 0 ${WIDTH} ${height}`}
       className="block shrink-0"
@@ -181,13 +160,5 @@ export function CombineDiagram({
         </text>
       )}
     </svg>
-  )
-  return fill ? (
-    // Right-aligned, so the arrow stays pointed into what follows however wide the room is.
-    <div ref={setNode} className="flex flex-1 justify-end" style={{ minWidth: naturalWidth }}>
-      {diagram}
-    </div>
-  ) : (
-    diagram
   )
 }

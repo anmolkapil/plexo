@@ -237,6 +237,8 @@ export const DownloadingScreen = memo(function DownloadingScreen({
       </DetailHeader>
       {/* Hero band — always visible under the header */}
       <HeroBand>
+        {/* At their designed size: a wider window opens a gap between the speed and the chart
+            (ml-auto) rather than stretching the merge into rails or the chart into a ribbon. */}
         <div className="flex items-center gap-[14px]">
           <CombineDiagram
             networks={groups.map((group, index) => ({
@@ -245,9 +247,6 @@ export const DownloadingScreen = memo(function DownloadingScreen({
               speedBytesPerSec: isPaused ? 0 : group.speedBytesPerSec
             }))}
             paused={isPaused}
-            // Half the band for the networks merging into the total, half for the chart: on a
-            // wide window the merge gets the room, not just the chart.
-            fill
           />
 
           <div className="flex min-w-[130px] shrink-0 flex-col gap-[7px]">
@@ -293,7 +292,7 @@ export const DownloadingScreen = memo(function DownloadingScreen({
           </div>
 
           <div
-            className={`min-w-0 flex-1 transition-opacity duration-200 ${
+            className={`ml-auto min-w-0 max-w-[640px] flex-1 transition-opacity duration-200 ${
               isPaused ? 'opacity-45' : 'opacity-100'
             }`}
           >
