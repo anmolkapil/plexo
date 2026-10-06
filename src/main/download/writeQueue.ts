@@ -1,13 +1,18 @@
 import { Writable } from 'node:stream'
 
 const MiB = 1024 * 1024
-/** HTTP write tuning, in MiB. Payload is allocated on demand; limits include in-flight writes.
+/** HTTP write tuning. Units are explicit in each name; these are source-level defaults.
+ * Payload is allocated on demand; limits include in-flight writes.
  * Keep perFileMiB <= sharedMiB. These caps exclude Electron, stream and OS-cache memory. */
 export const HTTP_WRITE_CONFIG = {
   perFileMiB: 32,
   sharedMiB: 128,
+  // Budget sizes were compared in the cache-sizing benchmark; remaining values are provisional.
   batchMiB: 1,
-  flushMs: 10
+  flushMs: 10,
+  maxBuffersPerBatch: 64,
+  streamHighWaterMarkKiB: 64,
+  admissionSliceKiB: 256
 } as const
 
 const BATCH_BYTES = HTTP_WRITE_CONFIG.batchMiB * MiB
@@ -171,7 +176,7 @@ export class WriteQueue {
     const batch = [this.entries.shift()!]
     let bytes = batch[0].buffer.length
     let end = batch[0].position + bytes
-    while (this.entries.length && batch.length < 64) {
+    while (this.entries.length && batch.length < HTTP_WRITE_CONFIG.maxBuffersPerBatch) {
       const next = this.entries[0]
       if (next.position !== end || bytes + next.buffer.length > BATCH_BYTES) break
       batch.push(this.entries.shift()!)
@@ -204,7 +209,7 @@ export class QueuedWriter extends Writable {
     private readonly queue: WriteQueue,
     private position: number
   ) {
-    super({ highWaterMark: 64 * 1024 })
+    super({ highWaterMark: HTTP_WRITE_CONFIG.streamHighWaterMarkKiB * 1024 })
   }
 
   written(bytes: number): void {
@@ -218,7 +223,11 @@ export class QueuedWriter extends Writable {
     callback: (error?: Error) => void
   ): void {
     // Split unusually large packets so even a small test budget can make progress.
-    const size = Math.min(256 * 1024, this.queue.budget.limit, this.queue.budget.perFile)
+    const size = Math.min(
+      HTTP_WRITE_CONFIG.admissionSliceKiB * 1024,
+      this.queue.budget.limit,
+      this.queue.budget.perFile
+    )
     const submit = async (): Promise<void> => {
       for (let at = 0; at < buffer.length; at += size) {
         const part = buffer.subarray(at, at + size)
