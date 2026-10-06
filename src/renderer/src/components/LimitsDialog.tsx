@@ -10,7 +10,7 @@ import { useEffect, useId, useState } from 'react'
 import { useNetworkUsage } from '../hooks/useNetworks'
 import { useNetworkVisuals } from '../hooks/useNetworkVisuals'
 import { useAppStore } from '../store/useAppStore'
-import { describeError, formatBytes } from '../utils/format'
+import { describeError, formatBytes, formatDataUsage } from '../utils/format'
 import { useFormatSpeedLimit } from '../hooks/useFormatSpeed'
 import {
   AlertDialog,
@@ -514,16 +514,16 @@ function describeLimits(
   preference: NetworkPreference | undefined,
   used: number,
   formatSpeedLimit: (bytesPerSec: number) => string
-): string {
+): string[] {
   if (preference?.dataLimit !== undefined && used >= preference.dataLimit) {
-    return 'Data limit reached'
+    return ['Data limit reached']
   }
-  const parts = [
-    preference?.speedLimit !== undefined && formatSpeedLimit(preference.speedLimit),
-    preference?.dataLimit !== undefined &&
-      `${formatBytes(preference.dataLimit)} per ${preference.dataLimitPeriod ?? 'month'}`
-  ].filter(Boolean)
-  return parts.length > 0 ? parts.join(' · ') : 'No limit'
+  // A line each, said as the networks menu says them, so the two never read differently.
+  const lines = [
+    preference?.speedLimit !== undefined && `Limit ${formatSpeedLimit(preference.speedLimit)}`,
+    preference?.dataLimit !== undefined && formatDataUsage(used, preference.dataLimit)
+  ].filter((line): line is string => typeof line === 'string')
+  return lines.length > 0 ? lines : ['No limit']
 }
 
 /** Speed & data limits: every download's together, and each network's. Nothing changes until
@@ -608,7 +608,7 @@ function LimitsEditor({
     key: string | null,
     dot: string,
     name: string,
-    detail: string,
+    detail: string[],
     warn = false
   ): React.JSX.Element => (
     <button
@@ -619,13 +619,17 @@ function LimitsEditor({
       className="flex w-full items-start gap-2.5 rounded-lg px-2.5 py-2 text-left outline-none hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring aria-[current=page]:bg-primary/10"
     >
       <span className="mt-1.5 size-2 shrink-0 rounded-full" style={{ background: dot }} />
-      <span className="flex min-w-0 flex-col gap-1">
+      <span className="flex min-w-0 flex-1 flex-col gap-1">
         <span className="truncate text-[13.5px] font-medium">{name}</span>
-        <span
-          className={`font-mono text-[11px] ${warn ? 'text-[var(--color-usb)]' : 'text-muted-foreground'}`}
-        >
-          {detail}
-        </span>
+        {/* A line per fact, each cut off rather than wrapped: the sidebar is narrow. */}
+        {detail.map((line) => (
+          <span
+            key={line}
+            className={`truncate font-mono text-[11px] ${warn ? 'text-[var(--color-danger)]' : 'text-muted-foreground'}`}
+          >
+            {line}
+          </span>
+        ))}
       </span>
     </button>
   )
@@ -638,12 +642,13 @@ function LimitsEditor({
       <div className="flex min-h-0 flex-1">
         <nav className="flex w-[190px] shrink-0 flex-col gap-0.5 overflow-y-auto border-r-[0.5px] border-border p-2">
           <div className={navLabelClass}>General</div>
-          {navItem(
-            null,
-            'var(--text-secondary)',
-            'All downloads',
-            slowMode ? 'Slow mode on' : speedLimit ? formatSpeedLimit(speedLimit) : 'No limit'
-          )}
+          {navItem(null, 'var(--text-secondary)', 'All downloads', [
+            slowMode
+              ? 'Slow mode on'
+              : speedLimit
+                ? `Limit ${formatSpeedLimit(speedLimit)}`
+                : 'No limit'
+          ])}
           <div className={navLabelClass}>Networks</div>
           {interfaces.map((iface) => {
             const visual = networkVisual(iface.id, iface.kind, iface.displayName)
@@ -657,7 +662,7 @@ function LimitsEditor({
               visual.solid,
               visual.name,
               detail,
-              detail === 'Data limit reached'
+              detail[0] === 'Data limit reached'
             )
           })}
         </nav>

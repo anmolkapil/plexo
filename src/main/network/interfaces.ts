@@ -26,13 +26,16 @@ async function getMacHardwarePortNames(): Promise<Map<string, string>> {
     const { stdout } = await execFileAsync('networksetup', ['-listallhardwareports'], {
       timeout: DISCOVERY_TIMEOUT_MS
     })
-    const blocks = stdout.split(/\n\s*\n/)
-    for (const block of blocks) {
-      const portMatch = /Hardware Port:\s*(.+)/.exec(block)
-      const deviceMatch = /Device:\s*(.+)/.exec(block)
-      if (portMatch && deviceMatch) {
-        deviceToName.set(deviceMatch[1].trim(), portMatch[1].trim())
-      }
+    // Each block is "Hardware Port: Wi-Fi", "Device: en0", "Ethernet Address: …", always in that
+    // order. Read by position, not by label: a Mac in another language translates the labels
+    // ("Matériel") as well as the names ("WLAN"), and matching English found nothing there.
+    for (const block of stdout.split(/\n\s*\n/)) {
+      const [port, device] = block
+        .split('\n')
+        .filter((line) => line.includes(':'))
+        .map((line) => line.slice(line.indexOf(':') + 1).trim())
+      // A BSD device name (en0, bridge0) is how a real block is told from the trailing VLAN list.
+      if (port && device && /^[a-z]+\d+$/.test(device)) deviceToName.set(device, port)
     }
   } catch {
     // networksetup missing or failed — callers fall back to raw device names.

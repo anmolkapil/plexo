@@ -4,19 +4,11 @@ import { useNetworkUsage } from '../hooks/useNetworks'
 import { useNetworkVisuals } from '../hooks/useNetworkVisuals'
 import { useAppStore } from '../store/useAppStore'
 import { useFormatSpeed, useFormatSpeedLimit } from '../hooks/useFormatSpeed'
-import { formatBytes } from '../utils/format'
+import { formatDataUsage } from '../utils/format'
 import { NetworkEditPopover } from './NetworkEditPopover'
 import { Popover, PopoverContent, PopoverTrigger } from './ui/popover'
 import { Button } from './ui/button'
 import { TruncatedText } from './TruncatedText'
-
-/** "11.6 of 50 GB": data used against its limit, the unit said once when both share it. The
- * limit is a set figure, so no ".0" on it. */
-function formatUsage(used: number, limit: number): string {
-  const max = formatBytes(limit).replace('.0 ', ' ')
-  const [value, unit] = formatBytes(used).split(' ')
-  return max.endsWith(` ${unit}`) ? `${value} of ${max}` : `${formatBytes(used)} of ${max}`
-}
 
 /** Every network the computer has, one row each: on the left what it is (its name, the system's
  * name for it, the limits set on it), on the right what it's doing (its speed). Which
@@ -147,7 +139,7 @@ export function NetworksMenu({
                   className="col-span-2 col-start-2 flex items-center gap-3 font-mono text-[11px] text-muted-foreground"
                   style={reached ? { color: 'var(--color-danger)' } : undefined}
                 >
-                  <span className="shrink-0">{formatUsage(used, dataLimit)}</span>
+                  <span className="shrink-0">{formatDataUsage(used, dataLimit)}</span>
                   <span className="h-1 min-w-0 flex-1 overflow-hidden rounded-full bg-foreground/10">
                     <span
                       className="block h-full rounded-full"
