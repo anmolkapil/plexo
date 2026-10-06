@@ -1,7 +1,6 @@
 import { Tooltip, TooltipContent, TooltipTrigger } from './ui/tooltip'
 
-/** A small pill that cycles through a set of comparison stats on click (e.g. "1.4x WIFI ALONE"
- * -> "+40% VS WIFI"), used by CompleteScreen and DownloadingScreen. Shows the ⇄ hint only when
+/** A small pill that cycles through comparison stats on click. Shows the ⇄ hint only when
  * there's actually more than one option to cycle to. */
 export function CyclableChip({
   label,

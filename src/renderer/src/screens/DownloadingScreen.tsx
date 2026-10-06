@@ -178,10 +178,9 @@ export const DownloadingScreen = memo(function DownloadingScreen({
 
   const avgSpeedBytesPerSec = elapsedSeconds > 0 ? download.bytesDownloaded / elapsedSeconds : 0
 
-  // "N× WIFI ALONE": the combined download measured against one network on its own, by whichever
-  // metric is live — current speed while bytes are moving, total downloaded otherwise. A network
-  // that carried the download barely faster than it would alone (< 1.05×) makes no point worth a
-  // chip. Cycling order is fastest network (smallest multiple) first, as it was.
+  // Compare contributions within this download, not a separately measured single-network
+  // baseline. When no bytes are moving, compare downloaded data rather than imply a speed gain.
+  // Hide near-equal totals (< 1.05×); cycle from the largest contribution (smallest multiple).
   const bySpeed = download.speedBytesPerSec > 0
   const totalMetric = bySpeed ? download.speedBytesPerSec : download.bytesDownloaded
   const chipOptions =
@@ -195,10 +194,10 @@ export const DownloadingScreen = memo(function DownloadingScreen({
           .sort((a, b) => a.ratio - b.ratio)
           .map(({ ratio, visual }) => ({
             visual,
-            label: `${ratio.toFixed(1)}× ${visual.name.toUpperCase()} ALONE`,
+            label: `${ratio.toFixed(1)}× ${visual.name.toUpperCase()} ${bySpeed ? 'RATE' : 'DATA'}`,
             tooltip: bySpeed
-              ? `Total speed is ${ratio.toFixed(1)}× faster than ${visual.name} alone`
-              : `Total downloaded is ${ratio.toFixed(1)}× compared to ${visual.name} alone`
+              ? `Combined speed is ${ratio.toFixed(1)}× ${visual.name}’s current rate in this download. This is not a standalone speed test.`
+              : `Total downloaded is ${ratio.toFixed(1)}× the bytes delivered by ${visual.name} in this download. This compares data contributions, not speed.`
           }))
       : []
 

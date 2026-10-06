@@ -49,6 +49,7 @@ Plexo splits each download across every network you select, so a second connecti
 - **Data limits**: a daily, weekly, or monthly allowance per network. Plexo stops using a network once its allowance is used up.
 - **Named networks**: Plexo shows adapters by their real names (Wi-Fi, Ethernet, iPhone) instead of `en0`. You can rename and recolor them.
 - **Live view**: throughput charts, time left, per-stream stats, and a grid of every block colored by the network that fetched it
+  - The comparison chip shows the combined rate divided by one network's current rate in the same download (`RATE`). When no bytes are moving, it compares downloaded bytes instead (`DATA`). It isn't a measurement of how fast that network would download the file on its own.
 
 ## Set up more than one network
 
