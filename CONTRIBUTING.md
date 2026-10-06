@@ -11,7 +11,15 @@ npm install
 npm run dev
 ```
 
-Requires Windows 10/11 or macOS and Node.js 22.12+. See [requirements](README.md#requirements).
+Requires Node.js 22.12+ and npm 9+, on Windows, macOS, or Linux.
+
+## Packaging
+
+- **macOS**: `npm run build:mac` writes `dist/mac/Plexo.app`. A build made on your own Mac isn't quarantined, so it opens without the first-launch step.
+- **Windows**: `npm run build:win`, from PowerShell, writes the installer to `dist/`. For an app you run without installing, use `npm run build:unpack` and open `dist/win-unpacked/plexo.exe`.
+- **Linux**: `npm run build:linux` writes the AppImage and `.deb` packages to `dist/`
+
+Local builds are unsigned.
 
 ## Before opening a PR
 
