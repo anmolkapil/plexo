@@ -157,9 +157,17 @@ function NewDownloadForm({ onDone }: { onDone: () => void }): React.JSX.Element 
   }
   const availableIds = detectedIds.filter((id) => !isReached(id))
   const pickedIds = availableIds.filter((id) => !deselectedInterfaceIds.includes(id))
-  // The last pick may be all used up; then whatever is left, rather than nothing.
-  const enabledIds = pickedIds.length > 0 ? pickedIds : availableIds
-  const selectedInterfaceIds = isSingleStreamOnly ? enabledIds.slice(0, 1) : enabledIds
+  // The last pick may be all used up. Then nothing is picked, rather than what was left out: a
+  // network left out is often left out on purpose (a phone's metered data), so it's chosen here
+  // by hand, never stood in for the one that ran out.
+  const selectedInterfaceIds = isSingleStreamOnly ? pickedIds.slice(0, 1) : pickedIds
+  // The networks of the last pick that have used up their data, to say why nothing is picked.
+  const usedUpPick =
+    pickedIds.length === 0 && availableIds.length > 0
+      ? interfaces.filter(
+          (iface) => isReached(iface.id) && !deselectedInterfaceIds.includes(iface.id)
+        )
+      : []
 
   const canStart =
     probe.status === 'ready' &&
@@ -487,6 +495,17 @@ function NewDownloadForm({ onDone }: { onDone: () => void }): React.JSX.Element 
             <AlertTriangle className="mt-0.5 size-3.5 shrink-0" />
             {subnetConflict.names.join(' and ')} share a subnet ({subnetConflict.subnet}), so the
             computer sends both down one route and they can’t be combined.
+          </div>
+        )}
+        {usedUpPick.length > 0 && (
+          <div className="flex items-start gap-2 text-[12px] leading-snug text-[var(--color-usb-text)]">
+            <AlertTriangle className="mt-0.5 size-3.5 shrink-0" />
+            {usedUpPick
+              .map((iface) => networkVisual(iface.id, iface.kind, iface.displayName).name)
+              .join(' and ')}{' '}
+            {usedUpPick.length === 1 ? 'has' : 'have'} reached{' '}
+            {usedUpPick.length === 1 ? 'its' : 'their'} data limit. Choose another network for this
+            download.
           </div>
         )}
         {interfaces.length > 0 && availableIds.length === 0 && (

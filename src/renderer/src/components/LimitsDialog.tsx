@@ -74,8 +74,13 @@ function NumberInput({
   onChange: (bytes: number) => void
 }): React.JSX.Element {
   // Keep the draft as typed; changing units remounts it using the same byte value. Rounded, as
-  // bytes saved in one unit rarely come out whole in another (20 MB/s is 167.77216 Mbps).
-  const [text, setText] = useState(() => String(Number((bytes / unitBytes).toFixed(2))))
+  // bytes saved in one unit rarely come out whole in another (20 MB/s is 167.77216 Mbps) — but
+  // under one by significant digits, not decimals: 1 KB/s is 0.000977 MB/s, and two decimals read
+  // that as a 0 MB/s limit that still applies.
+  const [text, setText] = useState(() => {
+    const value = bytes / unitBytes
+    return String(Number(value >= 1 ? value.toFixed(2) : value.toPrecision(3)))
+  })
   return (
     <span className="flex items-center gap-2">
       <Input
