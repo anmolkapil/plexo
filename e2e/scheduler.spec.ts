@@ -358,3 +358,15 @@ test.describe('scheduler: racing a slow block', () => {
     )
   })
 })
+
+test('write waits do not trigger a duplicate range, but normal racing resumes afterwards', () => {
+  const holder = { ...attempt(0, 'a'), writeWaiting: true }
+  const s = state({
+    blocks: [block(0, 'downloading')],
+    streams: [stream(0, 'a', 'downloading'), stream(1, 'b', 'pending')],
+    attempts: [[0, [holder]]]
+  })
+  expect(pick(s, 1, 'b')).toBeUndefined()
+  holder.writeWaiting = false
+  expect(pick(s, 1, 'b')).toBe('hedge:0')
+})

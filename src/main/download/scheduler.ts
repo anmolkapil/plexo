@@ -19,6 +19,8 @@ export interface AttemptView {
   networkId: string
   /** When its request was sent. */
   startedAt: number
+  /** The reader is paused for writes or its body ended and the writer is flushing. */
+  writeWaiting?: boolean
 }
 
 export interface SchedulerState {
@@ -102,6 +104,7 @@ function nextHedgeTarget(
     // Speeds only mean something once every attempt has been going a while.
     if (attempts.some((attempt) => now - attempt.startedAt < policy.hedgeAfterMs)) continue
 
+    if (attempts.some((attempt) => attempt.writeWaiting)) continue
     const remaining = block.rangeEnd - block.rangeStart + 1 - block.bytesDownloaded
     if (remaining <= 0) continue
     // A holder that has gone quiet has no finish time at all.

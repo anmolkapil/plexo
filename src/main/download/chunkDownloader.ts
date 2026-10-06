@@ -17,6 +17,8 @@ export interface ChunkDownloadOptions {
   onNetworkProgress: (bytesReceivedThisRun: number) => void
   /** Bytes accepted by the destination writer; safe to include in resumable progress. */
   onProgress: (bytesDownloadedThisRun: number) => void
+  /** Explicit destination backpressure or waiting for the final write flush. */
+  onWriteWait?: (waiting: boolean) => void
   signal: AbortSignal
   /** The version the download started on, plus any confirmed to serve identical bytes. */
   acceptedVersions: FileVersion[]
@@ -132,7 +134,8 @@ export function downloadChunk(options: ChunkDownloadOptions): Promise<void> {
     signal,
     acceptedVersions,
     onResponse,
-    throttle
+    throttle,
+    onWriteWait
   } = options
 
   return new Promise((resolve, reject) => {
@@ -278,6 +281,13 @@ export function downloadChunk(options: ChunkDownloadOptions): Promise<void> {
 
           const fileStream = createDestination()
           currentFileStream = fileStream
+          const tracksWrites =
+            'tracksWriteCompletion' in fileStream && fileStream.tracksWriteCompletion === true
+          if (tracksWrites) {
+            fileStream.on('written', (progress: number) => {
+              if (!settled) onProgress(progress)
+            })
+          }
 
           res.on('error', dropped)
           fileStream.on('error', fail)
@@ -290,6 +300,7 @@ export function downloadChunk(options: ChunkDownloadOptions): Promise<void> {
           // once neither holds it. Neither says anything about the network: the watchdog stops
           // until then.
           let holds = 0
+          let bodyEnded = false
           const hold = (): void => {
             if (holds++ === 0) {
               clearWatchdog()
@@ -297,7 +308,7 @@ export function downloadChunk(options: ChunkDownloadOptions): Promise<void> {
             }
           }
           const release = (): void => {
-            if (--holds > 0 || settled) return
+            if (--holds > 0 || settled || bodyEnded) return
             resetWatchdog()
             res.resume()
           }
@@ -320,11 +331,15 @@ export function downloadChunk(options: ChunkDownloadOptions): Promise<void> {
               if (
                 !fileStream.write(usable, (error) => {
                   if (error) fail(error)
-                  else if (!settled) onProgress(progress)
+                  else if (!settled && !tracksWrites) onProgress(progress)
                 })
               ) {
+                onWriteWait?.(true)
                 hold()
-                fileStream.once('drain', release)
+                fileStream.once('drain', () => {
+                  onWriteWait?.(bodyEnded)
+                  release()
+                })
               }
               const wait = throttle?.(usable.length) ?? 0
               if (wait > 0) {
@@ -350,7 +365,12 @@ export function downloadChunk(options: ChunkDownloadOptions): Promise<void> {
               return
             }
             // Windows cannot reliably reopen/remove a file until its handle closes.
-            fileStream.once('close', () => finish(resolve))
+            bodyEnded = true
+            onWriteWait?.(true)
+            fileStream.once('close', () => {
+              onWriteWait?.(false)
+              finish(resolve)
+            })
             fileStream.end()
           })
         })

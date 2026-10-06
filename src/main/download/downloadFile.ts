@@ -1,15 +1,51 @@
-import { createWriteStream, type WriteStream } from 'node:fs'
-import { lstat, open, rename, rm, stat } from 'node:fs/promises'
+import { lstat, open, rename, rm, stat, type FileHandle } from 'node:fs/promises'
 import { basename, dirname, extname, join } from 'node:path'
+
+import { WriteQueue, type QueuedWriter } from './writeQueue'
+
+/** writev may accept only part of a batch. Advance buffers and the explicit file offset. */
+export async function writeBuffers(
+  handle: Pick<FileHandle, 'writev'>,
+  buffers: Buffer[],
+  position: number
+): Promise<void> {
+  let remaining = buffers
+  while (remaining.length) {
+    const { bytesWritten } = await handle.writev(remaining, position)
+    if (bytesWritten === 0) throw new Error('Destination write made no progress')
+    position += bytesWritten
+    let consumed = bytesWritten
+    const next: Buffer[] = []
+    for (const buffer of remaining) {
+      if (consumed >= buffer.length) consumed -= buffer.length
+      else {
+        next.push(consumed ? buffer.subarray(consumed) : buffer)
+        consumed = 0
+      }
+    }
+    remaining = next
+  }
+}
 
 /** The only large file owned by a download. It lives beside the final file so publishing it
  * requires no copy and never needs a second file's worth of disk space. */
 export class DownloadFile {
-  constructor(readonly path: string) {}
+  readonly writes: WriteQueue
 
-  /** Every writer has its own descriptor and explicit offset. Never use append mode here. */
-  writer(position: number): WriteStream {
-    return createWriteStream(this.path, { flags: 'r+', start: position })
+  constructor(readonly path: string) {
+    this.writes = new WriteQueue(async (buffers, position) => {
+      const handle = await open(this.path, 'r+')
+      try {
+        await writeBuffers(handle, buffers, position)
+      } finally {
+        await handle.close()
+      }
+    })
+  }
+
+  /** Ranges retain their own offsets and completion frontiers; the destination batches writes. */
+  writer(position: number): QueuedWriter {
+    return this.writes.writer(position)
   }
 
   async read(position: number, length: number): Promise<Buffer> {
@@ -25,6 +61,7 @@ export class DownloadFile {
 
   /** Flushes the staging file before a recovery checkpoint or final publication. */
   async sync(): Promise<void> {
+    await this.writes.drain()
     const handle = await open(this.path, 'r+')
     try {
       await handle.sync()
@@ -42,6 +79,7 @@ export class DownloadFile {
     expectedBytes: number,
     beforeAttempt: (candidate: string) => Promise<void>
   ): Promise<string> {
+    await this.writes.drain()
     if (expectedBytes > 0 && (await this.size()) !== expectedBytes) {
       throw new Error('Download file size does not match the expected size')
     }
@@ -96,6 +134,7 @@ export class DownloadFile {
   }
 
   async discard(): Promise<void> {
+    await this.writes.drain().catch(() => {})
     await rm(this.path, { force: true })
   }
 

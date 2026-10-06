@@ -46,6 +46,7 @@ interface Attempt {
   /** Bytes the network has delivered, independently of disk backpressure. */
   networkReceived: number
   lastNetworkAt: number
+  writeWaiting: boolean
   /** When the request was sent. */
   startedAt: number
   /** The network previously credited for this block's prefix. */
@@ -435,6 +436,11 @@ export class HttpTransfer implements Transfer {
       const attempt = self?.attempt
       if (!self || !attempt || attempt.abortReason) continue
 
+      // A paused reader or final flush says nothing about the connection's health.
+      if (attempt.writeWaiting) {
+        self.slowSince = null
+        continue
+      }
       const silent = this.isSilent(attempt, now)
       // A refresh isn't a failure, so no failed request would say that the network can't get
       // through; a connection gone silent with the rest of its network says it instead, as soon
@@ -544,6 +550,7 @@ export class HttpTransfer implements Transfer {
       received: 0,
       networkReceived: 0,
       lastNetworkAt: 0,
+      writeWaiting: false,
       startedAt: Date.now(),
       // Whoever held this block before now is the one whose tail bytes a truncation would
       // discard — captured before the lease overwrites the field.
@@ -625,6 +632,7 @@ export class HttpTransfer implements Transfer {
         acceptedVersions: this.acceptedVersions,
         onResponse: (info) => (attempt.response = info),
         throttle: (bytes) => this.host.limits.take(attempt.networkId, bytes),
+        onWriteWait: (waiting) => (attempt.writeWaiting = waiting),
         onNetworkProgress: (bytesThisRun) => {
           const delta = bytesThisRun - attempt.networkReceived
           if (delta > 0) {
