@@ -39,14 +39,22 @@ export function formatSpeed(bytesPerSec: number, unit: SpeedUnit): string {
   return `${value.toFixed(digits(value))} ${BIT_UNITS[exponent]}`
 }
 
-/** A speed against its limit, ["8.0", "10.0 MB/s"] for "8.0 / 10.0 MB/s": the unit said once
+/** A speed someone set, as a round figure: whole from 10 up, never a trailing ".0". 58.7 Mbps
+ * reads as something measured; 59 Mbps as something chosen. */
+export function formatSpeedLimit(bytesPerSec: number, unit: SpeedUnit): string {
+  const [value, label] = formatSpeed(bytesPerSec, unit).split(' ')
+  const number = Number(value)
+  return `${number >= 10 ? Math.round(number) : number} ${label}`
+}
+
+/** A speed against its limit, ["8.0", "10 MB/s"] for "8.0 / 10 MB/s": the unit said once
  * when both share it. Split so the limit can be set in a quieter color. No speed reads "—". */
 export function formatSpeedOfLimit(
   bytesPerSec: number,
   limit: number,
   unit: SpeedUnit
 ): [string, string] {
-  const max = formatSpeed(limit, unit)
+  const max = formatSpeedLimit(limit, unit)
   if (bytesPerSec <= 0) return ['—', max]
   const speed = formatSpeed(bytesPerSec, unit)
   const [value, speedUnit] = speed.split(' ')

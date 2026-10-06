@@ -24,7 +24,6 @@ interface AppStore {
   interfaces: NetworkInterfaceInfo[]
   interfacesStatus: LoadStatus
   interfacesError: string | null
-  latencies: Record<string, number | null>
   /** User customizations (name/color) per network interface id — persisted in the main process. */
   networkPreferences: NetworkPreferences
 
@@ -66,7 +65,6 @@ interface AppStore {
   /** Asks the main process for the network list now; it also pushes every change. */
   loadInterfaces: () => Promise<void>
   receiveInterfaces: (interfaces: NetworkInterfaceInfo[]) => void
-  refreshLatencies: () => Promise<void>
   setNetworkPreference: (id: string, patch: NetworkPreference) => void
   setThemeSource: (source: ThemeSource) => void
   checkForUpdate: () => Promise<void>
@@ -105,7 +103,6 @@ export const useAppStore = create<AppStore>((set, get) => ({
   interfaces: [],
   interfacesStatus: 'idle',
   interfacesError: null,
-  latencies: {},
   networkPreferences: initial.networkPreferences,
   themeSource: initial.themeSource,
   availableUpdate: null,
@@ -145,15 +142,6 @@ export const useAppStore = create<AppStore>((set, get) => ({
 
   receiveInterfaces: (interfaces) =>
     set({ interfaces, interfacesStatus: 'ready', interfacesError: null }),
-
-  refreshLatencies: async () => {
-    try {
-      const latencies = await window.plexo.pingInterfaces()
-      set({ latencies })
-    } catch {
-      // Latency is a nice-to-have readout — a failed probe just leaves stale values.
-    }
-  },
 
   // An explicit `undefined` in `patch` clears that field; main drops an entry left with neither.
   setNetworkPreference: (id, patch) => {

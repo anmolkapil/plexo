@@ -24,7 +24,6 @@ import { listHistory } from '../download/history'
 import { probeUrl } from '../download/probe'
 import { deviceBindingSupported } from '../network/deviceBinding'
 import { takePendingLink } from '../openLinks'
-import { measureLatencies } from '../network/latency'
 import { NetworkMonitor } from '../network/interfaces'
 import { loadSettings, saveSettings } from '../settings'
 import { testKnobs } from '../testKnobs'
@@ -88,9 +87,7 @@ export function registerIpcHandlers(getWindow: () => BrowserWindow | null): Down
 
   handle('listInterfaces', () => networks.refresh())
 
-  handle('pingInterfaces', async () => measureLatencies(networks.current ?? []))
-
-  // Started now so it has settled before the first ping or download needs it.
+  // Started now so it has settled before the first download needs it.
   const bindingSupport = deviceBindingSupported()
   handle('deviceBindingSupported', async () => bindingSupport)
 

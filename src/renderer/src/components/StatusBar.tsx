@@ -2,7 +2,7 @@ import type { SpeedUnit } from '@shared/types'
 import { useEffect, useState } from 'react'
 import { useAppStore } from '../store/useAppStore'
 import { formatBytes } from '../utils/format'
-import { useFormatSpeed } from '../hooks/useFormatSpeed'
+import { useFormatSpeedLimit } from '../hooks/useFormatSpeed'
 import { ScreenFooter } from './ScreenFooter'
 import { ThemeToggle } from './ThemeToggle'
 import { Switch } from './ui/switch'
@@ -52,7 +52,7 @@ function SpeedUnitToggle(): React.JSX.Element {
  * slow mode switch, and view preferences. Speeds and their limits are left to the screens that
  * show them — repeated down here they only doubled up, or read as a limit with no cause. */
 export function StatusBar(): React.JSX.Element {
-  const formatSpeed = useFormatSpeed()
+  const formatSpeedLimit = useFormatSpeedLimit()
   // A count, not the downloads: progress ticks don't re-render the footer.
   const waiting = useAppStore(
     (store) =>
@@ -101,7 +101,7 @@ export function StatusBar(): React.JSX.Element {
               </label>
             }
           />
-          <TooltipContent>Limit downloads to {formatSpeed(slowModeSpeed)}</TooltipContent>
+          <TooltipContent>Limit downloads to {formatSpeedLimit(slowModeSpeed)}</TooltipContent>
         </Tooltip>
         <SpeedUnitToggle />
         <ThemeToggle />

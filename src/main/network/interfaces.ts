@@ -40,6 +40,18 @@ async function getMacHardwarePortNames(): Promise<Map<string, string>> {
   return deviceToName
 }
 
+/** Linux names a device by what it is, in systemd's predictable names (wlp2s0, enp3s0,
+ * enp0s20f0u1, enx3a5b0c1d2e4f) or the older ones (wlan0, eth0, usb0): wl is Wi-Fi; a USB port in
+ * the path (…u1), a MAC-based name (enx) or usb is a USB adapter, which a tethered phone is; en and
+ * eth are Ethernet. There's no name lookup to read instead, as macOS and Windows have. */
+function classifyLinuxDevice(device: string): NetworkInterfaceKind {
+  if (/^wl/.test(device)) return 'wifi'
+  if (/^usb|^enx|^en\w*u\d/.test(device)) return 'usb'
+  if (/^(en|eth)/.test(device)) return 'ethernet'
+  if (/^(br|virbr)/.test(device)) return 'bridge'
+  return 'other'
+}
+
 function classifyInterface(hardwarePortName: string): NetworkInterfaceKind {
   const name = hardwarePortName.toLowerCase()
   if (/wi-?fi|wireless|wlan|802\.11|airport/.test(name)) return 'wifi'
@@ -50,7 +62,9 @@ function classifyInterface(hardwarePortName: string): NetworkInterfaceKind {
   return 'other'
 }
 
-/** Adapter aliases match Node's interface names; metadata identifies renamed or localized adapters. */
+/** Adapter aliases ("Wi-Fi", "Ethernet 2") match Node's interface names, and are what Windows shows
+ * people; the description ("Intel(R) Wi-Fi 6 AX201 160MHz") and physical medium only tell what kind
+ * of network a renamed or localized adapter is. */
 async function getWindowsAdapters(): Promise<Map<string, WindowsAdapter>> {
   if (process.platform !== 'win32') return new Map()
   try {
@@ -143,14 +157,19 @@ export async function listActiveInterfaces(): Promise<NetworkInterfaceInfo[]> {
 
     const hardwareName = hardwarePorts.get(device)
     const adapter = windowsAdapters.get(device)
-    let kind = classifyInterface(adapter?.InterfaceDescription ?? hardwareName ?? device)
+    let kind =
+      process.platform === 'linux'
+        ? classifyLinuxDevice(device)
+        : classifyInterface(adapter?.InterfaceDescription ?? hardwareName ?? device)
     // NDIS media: 1 = wireless LAN, 9 = native 802.11, 14 = Ethernet (802.3).
     if (adapter?.NdisPhysicalMedium === 1 || adapter?.NdisPhysicalMedium === 9) kind = 'wifi'
     else if (kind === 'other' && adapter?.NdisPhysicalMedium === 14) kind = 'ethernet'
     result.push({
       id: device,
       device,
-      displayName: hardwareName ?? adapter?.InterfaceDescription ?? device,
+      // What the OS shows people: macOS's hardware port ("Wi-Fi", "iPhone USB"), else the device —
+      // on Windows its alias ("Wi-Fi", "Ethernet 2"), on Linux its name (wlp2s0).
+      displayName: hardwareName ?? device,
       addresses: usable,
       kind,
       mac: addresses.find((addr) => addr.mac && addr.mac !== '00:00:00:00:00:00')?.mac

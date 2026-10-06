@@ -11,7 +11,7 @@ import { useNetworkUsage } from '../hooks/useNetworks'
 import { useNetworkVisuals } from '../hooks/useNetworkVisuals'
 import { useAppStore } from '../store/useAppStore'
 import { describeError, formatBytes } from '../utils/format'
-import { useFormatSpeed } from '../hooks/useFormatSpeed'
+import { useFormatSpeedLimit } from '../hooks/useFormatSpeed'
 import {
   AlertDialog,
   AlertDialogContent,
@@ -481,7 +481,7 @@ function NetworkPage({
 }
 
 /** "5.00 of 5 GB this month", with a bar that turns red once the limit is reached. */
-export function UsageBar({
+function UsageBar({
   used,
   limit,
   period = 'month'
@@ -513,13 +513,13 @@ export function UsageBar({
 function describeLimits(
   preference: NetworkPreference | undefined,
   used: number,
-  formatSpeed: (bytesPerSec: number) => string
+  formatSpeedLimit: (bytesPerSec: number) => string
 ): string {
   if (preference?.dataLimit !== undefined && used >= preference.dataLimit) {
     return 'Data limit reached'
   }
   const parts = [
-    preference?.speedLimit !== undefined && formatSpeed(preference.speedLimit),
+    preference?.speedLimit !== undefined && formatSpeedLimit(preference.speedLimit),
     preference?.dataLimit !== undefined &&
       `${formatBytes(preference.dataLimit)} per ${preference.dataLimitPeriod ?? 'month'}`
   ].filter(Boolean)
@@ -563,7 +563,7 @@ function LimitsEditor({
   onPageChange: (page: string | null) => void
   onClose: () => void
 }): React.JSX.Element {
-  const formatSpeed = useFormatSpeed()
+  const formatSpeedLimit = useFormatSpeedLimit()
   const interfaces = useAppStore((store) => store.interfaces)
   const [draft, setDraft] = useState<Draft>(() => {
     const { speedLimit, slowMode, slowModeSpeed, downloadsAtOnce, networkPreferences } =
@@ -642,12 +642,16 @@ function LimitsEditor({
             null,
             'var(--text-secondary)',
             'All downloads',
-            slowMode ? 'Slow mode on' : speedLimit ? formatSpeed(speedLimit) : 'No limit'
+            slowMode ? 'Slow mode on' : speedLimit ? formatSpeedLimit(speedLimit) : 'No limit'
           )}
           <div className={navLabelClass}>Networks</div>
           {interfaces.map((iface) => {
             const visual = networkVisual(iface.id, iface.kind, iface.displayName)
-            const detail = describeLimits(preferences[iface.id], usage[iface.id] ?? 0, formatSpeed)
+            const detail = describeLimits(
+              preferences[iface.id],
+              usage[iface.id] ?? 0,
+              formatSpeedLimit
+            )
             return navItem(
               iface.id,
               visual.solid,

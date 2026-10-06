@@ -292,8 +292,8 @@ export interface NetworkPreference {
   /** One of the app's curated swatch ids (see NETWORK_COLOR_SWATCHES) — not a raw hex, so every
    * swatch is guaranteed to have a legible on-solid text color already picked out for it. */
   colorId?: string
-  /** Left out of new downloads by default (see the title bar's networks). A download can still
-   * be started on it. */
+  /** Left out of the last download started, so New download starts without it too (it remembers
+   * the last pick, like the folder). A click there puts it back. */
   off?: boolean
   /** Bytes a second all downloads together may take over it. */
   speedLimit?: number

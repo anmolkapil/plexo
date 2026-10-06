@@ -31,7 +31,7 @@ import {
   toDisplayPath,
   wantedBytes
 } from '../utils/format'
-import { useFormatSpeed } from '../hooks/useFormatSpeed'
+import { useFormatSpeed, useFormatSpeedLimit } from '../hooks/useFormatSpeed'
 
 /** Inline "·" separator between adjacent stats. `shrink` pins it at its natural width inside a
  * flex row that might otherwise squeeze it (footer rows), matching each call site's prior style. */
@@ -103,6 +103,7 @@ export const DownloadingScreen = memo(function DownloadingScreen({
   download: DownloadState
 }): React.JSX.Element {
   const formatSpeed = useFormatSpeed()
+  const formatSpeedLimit = useFormatSpeedLimit()
   const homeDir = useAppStore((store) => store.homeDir)
   const speedLimit = useAppStore((store) => store.speedLimit)
   const slowMode = useAppStore((store) => store.slowMode)
@@ -168,9 +169,9 @@ export const DownloadingScreen = memo(function DownloadingScreen({
   // The cap over every download, beside the speed it holds down — slow mode named, so a low
   // number explains itself.
   const speedCap = slowMode
-    ? ` · SLOW MODE ${formatSpeed(slowModeSpeed)}`
+    ? ` · SLOW MODE ${formatSpeedLimit(slowModeSpeed)}`
     : speedLimit !== undefined
-      ? ` · LIMIT ${formatSpeed(speedLimit)}`
+      ? ` · LIMIT ${formatSpeedLimit(speedLimit)}`
       : ''
   // Every network is a row, for switching it on or off; the charts draw only those in play.
   const rows = groupByNetwork(download)

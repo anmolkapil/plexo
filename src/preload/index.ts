@@ -24,7 +24,6 @@ const plexoApi = {
   initialState: ipcRenderer.sendSync(IpcChannels.getInitialState) as InitialState,
 
   listInterfaces: () => invoke('listInterfaces'),
-  pingInterfaces: () => invoke('pingInterfaces'),
   deviceBindingSupported: () => invoke('deviceBindingSupported'),
   openNetworkSettings: () => invoke('openNetworkSettings'),
   updateSettings: (patch: AppSettings) => invoke('updateSettings', patch),
