@@ -7,6 +7,7 @@ import type {
   NetworkInterfaceInfo,
   NetworkPreference,
   NetworkPreferences,
+  SpeedUnit,
   ThemeSource,
   UpdateInfo
 } from '@shared/types'
@@ -23,7 +24,6 @@ interface AppStore {
   interfaces: NetworkInterfaceInfo[]
   interfacesStatus: LoadStatus
   interfacesError: string | null
-  latencies: Record<string, number | null>
   /** User customizations (name/color) per network interface id — persisted in the main process. */
   networkPreferences: NetworkPreferences
 
@@ -52,6 +52,8 @@ interface AppStore {
   speedLimit: number | undefined
   slowMode: boolean
   slowModeSpeed: number
+  /** Persisted — MB/s or Mbps, for every speed shown. */
+  speedUnit: SpeedUnit
 
   /** Lifted out of the Idle screen so it survives a swap to/from the No-connections screen. */
   draftUrl: string
@@ -63,7 +65,6 @@ interface AppStore {
   /** Asks the main process for the network list now; it also pushes every change. */
   loadInterfaces: () => Promise<void>
   receiveInterfaces: (interfaces: NetworkInterfaceInfo[]) => void
-  refreshLatencies: () => Promise<void>
   setNetworkPreference: (id: string, patch: NetworkPreference) => void
   setThemeSource: (source: ThemeSource) => void
   checkForUpdate: () => Promise<void>
@@ -83,6 +84,7 @@ interface AppStore {
   setSpeedLimit: (bytesPerSec: number | undefined) => void
   setSlowMode: (on: boolean) => void
   setSlowModeSpeed: (bytesPerSec: number) => void
+  setSpeedUnit: (unit: SpeedUnit) => void
   setDraftUrl: (url: string) => void
   setDestinationDir: (dir: string) => void
 }
@@ -101,7 +103,6 @@ export const useAppStore = create<AppStore>((set, get) => ({
   interfaces: [],
   interfacesStatus: 'idle',
   interfacesError: null,
-  latencies: {},
   networkPreferences: initial.networkPreferences,
   themeSource: initial.themeSource,
   availableUpdate: null,
@@ -119,6 +120,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
   speedLimit: initial.speedLimit,
   slowMode: initial.slowMode,
   slowModeSpeed: initial.slowModeSpeed,
+  speedUnit: initial.speedUnit,
 
   draftUrl: '',
   startedUrl: '',
@@ -140,15 +142,6 @@ export const useAppStore = create<AppStore>((set, get) => ({
 
   receiveInterfaces: (interfaces) =>
     set({ interfaces, interfacesStatus: 'ready', interfacesError: null }),
-
-  refreshLatencies: async () => {
-    try {
-      const latencies = await window.plexo.pingInterfaces()
-      set({ latencies })
-    } catch {
-      // Latency is a nice-to-have readout — a failed probe just leaves stale values.
-    }
-  },
 
   // An explicit `undefined` in `patch` clears that field; main drops an entry left with neither.
   setNetworkPreference: (id, patch) => {
@@ -230,6 +223,11 @@ export const useAppStore = create<AppStore>((set, get) => ({
   setSlowModeSpeed: (slowModeSpeed) => {
     set({ slowModeSpeed })
     persist({ slowModeSpeed })
+  },
+
+  setSpeedUnit: (speedUnit) => {
+    set({ speedUnit })
+    persist({ speedUnit })
   },
 
   setDraftUrl: (draftUrl) => set({ draftUrl }),

@@ -8,6 +8,7 @@ import { app, Notification, powerSaveBlocker, shell } from 'electron'
 import { IpcChannels } from '../../shared/ipc-channels'
 import {
   DOWNLOADS_AT_ONCE,
+  SPEED_HISTORY_SECONDS,
   type AppSettings,
   type DownloadNetwork,
   type DownloadState,
@@ -87,8 +88,9 @@ interface RuntimeFields {
   pausedForNoNetwork?: boolean
   /** When the speeds last went into the history (see sampleSpeeds). */
   speedSampledAt: number
-  /** The best combined speed this run has shown: the peak of one done before it held one. */
-  bestSpeedSeen: number
+  /** The byte count, read once a second while downloading and carried over pauses: back to the
+   * newest reading PEAK_SECONDS old (see samplePeak). */
+  peakReadings: { time: number; bytes: number }[]
   /** Changes asked of a torrent's choice of files, counted: only the latest applies. */
   fileChoices: number
 }
@@ -128,14 +130,13 @@ const TICK_MS = 500
 // checkpoints independent of UI updates; pause and publication still force an immediate sync.
 const CHECKPOINT_INTERVAL_MS = 15_000
 
-const SPEED_HISTORY_LENGTH = 60
-// The peak is the best speed held this many samples (seconds): longer than a start's burst (an
-// ISP's burst allowance, every connection ramping up at once), which isn't the line's speed.
-const PEAK_SAMPLES = 5
+// The peak is the best speed held this many seconds: longer than a start's burst (an ISP's burst
+// allowance, every connection ramping up at once), which isn't the line's speed.
+const PEAK_SECONDS = 5
 
 /** Adds each network's speed to the download's history, and 0 for one no longer listed. A
  * network seen for the first time starts at 0 too, so every series is as long as the others and
- * lines up with them. Then raises the peak, once the last PEAK_SAMPLES are in. */
+ * lines up with them. */
 function sampleSpeeds(state: DownloadState): void {
   const history = (state.speedHistory ??= {})
   const length = Object.values(history)[0]?.length ?? 0
@@ -144,13 +145,32 @@ function sampleSpeeds(state: DownloadState): void {
   }
   for (const [id, series] of Object.entries(history)) {
     series.push(state.networks.find((network) => network.id === id)?.speedBytesPerSec ?? 0)
-    if (series.length > SPEED_HISTORY_LENGTH) series.shift()
+    if (series.length > SPEED_HISTORY_SECONDS) series.shift()
   }
-  const series = Object.values(history)
-  if (series[0].length < PEAK_SAMPLES) return
-  let held = 0
-  for (const values of series) for (const value of values.slice(-PEAK_SAMPLES)) held += value
-  state.peakSpeedBytesPerSec = Math.max(state.peakSpeedBytesPerSec ?? 0, held / PEAK_SAMPLES)
+}
+
+/** Raises the peak to the last PEAK_SECONDS of downloading, read from the bytes themselves: what
+ * AVG is made of, so the peak can't read below it (an average is never above its best stretch).
+ * Read off the speed meters instead, it missed the opening burst AVG counts, and early on read
+ * lower. The first stretch starts with the download, so a burst is in it, spread over the seconds,
+ * not a speed. Readings run on across a pause (see run), so short runs between pauses count too. */
+function samplePeak(runtime: DownloadRuntime, now: number): void {
+  const { state } = runtime
+  const readings = runtime.peakReadings
+  readings.push({ time: now, bytes: state.bytesDownloaded })
+  // Back to the newest reading at least PEAK_SECONDS old, by time rather than by count: a run that
+  // stops between ticks adds a reading, and counted, a short stretch passed for a full one.
+  while (readings.length > 1 && readings[1].time <= now - PEAK_SECONDS * 1000) readings.shift()
+  const first = readings[0]
+  if (now - first.time < PEAK_SECONDS * 1000) return
+  const held = (state.bytesDownloaded - first.bytes) / ((now - first.time) / 1000)
+  // Stretches are only read where a reading falls, so the download's first or last few seconds
+  // can go unread as one — and when those were its fastest, every stretch read is slower than the
+  // average. Its best 5 seconds can't be, though: past PEAK_SECONDS of downloading, the average
+  // (as AVG works it out) is a floor the peak truly clears.
+  const downloading = (now - state.startedAt - (state.totalPausedMs ?? 0)) / 1000
+  const average = downloading >= PEAK_SECONDS ? state.bytesDownloaded / downloading : 0
+  state.peakSpeedBytesPerSec = Math.max(state.peakSpeedBytesPerSec ?? 0, held, average)
 }
 
 function newHttpNetwork(iface: NetworkInterfaceInfo, enabled: boolean): HttpDownloadNetwork {
@@ -386,7 +406,7 @@ export class DownloadManager {
       sentUpdates: 0,
       sentUnits: [],
       speedSampledAt: 0,
-      bestSpeedSeen: 0,
+      peakReadings: [],
       fileChoices: 0
     }
   }
@@ -1324,6 +1344,18 @@ export class DownloadManager {
     const watched = new WeakSet<Promise<void>>()
     let wake: { resolve: () => void; reject: (error: unknown) => void } | null = null
     let tickedAt = Date.now()
+    // Readings carry over a pause, moved up to now: time paused isn't time downloading, so a
+    // stretch can run across one, and runs too short for a stretch of their own still count — as
+    // they do in AVG, which a reset here let read above PEAK.
+    const lastReading = runtime.peakReadings.at(-1)
+    const paused = lastReading ? tickedAt - lastReading.time : 0
+    runtime.peakReadings = runtime.peakReadings.map((reading) => ({
+      time: reading.time + paused,
+      bytes: reading.bytes
+    }))
+    if (runtime.peakReadings.at(-1)?.bytes !== runtime.state.bytesDownloaded) {
+      runtime.peakReadings.push({ time: tickedAt, bytes: runtime.state.bytesDownloaded })
+    }
 
     while (
       runtime.state.status === 'downloading' &&
@@ -1348,15 +1380,17 @@ export class DownloadManager {
       const timeLeftChanged = updateTimeLeft(runtime.state, (now - tickedAt) / 1000)
       tickedAt = now
       if (speedsChanged || timeLeftChanged) this.scheduleUpdate(runtime)
-      runtime.bestSpeedSeen = Math.max(runtime.bestSpeedSeen, runtime.state.speedBytesPerSec)
       if (now - runtime.speedSampledAt >= 1000) {
         runtime.speedSampledAt = now
         sampleSpeeds(runtime.state)
+        samplePeak(runtime, now)
         this.scheduleUpdate(runtime)
       }
       runtime.transfer.tick(now)
     }
-    // The last blocks are in, or the run was stopped: its streams wind down.
+    // The last blocks are in, or the run was stopped: its streams wind down. Its last part reads
+    // too, up to the moment it stopped (and where the next run picks up).
+    samplePeak(runtime, Date.now())
     runtime.stop.abort()
     await Promise.all(runtime.transfer.running())
     // However it ended — paused, failed, cancelled, done — nothing is moving now.
@@ -1392,8 +1426,14 @@ export class DownloadManager {
       runtime.state.fileName = basename(publishedPath)
       runtime.state.status = 'completed'
       runtime.state.completedAt = Date.now()
-      // Done before it held a speed for long: the best it showed.
-      if (runtime.bestSpeedSeen > 0) runtime.state.peakSpeedBytesPerSec ??= runtime.bestSpeedSeen
+      // Done before it downloaded for PEAK_SECONDS: its speed start to finish, pauses left out (the
+      // readings close them up), is the best it held.
+      const [start] = runtime.peakReadings
+      const end = runtime.peakReadings.at(-1)
+      const ranFor = start && end ? (end.time - start.time) / 1000 : 0
+      if (ranFor > 0) {
+        runtime.state.peakSpeedBytesPerSec ??= (end!.bytes - start.bytes) / ranFor
+      }
       runtime.state.bytesDownloaded =
         runtime.state.totalBytes -
           (runtime.state.kind === 'torrent' ? runtime.state.skippedBytes : 0) ||

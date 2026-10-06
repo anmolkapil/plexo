@@ -1,4 +1,4 @@
-import { formatSpeed } from '../utils/format'
+import { useFormatSpeed } from '../hooks/useFormatSpeed'
 
 const ROW_HEIGHT = 36
 // Gaps between the label column and the rest of the diagram stay fixed — only the label
@@ -35,6 +35,7 @@ export function CombineDiagram({
   muted?: boolean
   paused?: boolean
 }): React.JSX.Element {
+  const formatSpeed = useFormatSpeed()
   const height = Math.max(78, networks.length * ROW_HEIGHT + 10)
   const midY = height / 2
 

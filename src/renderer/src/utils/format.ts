@@ -4,6 +4,7 @@ import type {
   FinishedDownload,
   HttpDownloadNetwork,
   HttpDownloadState,
+  SpeedUnit,
   TorrentDownloadNetwork,
   TorrentDownloadState
 } from '@shared/types'
@@ -21,8 +22,89 @@ export function formatBytes(bytes: number): string {
   return `${value.toFixed(exponent === 0 ? 0 : 1)} ${UNITS[exponent]}`
 }
 
-export function formatSpeed(bytesPerSec: number): string {
-  return `${formatBytes(bytesPerSec)}/s`
+const BIT_UNITS = ['bps', 'Kbps', 'Mbps', 'Gbps', 'Tbps']
+
+/** Bits count in thousands, as internet plans and speed tests do — not the 1024s of formatBytes. */
+export function formatSpeed(bytesPerSec: number, unit: SpeedUnit): string {
+  if (unit === 'bytes') return `${formatBytes(bytesPerSec)}/s`
+  const bits = Number.isFinite(bytesPerSec) && bytesPerSec > 0 ? bytesPerSec * 8 : 0
+  let exponent = bits < 1 ? 0 : Math.min(Math.floor(Math.log10(bits) / 3), BIT_UNITS.length - 1)
+  // Whole numbers from 100 up: Mbps runs about 8x the digits of MB/s, so "943.2" would only jitter.
+  const digits = (value: number): number => (exponent === 0 || value >= 99.95 ? 0 : 1)
+  let value = bits / 1000 ** exponent
+  if (exponent < BIT_UNITS.length - 1 && Number(value.toFixed(digits(value))) >= 1000) {
+    exponent += 1
+    value = bits / 1000 ** exponent
+  }
+  return `${value.toFixed(digits(value))} ${BIT_UNITS[exponent]}`
+}
+
+// Bytes a second in each unit formatSpeed reads in.
+const SPEED_UNIT_BYTES: Record<string, number> = {
+  'B/s': 1,
+  'KB/s': 1024,
+  'MB/s': 1024 ** 2,
+  'GB/s': 1024 ** 3,
+  'TB/s': 1024 ** 4,
+  bps: 1 / 8,
+  Kbps: 1e3 / 8,
+  Mbps: 1e6 / 8,
+  Gbps: 1e9 / 8,
+  Tbps: 1e12 / 8
+}
+
+/** A speed axis for speeds up to `max`: 2 or 3 gridlines at round steps (1, 2, 2.5 or 5 × 10ⁿ) in
+ * the unit formatSpeed would read `max` in, the top one just clearing it, each labelled with it. */
+export function speedTicks(
+  max: number,
+  unit: SpeedUnit
+): { top: number; ticks: { value: number; label: string }[] } {
+  if (!(max > 0)) return { top: 1, ticks: [] }
+  const label = formatSpeed(max, unit).split(' ')[1]
+  const size = SPEED_UNIT_BYTES[label]
+  const third = max / size / 3
+  const power = 10 ** Math.floor(Math.log10(third))
+  const step = [1, 2, 2.5, 5, 10].map((m) => m * power).find((s) => s >= third)!
+  const count = Math.ceil(max / size / step)
+  const ticks = Array.from({ length: count }, (_, i) => {
+    const value = Number(((i + 1) * step).toFixed(2))
+    return { value: value * size, label: `${value} ${label}` }
+  })
+  return { top: count * step * size, ticks }
+}
+
+/** A speed someone set, as a round figure: whole from 10 up, never a trailing ".0". 58.7 Mbps
+ * reads as something measured; 59 Mbps as something chosen. */
+export function formatSpeedLimit(bytesPerSec: number, unit: SpeedUnit): string {
+  const [value, label] = formatSpeed(bytesPerSec, unit).split(' ')
+  const number = Number(value)
+  return `${number >= 10 ? Math.round(number) : number} ${label}`
+}
+
+/** "11.7 of 50 GB": data used against a data limit, the unit said once when both share it. The
+ * limit is a set figure, so no ".0" on it. */
+export function formatDataUsage(used: number, limit: number): string {
+  const max = formatBytes(limit).replace('.0 ', ' ')
+  const [rounded, unit] = formatBytes(used).split(' ')
+  // Down, not to the nearest: 4.96 GB of a 5 GB limit read "5.0 of 5 GB" while data was left.
+  const exponent = UNITS.indexOf(unit)
+  const value =
+    exponent === 0 ? rounded : (Math.floor((used / 1024 ** exponent) * 10) / 10).toFixed(1)
+  return max.endsWith(` ${unit}`) ? `${value} of ${max}` : `${value} ${unit} of ${max}`
+}
+
+/** A speed against its limit, ["8.0", "10 MB/s"] for "8.0 / 10 MB/s": the unit said once
+ * when both share it. Split so the limit can be set in a quieter color. No speed reads "—". */
+export function formatSpeedOfLimit(
+  bytesPerSec: number,
+  limit: number,
+  unit: SpeedUnit
+): [string, string] {
+  const max = formatSpeedLimit(limit, unit)
+  if (bytesPerSec <= 0) return ['—', max]
+  const speed = formatSpeed(bytesPerSec, unit)
+  const [value, speedUnit] = speed.split(' ')
+  return [max.endsWith(` ${speedUnit}`) ? value : speed, max]
 }
 
 export function formatEta(seconds: number): string {
@@ -116,12 +198,6 @@ export function formatDuration(seconds: number): string {
   const secs = total % 60
   if (hrs > 0) return `${hrs}:${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`
   return `${mins}:${String(secs).padStart(2, '0')}`
-}
-
-/** "12.3 MB" -> { value: "12.3", unit: "MB" } — for readouts that size the number and unit separately. */
-export function splitFormattedBytes(bytes: number): { value: string; unit: string } {
-  const [value, unit] = formatBytes(bytes).split(' ')
-  return { value, unit }
 }
 
 export function dirnameOf(path: string): string {

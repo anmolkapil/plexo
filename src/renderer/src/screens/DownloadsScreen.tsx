@@ -1,4 +1,4 @@
-import type { DownloadState, FinishedDownload, NetworkPreferences } from '@shared/types'
+import type { DownloadState, FinishedDownload } from '@shared/types'
 import { ChevronRight, Pause, Play, Plus, RotateCw, X, type LucideIcon } from 'lucide-react'
 import { cn } from 'cn'
 import { Fragment, memo, useCallback, useEffect, useState } from 'react'
@@ -30,13 +30,13 @@ import {
   formatBytes,
   formatEta,
   formatPercent,
-  formatSpeed,
   formatWhen,
   isFolder,
   linkExpired,
   sourceOf,
   wantedBytes
 } from '../utils/format'
+import { useFormatSpeed } from '../hooks/useFormatSpeed'
 
 type Item = DownloadState | FinishedDownload
 
@@ -144,7 +144,6 @@ export function DownloadsScreen(): React.JSX.Element {
   )
   // Stable, with the colors resolved once here, so a finished row skips every progress push.
   const networkVisual = useNetworkVisuals()
-  const networkPreferences = useAppStore((store) => store.networkPreferences)
   const selectRow = useCallback((id: string, on: boolean) => toggle([id], on), [toggle])
   const openRow = useCallback((id: string) => setView({ name: 'download', id }), [setView])
   const fixRow = useCallback((item: Item) => {
@@ -434,7 +433,6 @@ export function DownloadsScreen(): React.JSX.Element {
                   networkVisual={
                     isFinished(item) || item.status === 'completed' ? undefined : networkVisual
                   }
-                  networkPreferences={networkPreferences}
                   onSelect={selectRow}
                   onOpen={openRow}
                   onFix={fixRow}
@@ -559,7 +557,6 @@ const DownloadRow = memo(function DownloadRow({
   now,
   selected,
   networkVisual,
-  networkPreferences,
   onSelect,
   onOpen,
   onFix,
@@ -570,13 +567,12 @@ const DownloadRow = memo(function DownloadRow({
   selected: boolean
   /** Colors its progress bar and network dots; a finished row has none. */
   networkVisual?: ResolveNetworkVisual
-  /** The default networks (the networks menu), to tell a download set otherwise. */
-  networkPreferences: NetworkPreferences
   onSelect: (id: string, on: boolean) => void
   onOpen: (id: string) => void
   onFix: (item: Item) => void
   onAgain: (item: Item) => void
 }): React.JSX.Element {
+  const formatSpeed = useFormatSpeed()
   const finished = isFinished(item) || item.status === 'completed'
   const badge = isFolder(item) ? 'DIR' : fileExtensionBadge(item.fileName)
   const wanted = wantedBytes(item)
@@ -667,15 +663,13 @@ const DownloadRow = memo(function DownloadRow({
               color: networkVisual(network.id, network.kind, network.label).solid
             }))
 
-  // Set apart from the default networks: which it's on, at a glance. One on the defaults says
+  // Which networks it's on, at a glance, when it isn't on all of them. One on every network says
   // nothing new, so it shows none.
   const dots =
     !finished &&
     networkVisual &&
     !isFinished(item) &&
-    item.networks.some(
-      (network) => network.enabled === Boolean(networkPreferences[network.id]?.off)
-    )
+    item.networks.some((network) => !network.enabled)
       ? item.networks.map((network) => {
           const visual = networkVisual(network.id, network.kind, network.label)
           return {

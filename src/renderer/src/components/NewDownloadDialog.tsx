@@ -2,6 +2,8 @@ import type { ProbeResult } from '@shared/types'
 import { cn } from 'cn'
 import { AlertTriangle, FolderOpen, X } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
+import { useFormatSpeedLimit } from '../hooks/useFormatSpeed'
+import { useNetworkUsage } from '../hooks/useNetworks'
 import { useNetworkVisuals } from '../hooks/useNetworkVisuals'
 import { useAppStore } from '../store/useAppStore'
 import {
@@ -65,11 +67,15 @@ function NewDownloadForm({ onDone }: { onDone: () => void }): React.JSX.Element 
         .length >= store.downloadsAtOnce
   )
   const networkVisual = useNetworkVisuals()
+  const networkPreferences = useAppStore((store) => store.networkPreferences)
+  const setNetworkPreference = useAppStore((store) => store.setNetworkPreference)
+  const usage = useNetworkUsage(true)
+  const formatSpeedLimit = useFormatSpeedLimit()
   const linkInput = useRef<HTMLInputElement>(null)
 
   const [probe, setProbe] = useState<ProbeState>({ status: 'idle' })
   // Tracks deselections rather than selections, so a newly-detected interface starts selected.
-  // Starts from the default networks: the ones switched off in the networks menu.
+  // Starts from the last download's pick: the networks it left out are saved as `off`.
   const [deselectedInterfaceIds, setDeselectedInterfaceIds] = useState<string[]>(() =>
     Object.entries(useAppStore.getState().networkPreferences)
       .filter(([, preference]) => preference.off)
@@ -144,8 +150,24 @@ function NewDownloadForm({ onDone }: { onDone: () => void }): React.JSX.Element 
   const isSingleStreamOnly = ready !== null && !multiChunkAllowed
 
   const detectedIds = interfaces.map((iface) => iface.id)
-  const enabledIds = detectedIds.filter((id) => !deselectedInterfaceIds.includes(id))
-  const selectedInterfaceIds = isSingleStreamOnly ? enabledIds.slice(0, 1) : enabledIds
+  // A network that has used up its data limit can't carry anything, so it can't be picked.
+  const isReached = (id: string): boolean => {
+    const dataLimit = networkPreferences[id]?.dataLimit
+    return dataLimit !== undefined && (usage[id] ?? 0) >= dataLimit
+  }
+  const availableIds = detectedIds.filter((id) => !isReached(id))
+  const pickedIds = availableIds.filter((id) => !deselectedInterfaceIds.includes(id))
+  // The last pick may be all used up. Then nothing is picked, rather than what was left out: a
+  // network left out is often left out on purpose (a phone's metered data), so it's chosen here
+  // by hand, never stood in for the one that ran out.
+  const selectedInterfaceIds = isSingleStreamOnly ? pickedIds.slice(0, 1) : pickedIds
+  // The networks of the last pick that have used up their data, to say why nothing is picked.
+  const usedUpPick =
+    pickedIds.length === 0 && availableIds.length > 0
+      ? interfaces.filter(
+          (iface) => isReached(iface.id) && !deselectedInterfaceIds.includes(iface.id)
+        )
+      : []
 
   const canStart =
     probe.status === 'ready' &&
@@ -183,6 +205,7 @@ function NewDownloadForm({ onDone }: { onDone: () => void }): React.JSX.Element 
   }
 
   const handleToggleInterface = (id: string): void => {
+    if (isReached(id)) return
     if (isSingleStreamOnly) {
       // Single-stream mode can only download through 1 interface at a time
       setDeselectedInterfaceIds(detectedIds.filter((otherId) => otherId !== id))
@@ -191,7 +214,7 @@ function NewDownloadForm({ onDone }: { onDone: () => void }): React.JSX.Element 
     setDeselectedInterfaceIds((prev) => {
       if (prev.includes(id)) return prev.filter((entry) => entry !== id)
       // Keep at least 1 interface selected
-      const remaining = detectedIds.filter((other) => !prev.includes(other) && other !== id)
+      const remaining = availableIds.filter((other) => !prev.includes(other) && other !== id)
       return remaining.length === 0 ? prev : [...prev, id]
     })
   }
@@ -236,6 +259,16 @@ function NewDownloadForm({ onDone }: { onDone: () => void }): React.JSX.Element 
               streamsPerNetwork: streamsChoice === 'auto' ? undefined : streamsChoice
             }
       )
+      // Remembered for the next download, like the folder. Not a single-stream pick: that's one
+      // network because the file allows no more, not because the others were unwanted.
+      if (!isSingleStreamOnly) {
+        for (const id of availableIds) {
+          const off = !selectedInterfaceIds.includes(id)
+          if (off !== Boolean(networkPreferences[id]?.off)) {
+            setNetworkPreference(id, { off: off || undefined })
+          }
+        }
+      }
       // Started: the link is spent, so the next download starts from an empty one. Its own
       // screen opens, unless it was only added to the queue.
       useAppStore.setState({
@@ -386,17 +419,28 @@ function NewDownloadForm({ onDone }: { onDone: () => void }): React.JSX.Element 
             {interfaces.map((iface) => {
               const visual = networkVisual(iface.id, iface.kind, iface.displayName)
               const selected = selectedInterfaceIds.includes(iface.id)
-              return (
+              const reached = isReached(iface.id)
+              const speedLimit = networkPreferences[iface.id]?.speedLimit
+              // What's worth knowing before it's picked: it can't be, or it's capped.
+              const note = reached
+                ? 'Data limit reached'
+                : speedLimit !== undefined
+                  ? `Limited to ${formatSpeedLimit(speedLimit)}`
+                  : null
+              const chip = (
                 <button
                   key={iface.id}
                   type="button"
                   aria-pressed={selected}
+                  // Not `disabled`: a disabled button never gets the hover that says why.
+                  aria-disabled={reached || undefined}
                   onClick={() => handleToggleInterface(iface.id)}
                   className={cn(
                     'flex h-7 items-center gap-1.5 rounded-full border px-2.5 text-[12.5px] transition-colors',
                     selected
                       ? 'border-transparent'
-                      : 'border-border text-[var(--text-secondary)] opacity-70'
+                      : 'border-border text-[var(--text-secondary)] opacity-70',
+                    reached && 'cursor-not-allowed line-through opacity-50'
                   )}
                   style={
                     selected ? { background: visual.bg, borderColor: visual.border } : undefined
@@ -405,6 +449,14 @@ function NewDownloadForm({ onDone }: { onDone: () => void }): React.JSX.Element 
                   <span className="size-2 rounded-full" style={{ background: visual.solid }} />
                   {visual.name}
                 </button>
+              )
+              return note === null ? (
+                chip
+              ) : (
+                <Tooltip key={iface.id}>
+                  <TooltipTrigger render={chip} />
+                  <TooltipContent>{note}</TooltipContent>
+                </Tooltip>
               )
             })}
           </div>
@@ -443,6 +495,23 @@ function NewDownloadForm({ onDone }: { onDone: () => void }): React.JSX.Element 
             <AlertTriangle className="mt-0.5 size-3.5 shrink-0" />
             {subnetConflict.names.join(' and ')} share a subnet ({subnetConflict.subnet}), so the
             computer sends both down one route and they can’t be combined.
+          </div>
+        )}
+        {usedUpPick.length > 0 && (
+          <div className="flex items-start gap-2 text-[12px] leading-snug text-[var(--color-usb-text)]">
+            <AlertTriangle className="mt-0.5 size-3.5 shrink-0" />
+            {usedUpPick
+              .map((iface) => networkVisual(iface.id, iface.kind, iface.displayName).name)
+              .join(' and ')}{' '}
+            {usedUpPick.length === 1 ? 'has' : 'have'} reached{' '}
+            {usedUpPick.length === 1 ? 'its' : 'their'} data limit. Choose another network for this
+            download.
+          </div>
+        )}
+        {interfaces.length > 0 && availableIds.length === 0 && (
+          <div className="flex items-start gap-2 text-[12px] leading-snug text-[var(--color-usb-text)]">
+            <AlertTriangle className="mt-0.5 size-3.5 shrink-0" />
+            Every network has reached its data limit. Raise one in Speed &amp; data limits.
           </div>
         )}
         {isSingleStreamOnly && selectedInterfaceIds.length === 1 && interfaces.length > 1 && (

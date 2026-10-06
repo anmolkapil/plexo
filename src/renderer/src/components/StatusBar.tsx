@@ -1,18 +1,63 @@
+import type { SpeedUnit } from '@shared/types'
 import { useEffect, useState } from 'react'
 import { useAppStore } from '../store/useAppStore'
-import { formatBytes, formatSpeed } from '../utils/format'
+import { formatBytes } from '../utils/format'
+import { useFormatSpeedLimit } from '../hooks/useFormatSpeed'
 import { ScreenFooter } from './ScreenFooter'
 import { ThemeToggle } from './ThemeToggle'
 import { Switch } from './ui/switch'
+import { ToggleGroup, ToggleGroupItem } from './ui/toggle-group'
+import { Tooltip, TooltipContent, TooltipTrigger } from './ui/tooltip'
 import { UpdateIndicator } from './UpdateIndicator'
 
 const FREE_SPACE_POLL_MS = 30_000
 
-/** Along the bottom of every screen: how fast everything is going and under what limit, the
- * queue, the slow mode switch, and the room left where downloads are saved. */
+/** MB/s or Mbps for every speed in the app; sits with the theme toggle as a view preference. */
+function SpeedUnitToggle(): React.JSX.Element {
+  const speedUnit = useAppStore((store) => store.speedUnit)
+  const setSpeedUnit = useAppStore((store) => store.setSpeedUnit)
+  return (
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <ToggleGroup
+            aria-label="Speed units"
+            value={[speedUnit]}
+            onValueChange={(values) => {
+              // Clicking the pressed one would unpress it; one unit is always on.
+              if (values[0] !== undefined) setSpeedUnit(values[0] as SpeedUnit)
+            }}
+            size="xs"
+            spacing={0.5}
+            className="h-[26px] rounded-[6px] border-[0.5px] border-border p-0.5 [-webkit-app-region:no-drag]"
+          >
+            {(['bytes', 'bits'] as const).map((unit) => (
+              <ToggleGroupItem
+                key={unit}
+                value={unit}
+                className="h-full rounded-[4px] px-1.5 font-mono text-[11px] font-medium text-muted-foreground aria-pressed:bg-background aria-pressed:text-foreground"
+              >
+                {unit === 'bytes' ? 'MB/s' : 'Mbps'}
+              </ToggleGroupItem>
+            ))}
+          </ToggleGroup>
+        }
+      />
+      <TooltipContent>Speed units</TooltipContent>
+    </Tooltip>
+  )
+}
+
+/** Along the bottom of every screen: the room left where downloads are saved, the queue, the
+ * slow mode switch, and view preferences. Speeds and their limits are left to the screens that
+ * show them — repeated down here they only doubled up, or read as a limit with no cause. */
 export function StatusBar(): React.JSX.Element {
-  const downloads = useAppStore((store) => store.downloads)
-  const speedLimit = useAppStore((store) => store.speedLimit)
+  const formatSpeedLimit = useFormatSpeedLimit()
+  // A count, not the downloads: progress ticks don't re-render the footer.
+  const waiting = useAppStore(
+    (store) =>
+      Object.values(store.downloads).filter((download) => download.status === 'queued').length
+  )
   const slowMode = useAppStore((store) => store.slowMode)
   const slowModeSpeed = useAppStore((store) => store.slowModeSpeed)
   const setSlowMode = useAppStore((store) => store.setSlowMode)
@@ -35,36 +80,32 @@ export function StatusBar(): React.JSX.Element {
     }
   }, [destinationDir])
 
-  let speed = 0
-  let waiting = 0
-  for (const download of Object.values(downloads)) {
-    if (download.status === 'downloading') speed += download.speedBytesPerSec
-    if (download.status === 'queued') waiting++
-  }
-  const limit = slowMode ? slowModeSpeed : speedLimit
+  // Limits show by the speeds they cap (the Downloading screen, the networks menu), not here.
+  const status = [
+    free !== null && `${formatBytes(free)} free`,
+    waiting > 0 && `${waiting} waiting`
+  ].filter(Boolean)
 
   return (
     <ScreenFooter className="gap-4 font-mono text-[11.5px] text-muted-foreground">
-      {/* At rest it says nothing: a zero speed or an empty queue only reads as broken. */}
-      {(speed > 0 || limit !== undefined) && (
-        <span className="tabular-nums">
-          {speed > 0 && (
-            <>
-              ↓ <span className="text-foreground">{formatSpeed(speed)}</span>
-            </>
-          )}
-          {limit !== undefined && `${speed > 0 ? ' · ' : ''}limit ${formatSpeed(limit)}`}
-        </span>
-      )}
-      {waiting > 0 && <span>{waiting} waiting in the queue</span>}
-      <div className="flex-1" />
-      <label className="flex items-center gap-2">
-        Slow mode
-        <Switch checked={slowMode} onCheckedChange={setSlowMode} />
-      </label>
-      {free !== null && <span>{formatBytes(free)} free</span>}
-      <UpdateIndicator />
-      <ThemeToggle />
+      <span className="min-w-0 flex-1 truncate tabular-nums">{status.join(' · ')}</span>
+      {/* Controls, most-flipped first: the edge holds the set-once view preferences. */}
+      <div className="flex shrink-0 items-center gap-3">
+        <UpdateIndicator />
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <label className="flex items-center gap-2">
+                Slow mode
+                <Switch checked={slowMode} onCheckedChange={setSlowMode} />
+              </label>
+            }
+          />
+          <TooltipContent>Limit downloads to {formatSpeedLimit(slowModeSpeed)}</TooltipContent>
+        </Tooltip>
+        <SpeedUnitToggle />
+        <ThemeToggle />
+      </div>
     </ScreenFooter>
   )
 }

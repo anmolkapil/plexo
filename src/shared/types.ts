@@ -292,8 +292,8 @@ export interface NetworkPreference {
   /** One of the app's curated swatch ids (see NETWORK_COLOR_SWATCHES) — not a raw hex, so every
    * swatch is guaranteed to have a legible on-solid text color already picked out for it. */
   colorId?: string
-  /** Left out of new downloads by default (see the title bar's networks). A download can still
-   * be started on it. */
+  /** Left out of the last download started, so New download starts without it too (it remembers
+   * the last pick, like the folder). A click there puts it back. */
   off?: boolean
   /** Bytes a second all downloads together may take over it. */
   speedLimit?: number
@@ -330,9 +330,17 @@ export interface AppSettings {
   /** While on, slowModeSpeed stands in for speedLimit: a one-click lower limit for calls. */
   slowMode?: boolean
   slowModeSpeed?: number
+  /** How speeds are shown everywhere; sizes stay in bytes either way. */
+  speedUnit?: SpeedUnit
 }
 
+/** bytes: MB/s. bits: Mbps, as internet plans and speed tests count them. */
+export type SpeedUnit = 'bytes' | 'bits'
+
 export const DOWNLOADS_AT_ONCE = { default: 2, min: 1, max: 8 }
+/** Seconds of speed history a download keeps (a sample a second), and so the span the throughput
+ * chart always shows. */
+export const SPEED_HISTORY_SECONDS = 60
 export const DEFAULT_SLOW_MODE_SPEED = 2 * 1024 ** 2
 
 /** Everything the renderer needs for its first paint, read synchronously by the preload so no
@@ -346,6 +354,7 @@ export interface InitialState {
   speedLimit?: number
   slowMode: boolean
   slowModeSpeed: number
+  speedUnit: SpeedUnit
   /** The last folder picked, if it still exists — otherwise the renderer uses downloadsDir. */
   destinationDir?: string
 }

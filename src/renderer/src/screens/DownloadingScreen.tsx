@@ -1,4 +1,4 @@
-import type { DownloadState } from '@shared/types'
+import { SPEED_HISTORY_SECONDS, type DownloadState } from '@shared/types'
 import { Folder } from 'lucide-react'
 import { memo, useEffect, useState } from 'react'
 import { BlockGrid } from '../components/BlockGrid'
@@ -25,14 +25,13 @@ import {
   formatBytes,
   formatEta,
   formatPercent,
-  formatSpeed,
   groupByNetwork,
   isFolder,
   networksInPlay,
-  splitFormattedBytes,
   toDisplayPath,
   wantedBytes
 } from '../utils/format'
+import { useFormatSpeed, useFormatSpeedLimit } from '../hooks/useFormatSpeed'
 
 /** Inline "·" separator between adjacent stats. `shrink` pins it at its natural width inside a
  * flex row that might otherwise squeeze it (footer rows), matching each call site's prior style. */
@@ -103,7 +102,12 @@ export const DownloadingScreen = memo(function DownloadingScreen({
 }: {
   download: DownloadState
 }): React.JSX.Element {
+  const formatSpeed = useFormatSpeed()
+  const formatSpeedLimit = useFormatSpeedLimit()
   const homeDir = useAppStore((store) => store.homeDir)
+  const speedLimit = useAppStore((store) => store.speedLimit)
+  const slowMode = useAppStore((store) => store.slowMode)
+  const slowModeSpeed = useAppStore((store) => store.slowModeSpeed)
   const speedHistory = download.speedHistory ?? {}
   const peakSpeedBytesPerSec = download.peakSpeedBytesPerSec
   const networkVisual = useNetworkVisuals()
@@ -161,7 +165,14 @@ export const DownloadingScreen = memo(function DownloadingScreen({
   }
 
   const effectiveSpeed = isPaused ? 0 : download.speedBytesPerSec
-  const speed = splitFormattedBytes(effectiveSpeed)
+  const [speedValue, speedUnit] = formatSpeed(effectiveSpeed).split(' ')
+  // The cap over every download, beside the speed it holds down — slow mode named, so a low
+  // number explains itself.
+  const speedCap = slowMode
+    ? ` · SLOW MODE ${formatSpeedLimit(slowModeSpeed)}`
+    : speedLimit !== undefined
+      ? ` · LIMIT ${formatSpeedLimit(speedLimit)}`
+      : ''
   // Every network is a row, for switching it on or off; the charts draw only those in play.
   const rows = groupByNetwork(download)
   const rowVisuals = rows.map((row) => networkVisual(row.id, row.kind, row.label))
@@ -209,9 +220,7 @@ export const DownloadingScreen = memo(function DownloadingScreen({
     ? { label: isQueued ? 'QUEUED' : 'PAUSED', palette: KIND_PALETTE.usb }
     : null
 
-  const throughputStatusLabel = isPaused
-    ? null
-    : `LAST ${Object.values(speedHistory)[0]?.length ?? 0}S`
+  const throughputStatusLabel = isPaused ? null : `LAST ${SPEED_HISTORY_SECONDS}S`
   const pauseResumeLabel = resuming ? 'Resuming…' : isPaused && !isQueued ? 'Resume' : 'Pause'
 
   return (
@@ -228,6 +237,8 @@ export const DownloadingScreen = memo(function DownloadingScreen({
       </DetailHeader>
       {/* Hero band — always visible under the header */}
       <HeroBand>
+        {/* At their designed size: a wider window opens a gap between the speed and the chart
+            (ml-auto) rather than stretching the merge into rails or the chart into a ribbon. */}
         <div className="flex items-center gap-[14px]">
           <CombineDiagram
             networks={groups.map((group, index) => ({
@@ -241,9 +252,9 @@ export const DownloadingScreen = memo(function DownloadingScreen({
           <div className="flex min-w-[130px] shrink-0 flex-col gap-[7px]">
             <>
               <BigStat
-                label="TOTAL SPEED"
-                value={isPaused ? '—' : speed.value}
-                unit={isPaused ? undefined : `${speed.unit}/s`}
+                label={`TOTAL SPEED${speedCap}`}
+                value={isPaused ? '—' : speedValue}
+                unit={isPaused ? undefined : speedUnit}
                 valueClass={isPaused ? 'text-muted-foreground' : 'text-foreground'}
               />
               <div className="flex items-center gap-2 font-mono text-[10px] leading-none font-medium tabular-nums text-muted-foreground">
@@ -281,7 +292,7 @@ export const DownloadingScreen = memo(function DownloadingScreen({
           </div>
 
           <div
-            className={`min-w-0 flex-1 transition-opacity duration-200 ${
+            className={`ml-auto min-w-0 max-w-[640px] flex-1 transition-opacity duration-200 ${
               isPaused ? 'opacity-45' : 'opacity-100'
             }`}
           >
@@ -291,9 +302,11 @@ export const DownloadingScreen = memo(function DownloadingScreen({
             <ThroughputChart
               order={groups.map((g, i) => ({
                 interfaceId: g.id,
-                solid: visuals[i].solid
+                solid: visuals[i].solid,
+                name: visuals[i].name
               }))}
               historyByInterface={speedHistory}
+              endsAt={isPaused ? 'pause' : 'now'}
             />
           </div>
         </div>

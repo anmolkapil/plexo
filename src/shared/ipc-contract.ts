@@ -15,7 +15,6 @@ import type {
  * is a compile error instead of a runtime one. */
 export interface IpcContract {
   listInterfaces: { args: []; result: NetworkInterfaceInfo[] }
-  pingInterfaces: { args: []; result: Record<string, number | null> }
   deviceBindingSupported: { args: []; result: boolean }
   openNetworkSettings: { args: []; result: void }
   updateSettings: { args: [patch: AppSettings]; result: void }
