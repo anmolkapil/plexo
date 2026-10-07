@@ -229,6 +229,23 @@ test.describe('stream count', () => {
     expect(tick(DISK_RECOVER_MS, 16, 0)).toEqual([{ kind: 'add', networkId: 'a', count: 16 }])
   })
 
+  test('the disk is judged for the whole download, and every network halves together', () => {
+    const controller = new ConcurrencyController(MAX)
+    const tick = (heldA: number, heldB: number): Action[] =>
+      controller.tick({
+        now: 0,
+        networks: [network('a', 8, { held: heldA }), network('b', 8, { held: heldB })],
+        spareWork: 0
+      })
+    // A fast network fills its writers and a slow one doesn't: that alone is not the disk.
+    for (let i = 0; i < 2 * DISK_PATIENCE_TICKS; i++) expect(tick(8, 0)).toEqual([])
+    for (let i = 1; i < DISK_PATIENCE_TICKS; i++) expect(tick(8, 2)).toEqual([])
+    expect(tick(8, 2)).toEqual([
+      { kind: 'retire', networkId: 'a', count: 4 },
+      { kind: 'retire', networkId: 'b', count: 4 }
+    ])
+  })
+
   test('the disk leaves a count the user picked alone', () => {
     const controller = new ConcurrencyController(4, false)
     for (let i = 0; i < 2 * DISK_PATIENCE_TICKS; i++)

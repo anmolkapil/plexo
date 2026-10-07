@@ -19,23 +19,26 @@
 //   link has expired or been denied. That is waited out or reported elsewhere (see finishFailed
 //   in downloadManager.ts), and the count stays. The network doesn't grow meanwhile.
 // - A disk that can't keep up holds each stream's reading until its writes catch up. Streams
-//   writing to scattered places are what slow a hard drive down, so once most of a network's
-//   streams have been held up for DISK_PATIENCE_TICKS in a row, it halves, and neither grows nor
-//   recovers while that lasts; each DISK_RECOVER_MS the disk keeps up, it may double again. A
-//   busy disk passes, and a server that caps each connection's speed needs its streams back
-//   quickly. Held only counts while writes are still landing: a disk that has stopped
+//   writing to scattered places are what slow a hard drive down, so once most of the download's
+//   streams have been held up for DISK_PATIENCE_TICKS in a row, every network halves, and none
+//   grows or recovers while that lasts; each DISK_RECOVER_MS the disk keeps up, each may double
+//   again. A busy disk passes, and a server that caps each connection's speed needs its streams
+//   back quickly. The disk is decided for the whole download, not per network: a stream only
+//   fills its writer when it receives fast, so a fast network would read as held and a slow one
+//   wouldn't, and the fast one alone would be cut while the slow one's streams kept writing all
+//   over the disk. Held only counts while writes are still landing: a disk that has stopped
 //   altogether (another program, a drive waking up) is waited out, as fewer streams wouldn't
-//   help it. A network the disk keeps up with is never held, so this costs nothing anywhere
+//   help it. A download the disk keeps up with is never held, so this costs nothing anywhere
 //   else. The user's own pick is kept, as it is for everything but refusals.
-// - Each network is decided on its own, so one that drops out or comes back never disturbs the
-//   others.
+// - Otherwise each network is decided on its own, so one that drops out or comes back never
+//   disturbs the others.
 //
 // No I/O and no clock of its own: it reads a snapshot, time included, and says what to do, so
 // every rule can be checked against exact situations.
 
 /** How long a lowered limit holds before it may rise by one. */
 export const RECOVER_MS = 60_000
-/** Snapshots in a row a network's streams must mostly wait on the disk before it halves. */
+/** Snapshots in a row the download's streams must mostly wait on the disk before they halve. */
 export const DISK_PATIENCE_TICKS = 2
 /** How long a limit the disk set holds before it may double. */
 export const DISK_RECOVER_MS = 10_000
@@ -50,7 +53,8 @@ export interface NetworkSnapshot {
   refused: number
   /** Its streams that received data since the last snapshot. */
   served: number
-  /** Its streams whose reading is held up for the disk right now, though their writes are landing. */
+  /** Its streams whose reading is held up for the disk right now, while the download's writes are
+   * landing. */
   held?: number
 }
 
@@ -68,8 +72,8 @@ export class ConcurrencyController {
   /** Networks a server has refused on: the most streams each may run for now, and when that was
    * last changed. */
   private readonly ceilings = new Map<string, { limit: number; since: number; byDisk?: boolean }>()
-  /** Networks whose streams mostly wait on the disk: for how many snapshots in a row. */
-  private readonly diskBound = new Map<string, number>()
+  /** For how many snapshots in a row most of the download's streams have waited on the disk. */
+  private diskBound = 0
 
   constructor(
     /** The most streams a network may run. */
@@ -82,18 +86,24 @@ export class ConcurrencyController {
     const actions: Action[] = []
     const { now } = snapshot
     let spare = snapshot.spareWork
+    let streamsNow = 0
+    let heldNow = 0
+    for (const network of snapshot.networks) {
+      streamsNow += network.streams
+      heldNow += network.held ?? 0
+    }
+    const held = this.grows && heldNow * 2 > streamsNow
+    this.diskBound = held ? this.diskBound + 1 : 0
+    const halve = this.diskBound >= DISK_PATIENCE_TICKS
+    if (halve) this.diskBound = 0
     for (const network of snapshot.networks) {
       const { id, streams } = network
       const refusedNow = network.refused > 0 && network.served > 0
       let entry = this.ceilings.get(id)
-      const held = this.grows && (network.held ?? 0) * 2 > streams
-      const heldFor = held ? (this.diskBound.get(id) ?? 0) + 1 : 0
-      this.diskBound.set(id, heldFor)
-      if (heldFor >= DISK_PATIENCE_TICKS && streams > 1) {
+      if (halve && streams > 1) {
         const limit = Math.min(Math.ceil(streams / 2), entry?.limit ?? Infinity)
         // A limit a server's refusal set recovers as a refusal's does.
         this.ceilings.set(id, (entry = { limit, since: now, byDisk: entry ? entry.byDisk : true }))
-        this.diskBound.set(id, 0)
       } else if (refusedNow) {
         const limit = Math.max(1, Math.min(streams - network.refused, entry?.limit ?? Infinity))
         this.ceilings.set(id, (entry = { limit, since: now }))
