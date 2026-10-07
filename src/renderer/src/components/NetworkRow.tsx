@@ -62,9 +62,15 @@ function ProgressBar({
         role="progressbar"
         aria-label={label}
         aria-valuenow={Math.round(percent)}
-        className="h-full rounded-full transition-[width] duration-200 ease-out"
-        style={{ width: `${percent}%`, background: color }}
-      />
+        className="h-full w-full"
+      >
+        {/* The indicator includes its empty track. Only its decorative fill changes width. */}
+        <div
+          aria-hidden="true"
+          className="h-full rounded-full transition-[width] duration-200 ease-out"
+          style={{ width: `${percent}%`, background: color }}
+        />
+      </div>
     </div>
   )
 }

@@ -82,18 +82,6 @@ test.describe('a torrent through the UI', () => {
       expect(numbers.length).toBeGreaterThan(0)
       expect(new Set(numbers).size).toBe(numbers.length)
       const networks = page.getByRole('table', { name: 'Networks' })
-      console.log(
-        JSON.stringify(
-          await networks.evaluate((table) => ({
-            grid: getComputedStyle(table).gridTemplateColumns,
-            width: table.getBoundingClientRect().width,
-            bars: [...table.querySelectorAll('[role="progressbar"]')].map((bar) => ({
-              rect: bar.getBoundingClientRect().toJSON(),
-              parent: bar.parentElement!.getBoundingClientRect().toJSON()
-            }))
-          }))
-        )
-      )
       await expect(networks.getByRole('columnheader', { name: 'Verified' })).toHaveCount(0)
       await expect(
         networks.getByRole('columnheader', { name: 'Progress', exact: true })
@@ -138,11 +126,16 @@ test.describe('UI journeys @smoke', () => {
     expect(minimum.minimum).toEqual([720, 620])
     expect(minimum.size).toEqual(minimum.minimum)
     const origin = await serve({ size: SIZE })
-    const reached = origin.hold(BLOCK)
+    const reached = origin.hold(0)
     await plexo.start(origin.url(), origin.sha256)
     await reached
     const page = plexo.page
     await page.getByRole('button', { name: 'Open test.bin', exact: true }).click()
+    // An empty bar is still a progress indicator: its track and accessible value must exist
+    // before the server sends the first byte.
+    const progress = page.getByRole('table', { name: 'Networks' }).getByRole('progressbar').first()
+    await expect(progress).toHaveAttribute('aria-valuenow', '0')
+    await expect(progress).toBeVisible()
     await expect(page.getByRole('button', { name: 'Pause', exact: true })).toBeInViewport({
       ratio: 1
     })
