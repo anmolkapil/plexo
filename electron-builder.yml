@@ -9,9 +9,10 @@ files:
   - '!electron.vite.config.{js,ts,mjs,cjs}'
   - '!{.eslintcache,eslint.config.mjs,.prettierignore,.prettierrc.yaml,dev-app-update.yml,CHANGELOG.md,README.md}'
   - '!{.env,.env.*,.npmrc,pnpm-lock.yaml}'
-  # koffi is only loaded on Linux (network/deviceBinding.ts) and ships prebuilds for every OS.
+  # koffi ships prebuilds for every OS; it's loaded on Linux (network/deviceBinding.ts) and on
+  # Windows (download/sparseFile.ts).
   - '!node_modules/koffi/{src,vendor,doc}/**'
-  - '!node_modules/koffi/build/koffi/!(linux_x64|linux_arm64)/**'
+  - '!node_modules/koffi/build/koffi/!(linux_x64|linux_arm64|win32_x64|win32_arm64)/**'
   # Plexo uses TCP peers only. simple-peer is patched to use browser globals instead of loading
   # the native WebRTC polyfill; don't ship unused host-platform binaries in cross-platform builds.
   - '!node_modules/node-datachannel/**'
