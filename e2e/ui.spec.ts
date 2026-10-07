@@ -82,6 +82,18 @@ test.describe('a torrent through the UI', () => {
       expect(numbers.length).toBeGreaterThan(0)
       expect(new Set(numbers).size).toBe(numbers.length)
       const networks = page.getByRole('table', { name: 'Networks' })
+      console.log(
+        JSON.stringify(
+          await networks.evaluate((table) => ({
+            grid: getComputedStyle(table).gridTemplateColumns,
+            width: table.getBoundingClientRect().width,
+            bars: [...table.querySelectorAll('[role="progressbar"]')].map((bar) => ({
+              rect: bar.getBoundingClientRect().toJSON(),
+              parent: bar.parentElement!.getBoundingClientRect().toJSON()
+            }))
+          }))
+        )
+      )
       await expect(networks.getByRole('columnheader', { name: 'Verified' })).toHaveCount(0)
       await expect(
         networks.getByRole('columnheader', { name: 'Progress', exact: true })
@@ -359,13 +371,16 @@ test.describe('no networks', () => {
 
   test('a network appearing makes the list ready for downloads @smoke', async ({ plexo }) => {
     await expect(plexo.page.getByText('No networks connected')).toBeVisible()
+    // A manual scan is safe while the list stays empty. Once an interface appears, the
+    // background monitor can remove this button before Playwright finishes clicking it.
+    await plexo.page.getByRole('button', { name: 'Scan again' }).click()
+    await expect(plexo.page.getByText('No networks connected')).toBeVisible()
     await plexo.evaluateMain(
       (_electron, value) => {
         process.env['PLEXO_E2E_INTERFACES'] = value
       },
       interfacesEnv({ a: NETWORKS['a'] })
     )
-    await plexo.page.getByRole('button', { name: 'Scan again' }).click()
     await expect(plexo.page.getByText('No downloads yet')).toBeVisible()
   })
 })
