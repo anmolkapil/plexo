@@ -18,6 +18,15 @@
 // - A server that refuses while sending nothing isn't limiting connections: it is busy, or the
 //   link has expired or been denied. That is waited out or reported elsewhere (see finishFailed
 //   in downloadManager.ts), and the count stays. The network doesn't grow meanwhile.
+// - A disk that can't keep up holds each stream's reading until its writes catch up. Streams
+//   writing to scattered places are what slow a hard drive down, so once most of a network's
+//   streams have been held up for DISK_PATIENCE_TICKS in a row, it halves, and neither grows nor
+//   recovers while that lasts; each DISK_RECOVER_MS the disk keeps up, it may double again. A
+//   busy disk passes, and a server that caps each connection's speed needs its streams back
+//   quickly. Held only counts while writes are still landing: a disk that has stopped
+//   altogether (another program, a drive waking up) is waited out, as fewer streams wouldn't
+//   help it. A network the disk keeps up with is never held, so this costs nothing anywhere
+//   else. The user's own pick is kept, as it is for everything but refusals.
 // - Each network is decided on its own, so one that drops out or comes back never disturbs the
 //   others.
 //
@@ -26,6 +35,10 @@
 
 /** How long a lowered limit holds before it may rise by one. */
 export const RECOVER_MS = 60_000
+/** Snapshots in a row a network's streams must mostly wait on the disk before it halves. */
+export const DISK_PATIENCE_TICKS = 2
+/** How long a limit the disk set holds before it may double. */
+export const DISK_RECOVER_MS = 10_000
 
 export interface NetworkSnapshot {
   id: string
@@ -37,6 +50,8 @@ export interface NetworkSnapshot {
   refused: number
   /** Its streams that received data since the last snapshot. */
   served: number
+  /** Its streams whose reading is held up for the disk right now, though their writes are landing. */
+  held?: number
 }
 
 export interface Snapshot {
@@ -52,7 +67,9 @@ export type Action = { kind: 'add' | 'retire'; networkId: string; count: number 
 export class ConcurrencyController {
   /** Networks a server has refused on: the most streams each may run for now, and when that was
    * last changed. */
-  private readonly ceilings = new Map<string, { limit: number; since: number }>()
+  private readonly ceilings = new Map<string, { limit: number; since: number; byDisk?: boolean }>()
+  /** Networks whose streams mostly wait on the disk: for how many snapshots in a row. */
+  private readonly diskBound = new Map<string, number>()
 
   constructor(
     /** The most streams a network may run. */
@@ -69,11 +86,24 @@ export class ConcurrencyController {
       const { id, streams } = network
       const refusedNow = network.refused > 0 && network.served > 0
       let entry = this.ceilings.get(id)
-      if (refusedNow) {
+      const held = this.grows && (network.held ?? 0) * 2 > streams
+      const heldFor = held ? (this.diskBound.get(id) ?? 0) + 1 : 0
+      this.diskBound.set(id, heldFor)
+      if (heldFor >= DISK_PATIENCE_TICKS && streams > 1) {
+        const limit = Math.min(Math.ceil(streams / 2), entry?.limit ?? Infinity)
+        // A limit a server's refusal set recovers as a refusal's does.
+        this.ceilings.set(id, (entry = { limit, since: now, byDisk: entry ? entry.byDisk : true }))
+        this.diskBound.set(id, 0)
+      } else if (refusedNow) {
         const limit = Math.max(1, Math.min(streams - network.refused, entry?.limit ?? Infinity))
         this.ceilings.set(id, (entry = { limit, since: now }))
-      } else if (entry && network.refused === 0 && now - entry.since >= RECOVER_MS) {
-        entry.limit++
+      } else if (
+        entry &&
+        network.refused === 0 &&
+        !held &&
+        now - entry.since >= (entry.byDisk ? DISK_RECOVER_MS : RECOVER_MS)
+      ) {
+        entry.limit = entry.byDisk ? entry.limit * 2 : entry.limit + 1
         entry.since = now
         if (entry.limit >= this.maxPerNetwork) {
           this.ceilings.delete(id)
@@ -86,7 +116,7 @@ export class ConcurrencyController {
         continue
       }
       // Not while the server is turning requests away.
-      if (network.refused > 0 || streams === 0 || network.answered < streams) continue
+      if (network.refused > 0 || held || streams === 0 || network.answered < streams) continue
       const count = Math.min(this.grows ? streams : Infinity, ceiling - streams, spare)
       if (count < 1) continue
       spare -= count

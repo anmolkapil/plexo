@@ -72,6 +72,7 @@ interface RuntimeFields {
   publishing: boolean
   pushScheduled: boolean
   persistenceTimer?: NodeJS.Timeout
+  checkpointPending?: boolean
   persistenceChain: Promise<void>
   removed: boolean
   /** Updates sent to the window so far (see DownloadUpdate). */
@@ -1634,10 +1635,14 @@ export class DownloadManager {
   }
 
   private schedulePersistence(runtime: DownloadRuntime): void {
-    if (this.suspending || runtime.removed || runtime.persistenceTimer) return
+    if (this.suspending || runtime.removed || runtime.persistenceTimer || runtime.checkpointPending)
+      return
     runtime.persistenceTimer = setTimeout(() => {
       runtime.persistenceTimer = undefined
-      void this.persistNow(runtime)
+      runtime.checkpointPending = true
+      void this.persistNow(runtime).finally(() => {
+        runtime.checkpointPending = false
+      })
     }, CHECKPOINT_INTERVAL_MS)
   }
 

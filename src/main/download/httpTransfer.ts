@@ -46,6 +46,7 @@ interface Attempt {
   /** Bytes the network has delivered, independently of disk backpressure. */
   networkReceived: number
   lastNetworkAt: number
+  writeWaiting: boolean
   /** When the request was sent. */
   startedAt: number
   /** The network previously credited for this block's prefix. */
@@ -100,6 +101,8 @@ interface ChunkRuntime {
    * limit is judged by (see concurrency.ts). */
   refused: boolean
   served: boolean
+  /** Whether any of its writes landed since the last tick. */
+  wrote: boolean
   /** Stopped for good, and to leave the list once its worker has (see retireStreams). */
   retiring: boolean
 }
@@ -315,6 +318,7 @@ export class HttpTransfer implements Transfer {
     for (const self of this.chunkRuntimes.values()) {
       self.refused = false
       self.served = false
+      self.wrote = false
     }
   }
 
@@ -435,6 +439,11 @@ export class HttpTransfer implements Transfer {
       const attempt = self?.attempt
       if (!self || !attempt || attempt.abortReason) continue
 
+      // A paused reader or final flush says nothing about the connection's health.
+      if (attempt.writeWaiting) {
+        self.slowSince = null
+        continue
+      }
       const silent = this.isSilent(attempt, now)
       // A refresh isn't a failure, so no failed request would say that the network can't get
       // through; a connection gone silent with the rest of its network says it instead, as soon
@@ -544,6 +553,7 @@ export class HttpTransfer implements Transfer {
       received: 0,
       networkReceived: 0,
       lastNetworkAt: 0,
+      writeWaiting: false,
       startedAt: Date.now(),
       // Whoever held this block before now is the one whose tail bytes a truncation would
       // discard — captured before the lease overwrites the field.
@@ -625,6 +635,7 @@ export class HttpTransfer implements Transfer {
         acceptedVersions: this.acceptedVersions,
         onResponse: (info) => (attempt.response = info),
         throttle: (bytes) => this.host.limits.take(attempt.networkId, bytes),
+        onWriteWait: (waiting) => (attempt.writeWaiting = waiting),
         onNetworkProgress: (bytesThisRun) => {
           const delta = bytesThisRun - attempt.networkReceived
           if (delta > 0) {
@@ -637,6 +648,7 @@ export class HttpTransfer implements Transfer {
           const delta = bytesThisRun - attempt.received
           if (delta > 0) {
             attempt.received = bytesThisRun
+            self.wrote = true
             this.onAttemptProgress(chunk, attempt)
           }
         }
@@ -918,19 +930,23 @@ export class HttpTransfer implements Transfer {
 
   private concurrencySnapshot(): Snapshot {
     const inUse = this.runtime.state.networks.filter((network) => network.status === 'on')
+    // Held only counts while the disk is still taking this download's writes (see concurrency.ts).
+    const landing = [...this.chunkRuntimes.values()].some((self) => self.wrote)
     const networks = inUse.map(({ id }) => {
       let streams = 0
       let answered = 0
       let refused = 0
       let served = 0
+      let held = 0
       for (const chunk of this.liveStreams(id)) {
         const self = this.chunkRuntimes.get(chunk.id)
         streams++
         if (self && self.receivedBytes > 0) answered++
         if (self?.refused) refused++
         if (self?.served) served++
+        if (landing && self?.attempt?.writeWaiting) held++
       }
-      return { id, streams, answered, refused, served }
+      return { id, streams, answered, refused, served, held }
     })
     // A new stream takes a waiting block the moment it starts.
     const waiting = this.runtime.blocks.filter((block) => block.status === 'pending').length
@@ -1005,6 +1021,7 @@ export class HttpTransfer implements Transfer {
       busySince: null,
       refused: false,
       served: false,
+      wrote: false,
       retiring: false
     }
     this.chunkRuntimes.set(chunk.id, self)

@@ -2,14 +2,22 @@ import { createWriteStream, type WriteStream } from 'node:fs'
 import { lstat, open, rename, rm, stat } from 'node:fs/promises'
 import { basename, dirname, extname, join } from 'node:path'
 
+const WRITE_BUFFER_BYTES = 1024 * 1024
+
 /** The only large file owned by a download. It lives beside the final file so publishing it
  * requires no copy and never needs a second file's worth of disk space. */
 export class DownloadFile {
   constructor(readonly path: string) {}
 
-  /** Every writer has its own descriptor and explicit offset. Never use append mode here. */
+  /** Every writer has its own descriptor and explicit offset. Never use append mode here.
+   * While a write is on its way to disk the next ones queue, up to WRITE_BUFFER_BYTES, and go
+   * down together in one writev: a disk that falls behind gets fewer, larger writes. */
   writer(position: number): WriteStream {
-    return createWriteStream(this.path, { flags: 'r+', start: position })
+    return createWriteStream(this.path, {
+      flags: 'r+',
+      start: position,
+      highWaterMark: WRITE_BUFFER_BYTES
+    })
   }
 
   async read(position: number, length: number): Promise<Buffer> {

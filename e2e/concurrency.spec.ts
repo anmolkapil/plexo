@@ -1,6 +1,8 @@
 import { expect, test } from '@playwright/test'
 import {
   ConcurrencyController,
+  DISK_PATIENCE_TICKS,
+  DISK_RECOVER_MS,
   RECOVER_MS,
   type Action,
   type NetworkSnapshot
@@ -213,5 +215,25 @@ test.describe('stream count', () => {
     expect(
       controller.tick({ now: 2 * RECOVER_MS, networks: [network('a', 4)], spareWork: 1000 })
     ).toEqual([])
+  })
+
+  test('a disk that holds most streams up halves them, and they double back once it keeps up', () => {
+    const controller = new ConcurrencyController(MAX)
+    const tick = (now: number, streams: number, held: number): Action[] =>
+      controller.tick({ now, networks: [network('a', streams, { held })], spareWork: 1000 })
+    // Not before it has lasted, and no growth meanwhile.
+    for (let i = 1; i < DISK_PATIENCE_TICKS; i++) expect(tick(0, 32, 20)).toEqual([])
+    expect(tick(0, 32, 20)).toEqual([{ kind: 'retire', networkId: 'a', count: 16 }])
+    // Half held is not most.
+    for (let i = 0; i < 2 * DISK_PATIENCE_TICKS; i++) expect(tick(1, 16, 8)).toEqual([])
+    expect(tick(DISK_RECOVER_MS, 16, 0)).toEqual([{ kind: 'add', networkId: 'a', count: 16 }])
+  })
+
+  test('the disk leaves a count the user picked alone', () => {
+    const controller = new ConcurrencyController(4, false)
+    for (let i = 0; i < 2 * DISK_PATIENCE_TICKS; i++)
+      expect(
+        controller.tick({ now: 0, networks: [network('a', 4, { held: 4 })], spareWork: 1000 })
+      ).toEqual([])
   })
 })
