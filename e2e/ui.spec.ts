@@ -303,7 +303,7 @@ test.describe('settings @smoke', () => {
         await expect(page().getByRole('alertdialog')).toBeHidden()
         await expect(page().getByRole('button', { name: labelAfterSwitch })).toBeVisible()
         await plexo.newDownload()
-        await expect(destinationRow()).toHaveText(chosenDestination)
+        await expect(destinationRow()).toHaveText(chosenDestination, { useInnerText: true })
         // Presentation may abbreviate home; persistence must retain the usable absolute path.
         const saved = JSON.parse(await readFile(join(dirs.userData, 'app-settings.json'), 'utf8'))
         expect(saved.destinationDir).toBe(dirs.dest)
