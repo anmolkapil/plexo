@@ -269,7 +269,7 @@ export const DownloadingScreen = memo(function DownloadingScreen({
                         render={
                           <span
                             role="img"
-                            aria-label="Limited by disk"
+                            aria-label="Slow drive"
                             className="inline-flex text-[var(--swatch-amber)]"
                           >
                             <AlertTriangle aria-hidden className="size-3" />
@@ -277,9 +277,7 @@ export const DownloadingScreen = memo(function DownloadingScreen({
                         }
                       />
                       <TooltipContent>
-                        Limited by disk: it can&apos;t save as fast as the network delivers. Plexo
-                        uses fewer connections until it catches up. A faster drive, such as an SSD,
-                        would download faster.
+                        Your drive can’t save any faster, so this download is going slower.
                       </TooltipContent>
                     </Tooltip>
                   )
