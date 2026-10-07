@@ -91,3 +91,8 @@ jobs:
         run: npx playwright test e2e/torrentNative.spec.ts
         env:
           PLEXO_E2E_SKIP_BUILD: '1'
+
+      - name: Check sparse staging files
+        run: npx playwright test e2e/sparseFile.spec.ts
+        env:
+          PLEXO_E2E_SKIP_BUILD: '1'

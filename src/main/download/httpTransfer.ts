@@ -8,7 +8,14 @@ import type {
 } from '../../shared/types'
 import { testKnobs, testStreamsPerNetwork } from '../testKnobs'
 import { advanceBlock, retractBlock } from './blockProgress'
-import { ConcurrencyController, type Action, type Snapshot } from './concurrency'
+import {
+  ConcurrencyController,
+  DISK_PATIENCE_MS,
+  DISK_RECOVER_MS,
+  DiskWatch,
+  type Action,
+  type Snapshot
+} from './concurrency'
 import { downloadChunk, fetchRange, HttpStatusError, RemoteChangedError } from './chunkDownloader'
 import { compareVersion, type FileVersion } from './fileVersion'
 import { interleave, MAX_STREAMS_PER_NETWORK, startingStreams } from './plan'
@@ -46,6 +53,7 @@ interface Attempt {
   /** Bytes the network has delivered, independently of disk backpressure. */
   networkReceived: number
   lastNetworkAt: number
+  writeWaiting: boolean
   /** When the request was sent. */
   startedAt: number
   /** The network previously credited for this block's prefix. */
@@ -241,6 +249,8 @@ export class HttpTransfer implements Transfer {
   /** Decides how many streams each network runs; kept for the whole download, so a pause and
    * resume doesn't forget what it has found out. */
   private concurrency: ConcurrencyController | null
+  /** Whether the disk is what holds the download back, for Auto, the user and hedges. */
+  private readonly disk = new DiskWatch()
 
   constructor(
     private readonly runtime: HttpTransferTarget,
@@ -289,7 +299,10 @@ export class HttpTransfer implements Transfer {
         : network.status === 'unreachable'
           ? 1
           : joining.includes(network)
-            ? Math.max(live.length, starting)
+            ? Math.max(
+                live.length,
+                Math.min(starting, this.concurrency?.limit(network.id) ?? starting)
+              )
             : live.length
       if (joining.includes(network)) this.trafficOf(network.id).aliveAt = now
       if (live.length > target) this.retireStreams(network.id, live.length - target)
@@ -310,12 +323,30 @@ export class HttpTransfer implements Transfer {
   tick(now: number): void {
     this.refreshStuckConnections(now)
     this.host.reconcile()
-    this.adjustStreams(this.concurrency?.tick(this.concurrencySnapshot()))
+    // Taken with or without Auto: it also judges the disk, which the user is told about either way.
+    const snapshot = this.concurrencySnapshot(now)
+    this.adjustStreams(this.concurrency?.tick(snapshot))
     // Each refusal is counted once.
     for (const self of this.chunkRuntimes.values()) {
       self.refused = false
       self.served = false
     }
+  }
+
+  /** Looks at whether the disk is what holds the download back, and tells the user: as soon as
+   * Auto would act on it, and until the disk has kept up for as long as Auto waits to add streams
+   * back. Whatever the stream count, Auto or picked. */
+  private noteDisk(now: number, writing: number, held: number): void {
+    this.disk.sample(now, writing, held)
+    // Nothing writing, nothing for the disk to hold back: a download waiting on its networks
+    // isn't blamed on the drive.
+    const limited =
+      writing > 0 &&
+      (this.disk.lasted('behind', now) >= DISK_PATIENCE_MS ||
+        (!!this.runtime.state.diskLimited && this.disk.lasted('keeping-up', now) < DISK_RECOVER_MS))
+    if (limited === !!this.runtime.state.diskLimited) return
+    this.runtime.state.diskLimited = limited || undefined
+    this.host.scheduleUpdate()
   }
 
   running(): Iterable<Promise<void>> {
@@ -329,6 +360,7 @@ export class HttpTransfer implements Transfer {
   reset(): void {
     this.avoidNetworkByBlock.clear()
     this.reconciled.clear()
+    this.disk.reset()
   }
 
   systemResumed(now: number): void {
@@ -435,6 +467,12 @@ export class HttpTransfer implements Transfer {
       const attempt = self?.attempt
       if (!self || !attempt || attempt.abortReason) continue
 
+      // A paused reader or final flush says nothing about the connection's health: the disk set
+      // its pace. A crawling connection never fills its writer, so this never hides one.
+      if (attempt.writeWaiting) {
+        self.slowSince = null
+        continue
+      }
       const silent = this.isSilent(attempt, now)
       // A refresh isn't a failure, so no failed request would say that the network can't get
       // through; a connection gone silent with the rest of its network says it instead, as soon
@@ -544,6 +582,7 @@ export class HttpTransfer implements Transfer {
       received: 0,
       networkReceived: 0,
       lastNetworkAt: 0,
+      writeWaiting: false,
       startedAt: Date.now(),
       // Whoever held this block before now is the one whose tail bytes a truncation would
       // discard — captured before the lease overwrites the field.
@@ -625,6 +664,7 @@ export class HttpTransfer implements Transfer {
         acceptedVersions: this.acceptedVersions,
         onResponse: (info) => (attempt.response = info),
         throttle: (bytes) => this.host.limits.take(attempt.networkId, bytes),
+        onWriteWait: (waiting) => (attempt.writeWaiting = waiting),
         onNetworkProgress: (bytesThisRun) => {
           const delta = bytesThisRun - attempt.networkReceived
           if (delta > 0) {
@@ -637,6 +677,7 @@ export class HttpTransfer implements Transfer {
           const delta = bytesThisRun - attempt.received
           if (delta > 0) {
             attempt.received = bytesThisRun
+            this.disk.landed(Date.now())
             this.onAttemptProgress(chunk, attempt)
           }
         }
@@ -916,8 +957,12 @@ export class HttpTransfer implements Transfer {
     this.goIdle(chunk)
   }
 
-  private concurrencySnapshot(): Snapshot {
+  /** One look at the download's streams: what concurrency.ts sizes them by, and what the disk is
+   * judged by (see noteDisk). */
+  private concurrencySnapshot(now: number): Snapshot {
     const inUse = this.runtime.state.networks.filter((network) => network.status === 'on')
+    let writing = 0
+    let held = 0
     const networks = inUse.map(({ id }) => {
       let streams = 0
       let answered = 0
@@ -929,12 +974,16 @@ export class HttpTransfer implements Transfer {
         if (self && self.receivedBytes > 0) answered++
         if (self?.refused) refused++
         if (self?.served) served++
+        if (self?.attempt) writing++
+        if (self?.attempt?.writeWaiting) held++
       }
       return { id, streams, answered, refused, served }
     })
+    this.noteDisk(now, writing, held)
     // A new stream takes a waiting block the moment it starts.
     const waiting = this.runtime.blocks.filter((block) => block.status === 'pending').length
-    return { now: Date.now(), networks, spareWork: waiting }
+    const { reading, since } = this.disk
+    return { now, networks, spareWork: waiting, disk: { reading, since } }
   }
 
   /** New streams on `networkId`, put on the download's list for the caller to start. */
@@ -1031,7 +1080,8 @@ export class HttpTransfer implements Transfer {
             streams: this.runtime.state.streams,
             attempts: this.attempts,
             avoid: this.avoidNetworkByBlock,
-            hedgesUsed: this.hedgesByBlock
+            hedgesUsed: this.hedgesByBlock,
+            diskBehind: this.disk.reading === 'behind'
           },
           {
             id: chunk.id,

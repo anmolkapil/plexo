@@ -167,6 +167,11 @@ test.describe('scheduler: racing a slow block', () => {
     expect(pick(laggard(0), 1, 'a')).toBe('hedge:0')
   })
 
+  test('…but one quiet because its writer is full is as slow as the disk, so it is left alone', () => {
+    const held = { ...attempt(0, 'a'), writeWaiting: true }
+    expect(pick(laggard(0, { attempts: [[0, [held]]] }), 1, 'a')).toBeUndefined()
+  })
+
   test('a holder about to finish is left alone', () => {
     // 800 bytes left at 1000 B/s: 0.8 s.
     expect(pick(laggard(1000), 1, 'a')).toBeUndefined()
@@ -357,4 +362,14 @@ test.describe('scheduler: racing a slow block', () => {
       )
     )
   })
+})
+
+test('no racing while the disk is behind, and racing resumes once it keeps up', () => {
+  const s = state({
+    blocks: [block(0, 'downloading')],
+    streams: [stream(0, 'a', 'downloading'), stream(1, 'b', 'pending')],
+    attempts: [[0, [attempt(0, 'a')]]]
+  })
+  expect(pick({ ...s, diskBehind: true }, 1, 'b')).toBeUndefined()
+  expect(pick(s, 1, 'b')).toBe('hedge:0')
 })

@@ -17,6 +17,8 @@ export interface ChunkDownloadOptions {
   onNetworkProgress: (bytesReceivedThisRun: number) => void
   /** Bytes accepted by the destination writer; safe to include in resumable progress. */
   onProgress: (bytesDownloadedThisRun: number) => void
+  /** Whether delivered bytes wait on the disk: its writer is full, or writing the last bytes. */
+  onWriteWait?: (waiting: boolean) => void
   signal: AbortSignal
   /** The version the download started on, plus any confirmed to serve identical bytes. */
   acceptedVersions: FileVersion[]
@@ -132,7 +134,8 @@ export function downloadChunk(options: ChunkDownloadOptions): Promise<void> {
     signal,
     acceptedVersions,
     onResponse,
-    throttle
+    throttle,
+    onWriteWait
   } = options
 
   return new Promise((resolve, reject) => {
@@ -179,10 +182,15 @@ export function downloadChunk(options: ChunkDownloadOptions): Promise<void> {
         // download, or a chunk that retries a few times, leaks one per
         // attempt until the process hits its open-file limit), and its
         // buffered writes would otherwise land after a retry has started.
+        // It is closed by writing out what it holds, unless writing is what
+        // failed: every buffered byte was checked against the range before it
+        // was queued, so it counts like any other, and whoever takes the block
+        // next resumes after it instead of fetching it again.
         const stream = currentFileStream
         if (stream && !stream.closed) {
           stream.once('close', () => reject(error))
-          stream.destroy()
+          if (stream.errored) stream.destroy()
+          else stream.end()
         } else {
           reject(error)
         }
@@ -290,6 +298,7 @@ export function downloadChunk(options: ChunkDownloadOptions): Promise<void> {
           // once neither holds it. Neither says anything about the network: the watchdog stops
           // until then.
           let holds = 0
+          let bodyEnded = false
           const hold = (): void => {
             if (holds++ === 0) {
               clearWatchdog()
@@ -297,7 +306,7 @@ export function downloadChunk(options: ChunkDownloadOptions): Promise<void> {
             }
           }
           const release = (): void => {
-            if (--holds > 0 || settled) return
+            if (--holds > 0 || settled || bodyEnded) return
             resetWatchdog()
             res.resume()
           }
@@ -318,13 +327,19 @@ export function downloadChunk(options: ChunkDownloadOptions): Promise<void> {
               const progress = bytesDownloaded
               onNetworkProgress(progress)
               if (
+                // Every write's callback comes before the writer closes, and this only
+                // settles once it has, stopped or not.
                 !fileStream.write(usable, (error) => {
                   if (error) fail(error)
-                  else if (!settled) onProgress(progress)
+                  else onProgress(progress)
                 })
               ) {
+                onWriteWait?.(true)
                 hold()
-                fileStream.once('drain', release)
+                fileStream.once('drain', () => {
+                  onWriteWait?.(bodyEnded)
+                  release()
+                })
               }
               const wait = throttle?.(usable.length) ?? 0
               if (wait > 0) {
@@ -349,6 +364,11 @@ export function downloadChunk(options: ChunkDownloadOptions): Promise<void> {
               )
               return
             }
+            bodyEnded = true
+            // Held until its last bytes are written; closing the file isn't the disk falling
+            // behind.
+            onWriteWait?.(true)
+            fileStream.once('finish', () => onWriteWait?.(false))
             // Windows cannot reliably reopen/remove a file until its handle closes.
             fileStream.once('close', () => finish(resolve))
             fileStream.end()

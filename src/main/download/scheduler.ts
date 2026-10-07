@@ -19,6 +19,9 @@ export interface AttemptView {
   networkId: string
   /** When its request was sent. */
   startedAt: number
+  /** The reader is paused for writes or its body ended and the writer is flushing: the disk, not
+   * the connection, sets its pace. */
+  writeWaiting?: boolean
 }
 
 export interface SchedulerState {
@@ -30,6 +33,8 @@ export interface SchedulerState {
   avoid: ReadonlyMap<number, string>
   /** How many hedges each block has had so far. */
   hedgesUsed: ReadonlyMap<number, number>
+  /** The disk can't keep up (see DiskWatch in concurrency.ts): a hedge would only add writes. */
+  diskBehind?: boolean
 }
 
 export interface SchedulerPolicy {
@@ -81,8 +86,8 @@ function nextHedgeTarget(
   now: number,
   policy: SchedulerPolicy
 ): HttpBlockState | undefined {
-  // Only when everything left is already being fetched.
-  if (state.blocks.some((block) => block.status === 'pending')) return undefined
+  // Only when everything left is already being fetched, and the disk has room for more writes.
+  if (state.diskBehind || state.blocks.some((block) => block.status === 'pending')) return undefined
 
   const speedOf = (streamId: number): number =>
     state.streams.find((stream) => stream.id === streamId)?.speedBytesPerSec ?? 0
@@ -101,6 +106,8 @@ function nextHedgeTarget(
     if (state.avoid.get(index) === who.networkId) continue
     // Speeds only mean something once every attempt has been going a while.
     if (attempts.some((attempt) => now - attempt.startedAt < policy.hedgeAfterMs)) continue
+    // A holder waiting on its writer is as slow as the disk, which another attempt can't beat.
+    if (attempts.some((attempt) => attempt.writeWaiting)) continue
 
     const remaining = block.rangeEnd - block.rangeStart + 1 - block.bytesDownloaded
     if (remaining <= 0) continue

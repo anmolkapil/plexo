@@ -1,6 +1,7 @@
 import { app } from 'electron'
 import { lstat, mkdir, open, rm, stat } from 'node:fs/promises'
 import { basename, extname, join } from 'node:path'
+import { markSparse } from './sparseFile'
 
 export function getDefaultDownloadsDir(): string {
   return app.getPath('downloads')
@@ -96,7 +97,10 @@ export async function reserveDestinationPath(directory: string, fileName: string
     async (candidate) => {
       const handle = await open(`${candidate}.plexo`, 'wx+')
       await handle.close()
-      if (!(await pathExists(candidate))) return true
+      if (!(await pathExists(candidate))) {
+        await markSparse(`${candidate}.plexo`)
+        return true
+      }
       await rm(`${candidate}.plexo`)
       return false
     }
