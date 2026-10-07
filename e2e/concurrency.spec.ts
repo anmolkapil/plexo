@@ -3,6 +3,7 @@ import {
   ConcurrencyController,
   DISK_PATIENCE_MS,
   DISK_RECOVER_MS,
+  DISK_STALLED_MS,
   DiskWatch,
   RECOVER_MS,
   type Action,
@@ -252,6 +253,34 @@ test.describe('stream count', () => {
     expect(counts.at(-1)).toBe(32)
   })
 
+  test('keeping up below the cap says nothing about it, so the cap stays', () => {
+    const controller = new ConcurrencyController(MAX)
+    const tick = (now: number, streams: number, spareWork: number): Action[] =>
+      controller.tick({
+        now,
+        networks: [network('a', streams)],
+        spareWork,
+        disk:
+          now <= DISK_PATIENCE_MS
+            ? { reading: 'behind', since: 0 }
+            : { reading: 'keeping-up', since: DISK_PATIENCE_MS }
+      })
+    expect(tick(DISK_PATIENCE_MS, 32, 1000)).toEqual([
+      { kind: 'retire', networkId: 'a', count: 16 }
+    ])
+    // Few blocks left to fetch keep it at 3 while the disk keeps up; then more are waiting.
+    expect(tick(DISK_PATIENCE_MS + DISK_RECOVER_MS, 3, 0)).toEqual([])
+    expect(tick(DISK_PATIENCE_MS + DISK_RECOVER_MS + 1, 6, 1000)).toEqual([
+      { kind: 'add', networkId: 'a', count: 6 }
+    ])
+    // Back at the cap, it has to keep up there before the cap rises.
+    const back = DISK_PATIENCE_MS + DISK_RECOVER_MS + 2
+    expect(tick(back, 16, 1000)).toEqual([])
+    expect(tick(back + DISK_RECOVER_MS, 16, 1000)).toEqual([
+      { kind: 'add', networkId: 'a', count: 16 }
+    ])
+  })
+
   test('a disk cut leaves a server ceiling, and its pace, alone', () => {
     const counts = run(
       new ConcurrencyController(MAX),
@@ -312,15 +341,17 @@ test.describe('stream count', () => {
 test.describe('disk watch', () => {
   test('reads the download as a whole, by the clock', () => {
     const watch = new DiskWatch()
-    watch.sample(0, 8, 5, 0)
+    watch.landed(0)
+    watch.sample(0, 8, 5)
     expect(watch.reading).toBe('behind')
-    watch.sample(400, 8, 6, 0)
+    watch.sample(400, 8, 6)
     expect(watch.lasted('behind', 400)).toBe(400)
     // Held, but nothing has landed for a while: a stalled disk isn't judged.
-    watch.sample(DISK_PATIENCE_MS, 8, 8, 0)
+    watch.sample(DISK_STALLED_MS, 8, 8)
     expect(watch.reading).toBe('unknown')
     // Half held is not most.
-    watch.sample(2_000, 8, 4, 2_000)
+    watch.landed(2_000)
+    watch.sample(2_000, 8, 4)
     expect(watch.reading).toBe('keeping-up')
     expect(watch.lasted('behind', 2_000)).toBe(0)
   })
@@ -341,7 +372,8 @@ function run(
   const watch = new DiskWatch()
   const counts: number[] = []
   for (let now = 0; now <= ms; now += LOOK_MS) {
-    watch.sample(now, streams, behind(streams, now) ? streams : 0, now)
+    watch.landed(now)
+    watch.sample(now, streams, behind(streams, now) ? streams : 0)
     const refusedNow = refused(now)
     const actions = controller.tick({
       now,

@@ -182,10 +182,15 @@ export function downloadChunk(options: ChunkDownloadOptions): Promise<void> {
         // download, or a chunk that retries a few times, leaks one per
         // attempt until the process hits its open-file limit), and its
         // buffered writes would otherwise land after a retry has started.
+        // It is closed by writing out what it holds, unless writing is what
+        // failed: every buffered byte was checked against the range before it
+        // was queued, so it counts like any other, and whoever takes the block
+        // next resumes after it instead of fetching it again.
         const stream = currentFileStream
         if (stream && !stream.closed) {
           stream.once('close', () => reject(error))
-          stream.destroy()
+          if (stream.errored) stream.destroy()
+          else stream.end()
         } else {
           reject(error)
         }
@@ -322,9 +327,11 @@ export function downloadChunk(options: ChunkDownloadOptions): Promise<void> {
               const progress = bytesDownloaded
               onNetworkProgress(progress)
               if (
+                // Every write's callback comes before the writer closes, and this only
+                // settles once it has, stopped or not.
                 !fileStream.write(usable, (error) => {
                   if (error) fail(error)
-                  else if (!settled) onProgress(progress)
+                  else onProgress(progress)
                 })
               ) {
                 onWriteWait?.(true)
