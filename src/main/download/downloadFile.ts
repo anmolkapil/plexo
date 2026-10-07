@@ -2,7 +2,9 @@ import { createWriteStream, type WriteStream } from 'node:fs'
 import { lstat, open, rename, rm, stat } from 'node:fs/promises'
 import { basename, dirname, extname, join } from 'node:path'
 
-const WRITE_BUFFER_BYTES = 1024 * 1024
+/** Per stream: 32 streams hold at most 16 MiB. A full buffer is also what tells Auto the disk is
+ * behind (see concurrency.ts): larger, and it hears it later. */
+const WRITE_BUFFER_BYTES = 512 * 1024
 
 /** The only large file owned by a download. It lives beside the final file so publishing it
  * requires no copy and never needs a second file's worth of disk space. */
