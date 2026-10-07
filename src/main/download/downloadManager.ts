@@ -1643,11 +1643,15 @@ export class DownloadManager {
       // One running and one waiting at most, however slow the disk: the waiting one takes the
       // state when its turn comes, so nothing scheduled meanwhile is lost.
       runtime.checkpointQueued = true
-      void this.persistNow(runtime)
+      void this.persistNow(runtime, false, true)
     }, CHECKPOINT_INTERVAL_MS)
   }
 
-  private persistNow(runtime: DownloadRuntime, required = false): Promise<void> {
+  private persistNow(
+    runtime: DownloadRuntime,
+    required = false,
+    routineCheckpoint = false
+  ): Promise<void> {
     if (runtime.removed) return runtime.persistenceChain
     if (runtime.persistenceTimer) {
       clearTimeout(runtime.persistenceTimer)
@@ -1657,7 +1661,9 @@ export class DownloadManager {
     const operation = runtime.persistenceChain
       .catch(() => {})
       .then(async () => {
-        runtime.checkpointQueued = false
+        // An explicit save can run ahead of a queued routine checkpoint. Only that
+        // checkpoint owns the flag; other saves must leave its place reserved.
+        if (routineCheckpoint) runtime.checkpointQueued = false
         if (runtime.removed) return
         const dir = this.downloadDir(runtime.state.id)
         const path = this.manifestPath(runtime.state.id)
