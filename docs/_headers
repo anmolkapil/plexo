@@ -13,3 +13,6 @@
 
 /*.png
   Cache-Control: public, max-age=86400
+
+/releases.json
+  Cache-Control: public, max-age=300

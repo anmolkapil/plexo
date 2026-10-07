@@ -1,0 +1,38 @@
+name: Site releases
+
+# docs/releases.json is what the landing page reads instead of calling the GitHub API on every
+# visit. Cloudflare Pages redeploys when this commit lands on main.
+on:
+  release:
+    types: [published, edited, deleted]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency: site-releases
+
+jobs:
+  releases:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - name: Write docs/releases.json
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh api "repos/${{ github.repository }}/releases?per_page=5" \
+            --jq '[.[] | select(.draft | not) | {tag_name, prerelease, html_url, assets: [.assets[] | {name, size, browser_download_url}]}]' \
+            > docs/releases.json
+
+      - name: Commit if changed
+        run: |
+          git diff --quiet docs/releases.json && exit 0
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add docs/releases.json
+          git commit -m "Update site releases"
+          git push

@@ -452,7 +452,7 @@
     const timeout = setTimeout(() => controller.abort(), 9000)
     try {
       const [response, env] = await Promise.all([
-        fetch('https://api.github.com/repos/anmolkapil/plexo/releases?per_page=10', {
+        fetch('releases.json', {
           signal: controller.signal
         }),
         environment()
