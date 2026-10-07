@@ -1,33 +1,57 @@
-import type { DownloadState, FinishedDownload } from '@shared/types'
 import { ChevronLeft } from 'lucide-react'
 import { useState } from 'react'
 import { useAppStore } from '../store/useAppStore'
 import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-  AlertDialogTrigger
-} from './ui/alert-dialog'
-import { Button, buttonVariants } from './ui/button'
-import { describeError } from '../utils/format'
-import { Checkbox } from './ui/checkbox'
+  headerActions,
+  isFinished,
+  manageActions,
+  type ActionId,
+  type DownloadItem
+} from '../utils/downloadActions'
+import { useDownloadActions, useDownloadActionsState } from './downloadActionsContext'
+import { ACTION_META } from './downloadActionMeta'
+import { Button } from './ui/button'
 
 /** The top of a download's own screen, laid out as the list's header is: the way back to the
- * list on the left; Remove… and what the download can do next (`children`, the main action
- * last) on the right. */
-export function DetailHeader({
-  download,
-  children
-}: {
-  download: DownloadState | FinishedDownload
-  children?: React.ReactNode
-}): React.JSX.Element {
+ * list on the left; on the right the ways out (Cancel while it's unfinished; Remove, and Move to
+ * Trash, after) and what the download can do next. They're what its row and its menu offer, from the same list. */
+export function DetailHeader({ download }: { download: DownloadItem }): React.JSX.Element {
   const setView = useAppStore((store) => store.setView)
+  const { perform } = useDownloadActions()
+  const { busy } = useDownloadActionsState()
+  const manage = manageActions(download)
+  const next = headerActions(download)
+
+  // Resuming round-trips through the main process to re-verify the download before its status
+  // flips (an ETag re-check over the network for a real download). With no feedback in between,
+  // a slow check reads as the button not having registered the click: it says so until the
+  // download's state moves on.
+  const state = isFinished(download) ? 'finished' : `${download.status}|${download.error ?? ''}`
+  const [working, setWorking] = useState<{ id: ActionId; state: string } | null>(null)
+
+  const run = (id: ActionId): void => {
+    if (id === 'pause' || id === 'resume' || id === 'retry') setWorking({ id, state })
+    void perform(id, [download]).catch(() => setWorking(null))
+  }
+
+  const button = (
+    id: ActionId,
+    variant: 'default' | 'secondary' | 'destructive'
+  ): React.ReactNode => {
+    const meta = ACTION_META[id]
+    const isWorking = working?.id === id && working.state === state
+    return (
+      <Button
+        key={id}
+        type="button"
+        variant={variant}
+        disabled={isWorking || (busy && manage.includes(id))}
+        onClick={() => run(id)}
+      >
+        {isWorking && meta.working ? meta.working : meta.label}
+      </Button>
+    )
+  }
 
   return (
     <div className="flex h-12 shrink-0 items-center gap-2 border-b-[0.5px] border-border px-5">
@@ -40,104 +64,11 @@ export function DetailHeader({
         Downloads
       </button>
       <div className="flex-1" />
-      <RemoveButton download={download} />
-      {children}
+      {manage.map((id) => button(id, ACTION_META[id].destructive ? 'destructive' : 'secondary'))}
+      {next.map((id, index) =>
+        // The last is the main one; Pause is never the main one, it's the way to stop.
+        button(id, index === next.length - 1 && id !== 'pause' ? 'default' : 'secondary')
+      )}
     </div>
-  )
-}
-
-/** Remove…, asked first. An unfinished download loses what it has; a finished one leaves the
- * list, and its file goes to the Trash only if asked — from where it can still be put back. */
-function RemoveButton({
-  download
-}: {
-  download: DownloadState | FinishedDownload
-}): React.JSX.Element {
-  const setView = useAppStore((store) => store.setView)
-  const [trashFile, setTrashFile] = useState(false)
-  const [busy, setBusy] = useState(false)
-  const [error, setError] = useState<string | null>(null)
-  const finished = 'unitsWritten' in download || download.status === 'completed'
-  const missing = 'missing' in download && download.missing === true
-  const trashName = window.plexo.platform === 'win32' ? 'Recycle Bin' : 'Trash'
-
-  return (
-    <AlertDialog
-      onOpenChange={() => {
-        setTrashFile(false)
-        setError(null)
-      }}
-    >
-      <AlertDialogTrigger
-        render={
-          <Button type="button" variant={finished ? 'secondary' : 'destructive'}>
-            {finished ? 'Remove from list…' : 'Cancel download…'}
-          </Button>
-        }
-      />
-      <AlertDialogContent>
-        <AlertDialogHeader>
-          <AlertDialogTitle>
-            {finished ? 'Remove from list' : 'Cancel download'}: {download.fileName}?
-          </AlertDialogTitle>
-          <AlertDialogDescription>
-            {finished
-              ? 'This removes the download from your list. Its files stay on your computer.'
-              : 'This stops the download and deletes its downloaded data.'}
-          </AlertDialogDescription>
-        </AlertDialogHeader>
-        {finished &&
-          !missing &&
-          (download.kind !== 'torrent' ||
-            !download.folder ||
-            !('unitsWritten' in download) ||
-            !!download.downloadedFiles?.length) && (
-            <label className="flex items-center gap-2.5 text-[13px]">
-              <Checkbox checked={trashFile} onCheckedChange={setTrashFile} />
-              Also move downloaded files to the {trashName}. Unrelated files stay in place.
-            </label>
-          )}
-        <AlertDialogFooter>
-          {error && (
-            <p role="alert" className="text-[13px] text-destructive">
-              {error}
-            </p>
-          )}
-          <AlertDialogCancel disabled={busy}>Cancel</AlertDialogCancel>
-          <AlertDialogAction
-            className={buttonVariants({
-              variant: finished && !trashFile ? 'default' : 'destructive',
-              size: 'sm'
-            })}
-            disabled={busy}
-            onClick={(event) => {
-              event.preventDefault()
-              setBusy(true)
-              void window.plexo
-                .removeDownload(download.id, { trashFile })
-                .then(() => {
-                  useAppStore.setState((store) => {
-                    const downloads = { ...store.downloads }
-                    delete downloads[download.id]
-                    return {
-                      downloads,
-                      history: store.history.filter((item) => item.id !== download.id)
-                    }
-                  })
-                  setView({ name: 'list' })
-                })
-                .catch((cause) => setError(describeError(cause)))
-                .finally(() => setBusy(false))
-            }}
-          >
-            {trashFile
-              ? `Move files to ${trashName}`
-              : finished
-                ? 'Remove from list'
-                : 'Cancel download'}
-          </AlertDialogAction>
-        </AlertDialogFooter>
-      </AlertDialogContent>
-    </AlertDialog>
   )
 }

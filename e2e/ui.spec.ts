@@ -42,7 +42,7 @@ test.describe('a torrent through the UI', () => {
       const page = plexo.page
 
       const link = await plexo.newDownload()
-      await page.getByRole('button', { name: 'Change…' }).click()
+      await page.getByRole('button', { name: 'Change' }).click()
       await link.fill(await torrentFileOnDisk(torrent))
       await page.getByRole('checkbox', { name: /b\.bin/ }).click()
       await plexo.expectNextDownload(
@@ -172,7 +172,7 @@ test.describe('UI journeys @smoke', () => {
     const page = plexo.page
 
     const link = await plexo.newDownload()
-    await page.getByRole('button', { name: 'Change…' }).click()
+    await page.getByRole('button', { name: 'Change' }).click()
     await link.fill(origin.url())
     const start = page.getByRole('button', { name: 'Download' })
     await expect(start).toBeEnabled()
@@ -220,13 +220,13 @@ test.describe('UI journeys @smoke', () => {
     await stubNativeUi(plexo, dirs.dest)
     const page = plexo.page
     let link = await plexo.newDownload()
-    await page.getByRole('button', { name: 'Change…' }).click()
+    await page.getByRole('button', { name: 'Change' }).click()
     await link.fill(origin.url())
 
     const reached = origin.hold(6 * BLOCK)
     await page.getByRole('button', { name: 'Download' }).click()
     await reached
-    await page.getByRole('button', { name: 'Cancel download…' }).click()
+    await page.getByRole('button', { name: 'Cancel download' }).click()
     await page.getByRole('button', { name: 'Cancel download', exact: true }).click()
     origin.release()
     // Gone, with what it had downloaded.
@@ -283,7 +283,7 @@ test.describe('settings @smoke', () => {
 
       await stubNativeUi(plexo, dirs.dest)
       await plexo.newDownload()
-      await page().getByRole('button', { name: 'Change…' }).click()
+      await page().getByRole('button', { name: 'Change' }).click()
       const destinationRow = (): Locator =>
         page().getByText('Save to', { exact: true }).locator('..')
       const chosenDestination = await destinationRow().innerText()

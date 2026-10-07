@@ -9,6 +9,7 @@ export const IpcChannels = {
   chooseTorrentFile: 'dialog:choose-torrent-file',
   readClipboardText: 'clipboard:read-text',
   revealDownload: 'shell:reveal-download',
+  openDownload: 'shell:open-download',
   startDownload: 'download:start',
   listDownloads: 'download:list',
   listHistory: 'history:list',

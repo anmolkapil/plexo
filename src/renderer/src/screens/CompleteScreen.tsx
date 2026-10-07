@@ -2,7 +2,6 @@ import type { DownloadState, FinishedDownload } from '@shared/types'
 import { HeroBand } from '../components/HeroBand'
 import { DetailHeader } from '../components/DetailHeader'
 import { ThroughputChart } from '../components/ThroughputChart'
-import { Button } from '../components/ui/button'
 import { useNetworkVisuals } from '../hooks/useNetworkVisuals'
 import { useAppStore } from '../store/useAppStore'
 import {
@@ -56,16 +55,9 @@ export function CompleteScreen({
         : download.totalBlocks
   const files = isTorrent && download.files.total > 1 ? download.files : null
 
-  // Gone since the list was read: main sends history again, marking it missing here.
-  const handleReveal = (): void => void window.plexo.revealDownload(download.id)
-
   return (
     <div className="flex h-full flex-col bg-background">
-      <DetailHeader download={download}>
-        <Button type="button" onClick={handleReveal} disabled={missing}>
-          {window.plexo.platform === 'darwin' ? 'Show in Finder' : 'Show in folder'}
-        </Button>
-      </DetailHeader>
+      <DetailHeader download={download} />
       <div role="status" className="sr-only">
         Download complete: {download.fileName}
       </div>

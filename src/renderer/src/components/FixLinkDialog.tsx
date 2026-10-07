@@ -80,7 +80,7 @@ export function FixLinkDialog({
               Cancel
             </Button>
             <Button type="submit" disabled={fixing || !url.trim()}>
-              {fixing ? 'Checking…' : 'Continue download'}
+              {fixing ? 'Checking' : 'Continue download'}
             </Button>
           </DialogFooter>
         </form>

@@ -176,9 +176,9 @@ function NewDownloadForm({ onDone }: { onDone: () => void }): React.JSX.Element 
     Boolean(destinationDir) &&
     !starting
   const startLabel = starting
-    ? 'Starting…'
+    ? 'Starting'
     : probe.status === 'probing'
-      ? 'Checking…'
+      ? 'Checking'
       : full
         ? 'Add to queue'
         : 'Download'
@@ -327,7 +327,7 @@ function NewDownloadForm({ onDone }: { onDone: () => void }): React.JSX.Element 
                         linkInput.current?.focus()
                       }}
                       aria-label="Clear link"
-                      className="flex size-5 shrink-0 cursor-pointer items-center justify-center rounded-full text-muted-foreground hover:bg-secondary hover:text-foreground"
+                      className="flex size-5 shrink-0 cursor-default items-center justify-center rounded-full text-muted-foreground hover:bg-secondary hover:text-foreground"
                     >
                       <X aria-hidden className="size-3.5" />
                     </button>
@@ -339,7 +339,7 @@ function NewDownloadForm({ onDone }: { onDone: () => void }): React.JSX.Element 
           </div>
           <Button type="button" variant="secondary" onClick={handleOpenTorrent} className="h-9">
             <FolderOpen data-icon="inline-start" />
-            Open .torrent…
+            Open .torrent
           </Button>
         </div>
 
@@ -403,7 +403,7 @@ function NewDownloadForm({ onDone }: { onDone: () => void }): React.JSX.Element 
             {toDisplayPath(destinationDir, homeDir)}
           </div>
           <Button type="button" variant="secondary" size="sm" onClick={handleBrowse}>
-            Change…
+            Change
           </Button>
         </div>
 

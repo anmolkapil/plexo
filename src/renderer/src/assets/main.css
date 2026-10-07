@@ -239,6 +239,14 @@
     font: inherit;
   }
 
+  /* A desktop app: controls keep the arrow, as native ones do; no pointing hand anywhere. */
+  a,
+  button,
+  [role='button'],
+  [role='menuitem'] {
+    cursor: default;
+  }
+
   /* No core Tailwind utility for scrollbar pseudo-elements. */
   ::-webkit-scrollbar {
     width: 10px;

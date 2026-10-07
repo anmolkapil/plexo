@@ -31,8 +31,7 @@ export function CyclableChip({
             style={{
               background: bg,
               borderColor: border,
-              color,
-              cursor: cyclable ? 'pointer' : 'default'
+              color
             }}
           >
             <span>{label}</span>

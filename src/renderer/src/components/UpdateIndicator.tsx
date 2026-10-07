@@ -20,7 +20,7 @@ export function UpdateIndicator(): React.JSX.Element | null {
             target="_blank"
             rel="noreferrer"
             aria-label={`Update available: ${availableUpdate.version}`}
-            className="flex size-[26px] shrink-0 cursor-pointer items-center justify-center rounded-[6px] border-[0.5px] border-border bg-secondary text-[var(--text-secondary)] [-webkit-app-region:no-drag]"
+            className="flex size-[26px] shrink-0 cursor-default items-center justify-center rounded-[6px] border-[0.5px] border-border bg-secondary text-[var(--text-secondary)] [-webkit-app-region:no-drag]"
           >
             <CircleArrowUp size={15} strokeWidth={1.3} />
           </a>

@@ -187,6 +187,8 @@ export function registerIpcHandlers(getWindow: () => BrowserWindow | null): Down
 
   handle('revealDownload', async (_event, id) => manager.reveal(id))
 
+  handle('openDownload', async (_event, id) => manager.open(id))
+
   handle('startDownload', async (_event, request) => manager.start(request))
 
   handle('listDownloads', async () => manager.listDownloads())

@@ -1316,6 +1316,18 @@ export class DownloadManager {
     return false
   }
 
+  /** Opens a finished download with the app the OS picks for it; a torrent's folder opens in the
+   * file manager. Like reveal, it checks the path first and false means it's no longer there. */
+  async open(id: string): Promise<boolean> {
+    const download = this.runtimes.get(id)?.state ?? (await findInHistory(id))
+    const path = download?.destinationPath
+    if (path && (await pathExists(path).catch(() => false))) {
+      return (await shell.openPath(path)) === ''
+    }
+    this.historyChanged()
+    return false
+  }
+
   async suspendAll(): Promise<void> {
     await this.initialization
     this.suspending = true

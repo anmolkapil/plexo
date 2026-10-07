@@ -1,38 +1,19 @@
 import type { DownloadState } from '@shared/types'
 import { Folder } from 'lucide-react'
 import { useState } from 'react'
-import { FixLinkDialog } from '../components/FixLinkDialog'
 import { DetailHeader } from '../components/DetailHeader'
 import { TruncatedText } from '../components/TruncatedText'
-import { Button } from '../components/ui/button'
 import {
   describeError,
   fileExtensionBadge,
   formatBytes,
   isFolder,
-  linkExpired,
   wantedBytes
 } from '../utils/format'
-import { useAppStore } from '../store/useAppStore'
 
 export function ErrorScreen({ download }: { download: DownloadState }): React.JSX.Element {
-  const removeDownload = useAppStore((store) => store.removeDownload)
-  const openNewDownload = useAppStore((store) => store.openNewDownload)
-  const setView = useAppStore((store) => store.setView)
-  // Nothing of it can be kept: it goes, and its link waits in New download to start over.
-  const handleDownloadAgain = (): void => {
-    removeDownload(download.id)
-    setView({ name: 'list' })
-    openNewDownload(download.url)
-  }
   const [copied, setCopied] = useState(false)
-  const [resuming, setResuming] = useState(false)
-  const [fixing, setFixing] = useState(false)
-  // Its link stopped working: a fresh one carries on from here, rather than Resume asking again.
-  const expired = linkExpired(download)
   const cancelled = download.status === 'cancelled'
-  // What it downloaded is still there to pick up from.
-  const resumable = !cancelled && download.resumable !== false && download.bytesDownloaded > 0
   const knownSize = download.totalBytes > 0
   const percent = knownSize
     ? Math.min(100, Math.round((download.bytesDownloaded / wantedBytes(download)) * 100))
@@ -56,28 +37,7 @@ export function ErrorScreen({ download }: { download: DownloadState }): React.JS
 
   return (
     <div className="flex h-full flex-col bg-background">
-      <DetailHeader download={download}>
-        {expired ? (
-          <Button type="button" onClick={() => setFixing(true)}>
-            Fix link
-          </Button>
-        ) : resumable ? (
-          <Button
-            type="button"
-            disabled={resuming}
-            onClick={() => {
-              setResuming(true)
-              void window.plexo.resumeDownload(download.id).finally(() => setResuming(false))
-            }}
-          >
-            {resuming ? 'Retrying…' : 'Retry'}
-          </Button>
-        ) : (
-          <Button type="button" onClick={handleDownloadAgain}>
-            Download again
-          </Button>
-        )}
-      </DetailHeader>
+      <DetailHeader download={download} />
       <div className="flex flex-1 flex-col items-center justify-center px-5 py-6">
         <div className="flex w-full max-w-[440px] flex-col items-center gap-[18px] rounded-xl border-[0.5px] border-border bg-card p-6 text-center">
           {/* Status Icon */}
@@ -187,8 +147,6 @@ export function ErrorScreen({ download }: { download: DownloadState }): React.JS
           </div>
         </div>
       </div>
-
-      <FixLinkDialog download={fixing ? download : null} onClose={() => setFixing(false)} />
     </div>
   )
 }

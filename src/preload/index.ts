@@ -34,6 +34,7 @@ const plexoApi = {
   pathForFile: (file: File) => webUtils.getPathForFile(file),
   readClipboardText: () => invoke('readClipboardText'),
   revealDownload: (id: string) => invoke('revealDownload', id),
+  openDownload: (id: string) => invoke('openDownload', id),
   startDownload: (request: IpcContract['startDownload']['args'][0]) =>
     invoke('startDownload', request),
   listDownloads: () => invoke('listDownloads'),
