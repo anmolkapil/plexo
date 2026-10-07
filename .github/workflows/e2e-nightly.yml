@@ -39,9 +39,11 @@ jobs:
 
       # The @disk tests mount small tmpfs volumes, which needs passwordless sudo (GitHub's
       # Linux runners have it); elsewhere they skip themselves.
+      # Keep Xvfb alive between Electron launches: resetting when its last client exits can
+      # race the next parallel launch and fail before the application starts.
       - name: Full suite (Linux)
         if: runner.os == 'Linux'
-        run: xvfb-run --auto-servernum npx playwright test
+        run: xvfb-run --auto-servernum --server-args="-screen 0 1280x1024x24 -noreset" npx playwright test
         env:
           PLEXO_E2E_SKIP_BUILD: '1'
 
@@ -52,7 +54,7 @@ jobs:
           PLEXO_E2E_SKIP_BUILD: '1'
 
       - name: Race-prone tests, repeated
-        run: ${{ runner.os == 'Linux' && 'xvfb-run --auto-servernum ' || '' }}npx playwright test e2e/lifecycle.spec.ts e2e/recovery.spec.ts --repeat-each=10
+        run: ${{ runner.os == 'Linux' && 'xvfb-run --auto-servernum --server-args="-screen 0 1280x1024x24 -noreset" ' || '' }}npx playwright test e2e/lifecycle.spec.ts e2e/recovery.spec.ts --repeat-each=10
         env:
           PLEXO_E2E_SKIP_BUILD: '1'
 
