@@ -1,4 +1,5 @@
 import type {} from '../src/preload/globals'
+import assert from 'node:assert/strict'
 import { execFile } from 'node:child_process'
 import { existsSync } from 'node:fs'
 import { mkdir, mkdtemp, readdir, readFile, realpath, rm, stat } from 'node:fs/promises'
@@ -39,6 +40,11 @@ export function expectTorrent(state: DownloadState): TorrentDownloadState {
 }
 
 export const PROJECT_ROOT = resolve(__dirname, '..')
+
+/** Every raw Electron launch needs the same CI sandbox policy. */
+export function electronArgs(entry: string, args: string[] = []): string[] {
+  return [entry, ...args, ...(process.platform === 'linux' ? ['--no-sandbox'] : [])]
+}
 
 /** Small blocks so a ~1 MB test file still splits into many of them. */
 export const BLOCK = 64 * 1024
@@ -112,7 +118,7 @@ export class PlexoApp {
     while (true) {
       try {
         this.electronApp = await electron.launch({
-          args: [PROJECT_ROOT, ...args, ...(process.platform === 'linux' ? ['--no-sandbox'] : [])],
+          args: electronArgs(PROJECT_ROOT, args),
           env: {
             ...(process.env as Record<string, string>),
             PLEXO_USER_DATA: this.dirs.userData,
@@ -174,9 +180,19 @@ export class PlexoApp {
   /** Kills the main process outright — no before-quit, no suspend: a crash or power cut. */
   async kill(): Promise<void> {
     const child = this.electronApp.process()
-    const exited = new Promise((resolve) => child.once('exit', resolve))
-    child.kill('SIGKILL')
-    await exited
+    if (child.exitCode !== null || child.signalCode !== null) {
+      this.alive = false
+      return
+    }
+    // Windows does not propagate killing the main process to Chromium's children. They retain
+    // the profile lock and open databases, preventing both relaunch and fixture disposal.
+    const closed = new Promise<void>((resolve) => child.once('close', () => resolve()))
+    if (process.platform === 'win32') {
+      await promisify(execFile)('taskkill', ['/pid', String(child.pid), '/T', '/F'])
+    } else {
+      child.kill('SIGKILL')
+    }
+    await closed
     this.alive = false
   }
 
@@ -379,62 +395,77 @@ const ALLOWED_NEXT: Record<DownloadStatus, DownloadStatus[]> = {
   cancelled: ['cancelled']
 }
 
-/** Rules every download event must satisfy, whatever the scenario. */
+/** Rules every download event must satisfy, whatever the scenario. Node assertions keep this
+ * exhaustive scan synchronous without creating a report step for every block of every event.
+ * Failures still carry the download, status and work-unit context. */
 export function checkEvents(sessions: DownloadState[][]): void {
   for (const events of sessions) {
     const lastStatus = new Map<string, DownloadStatus>()
     for (const state of events) {
       const label = `${state.id} @ ${state.status}`
       if (state.totalBytes > 0) {
-        expect(state.bytesDownloaded, `${label}: bytesDownloaded ≤ totalBytes`).toBeLessThanOrEqual(
-          state.totalBytes
+        assert.ok(
+          state.bytesDownloaded <= state.totalBytes,
+          `${label}: bytesDownloaded ≤ totalBytes`
         )
       }
       const units = state.kind === 'http' ? state.blocks : state.pieces
-      expect(
+      assert.equal(
         units.every((unit, index) => unit.index === index),
+        true,
         `${label}: every work unit is there, in order`
-      ).toBe(true)
-      expect(units.length, `${label}: as many work units as planned`).toBe(
-        state.kind === 'http' ? state.totalBlocks : state.totalPieces
+      )
+      assert.equal(
+        units.length,
+        state.kind === 'http' ? state.totalBlocks : state.totalPieces,
+        `${label}: as many work units as planned`
       )
       for (const unit of units) {
         const attributed = Object.values(unit.bytesByInterface).reduce((a, b) => a + b, 0)
-        expect(attributed, `${label}: unit ${unit.index} attribution sums to its bytes`).toBe(
-          unit.bytesDownloaded
+        assert.equal(
+          attributed,
+          unit.bytesDownloaded,
+          `${label}: unit ${unit.index} attribution sums to its bytes`
         )
         if (unit.rangeEnd !== null) {
           const size = unit.rangeEnd - unit.rangeStart + 1
-          expect(
-            unit.bytesDownloaded,
-            `${label}: unit ${unit.index} within its size`
-          ).toBeLessThanOrEqual(size)
+          assert.ok(unit.bytesDownloaded <= size, `${label}: unit ${unit.index} within its size`)
           if (unit.status === 'completed') {
-            expect(unit.bytesDownloaded, `${label}: completed unit ${unit.index} is full`).toBe(
-              size
+            assert.equal(
+              unit.bytesDownloaded,
+              size,
+              `${label}: completed unit ${unit.index} is full`
             )
           }
         }
         if (unit.kind === 'torrent') {
-          expect(unit.provisionalBytes).toBeGreaterThanOrEqual(0)
-          expect(unit.provisionalBytes).toBeLessThanOrEqual(
-            unit.rangeEnd === null ? 0 : unit.rangeEnd - unit.rangeStart + 1
+          assert.ok(unit.provisionalBytes >= 0)
+          assert.ok(
+            unit.provisionalBytes <=
+              (unit.rangeEnd === null ? 0 : unit.rangeEnd - unit.rangeStart + 1)
           )
         }
       }
       if (state.kind === 'torrent') {
+        assert.equal(
+          new Set(state.peers.map((peer) => peer.id)).size,
+          state.peers.length,
+          `${label}: peer IDs are unique across networks`
+        )
         // Peers are connections, not piece owners. Each belongs to one known network and exposes
         // only transfer telemetry; verified progress belongs to pieces above.
         for (const peer of state.peers) {
-          expect(
-            state.networks.map((network) => network.id),
+          assert.ok(
+            state.networks.map((network) => network.id).includes(peer.interfaceId),
             `${label}: peer ${peer.id} is on a network of this download`
-          ).toContain(peer.interfaceId)
-          expect(['connected', 'receiving']).toContain(peer.status)
+          )
+          assert.ok(['connected', 'receiving'].includes(peer.status))
         }
         const uploaded = state.networks.reduce((sum, network) => sum + network.bytesUploaded, 0)
-        expect(uploaded, `${label}: the networks' uploads add up to the download's`).toBe(
-          state.bytesUploaded
+        assert.equal(
+          uploaded,
+          state.bytesUploaded,
+          `${label}: the networks' uploads add up to the download's`
         )
       } else if (state.status === 'downloading') {
         // A stream holds a block exactly while it is fetching it. A block has at most one stream
@@ -444,32 +475,37 @@ export function checkEvents(sessions: DownloadState[][]): void {
         const hedges = new Map<number, number>()
         for (const stream of state.streams) {
           const holding = stream.currentBlockIndex !== undefined
-          expect(holding, `${label}: stream ${stream.id} (${stream.status}) holds a block`).toBe(
-            stream.status === 'downloading'
+          assert.equal(
+            holding,
+            stream.status === 'downloading',
+            `${label}: stream ${stream.id} (${stream.status}) holds a block`
           )
           if (stream.currentBlockIndex === undefined) {
-            expect(stream.hedge, `${label}: idle stream ${stream.id} is not racing`).toBeFalsy()
+            assert.ok(!stream.hedge, `${label}: idle stream ${stream.id} is not racing`)
             continue
           }
           const tally = stream.hedge ? hedges : primaries
           tally.set(stream.currentBlockIndex, (tally.get(stream.currentBlockIndex) ?? 0) + 1)
         }
         for (const [index, count] of primaries) {
-          expect(count, `${label}: block ${index} has one stream fetching it`).toBe(1)
+          assert.equal(count, 1, `${label}: block ${index} has one stream fetching it`)
         }
         for (const [index, count] of hedges) {
-          expect(count, `${label}: block ${index} has at most two hedges`).toBeLessThanOrEqual(2)
+          assert.ok(count <= 2, `${label}: block ${index} has at most two hedges`)
         }
         for (const index of primaries.keys()) {
-          expect(state.blocks[index]?.status, `${label}: held block ${index} is in flight`).toBe(
-            'downloading'
+          assert.equal(
+            state.blocks[index]?.status,
+            'downloading',
+            `${label}: held block ${index} is in flight`
           )
         }
       }
       const previous = lastStatus.get(state.id)
       if (previous) {
-        expect(ALLOWED_NEXT[previous], `${state.id}: ${previous} → ${state.status}`).toContain(
-          state.status
+        assert.ok(
+          ALLOWED_NEXT[previous].includes(state.status),
+          `${state.id}: ${previous} → ${state.status}`
         )
       }
       lastStatus.set(state.id, state.status)

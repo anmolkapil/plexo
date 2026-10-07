@@ -1,7 +1,7 @@
 import type { Locator } from '@playwright/test'
 import { spawn } from 'node:child_process'
 import { createRequire } from 'node:module'
-import { expect, PROJECT_ROOT, test, type PlexoApp } from './fixtures'
+import { electronArgs, expect, PROJECT_ROOT, test, type PlexoApp } from './fixtures'
 import { seededBytes } from './origin'
 import { named, Swarm, torrentFileOnDisk } from './torrentSwarm'
 
@@ -39,13 +39,24 @@ test.describe('links handed over by the OS', () => {
     plexo
   }) => {
     const electronBinary = createRequire(__filename)('electron') as string
-    const second = spawn(electronBinary, [PROJECT_ROOT, MAGNET], {
+    const second = spawn(electronBinary, electronArgs(PROJECT_ROOT, [MAGNET]), {
       env: { ...process.env, PLEXO_USER_DATA: plexo.dirs.userData, PLEXO_E2E_HIDE_WINDOW: '1' },
-      stdio: 'ignore'
+      stdio: ['ignore', 'pipe', 'pipe']
     })
-    const exitCode = await new Promise<number | null>((resolve) => second.once('exit', resolve))
-
-    expect(exitCode).toBe(0)
+    const output: string[] = []
+    second.stdout?.on('data', (data) => output.push(String(data)))
+    second.stderr?.on('data', (data) => output.push(String(data)))
+    try {
+      const exit = await new Promise<{ code: number | null; signal: string | null }>(
+        (resolve, reject) => {
+          second.once('error', reject)
+          second.once('close', (code, signal) => resolve({ code, signal }))
+        }
+      )
+      expect(exit, output.join('')).toEqual({ code: 0, signal: null })
+    } finally {
+      if (second.exitCode === null && second.signalCode === null) second.kill('SIGKILL')
+    }
     await expect(linkField(plexo)).toHaveValue(MAGNET)
   })
 

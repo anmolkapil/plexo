@@ -2,6 +2,8 @@ import { createRequire } from 'node:module'
 import { resolve } from 'node:path'
 import { _electron as electron, expect, test, type Locator, type Page } from '@playwright/test'
 
+import { electronArgs } from './fixtures'
+
 // M. The download page: what each file is called, which one a visitor is offered, and that the
 // page says so. The logic lives in docs/downloads.js; the page is checked by loading the real
 // docs/index.html in a hidden window as a visitor with a given browser would see it.
@@ -275,10 +277,7 @@ async function openPage(
   options: { architecture?: 'arm' | 'x86'; releases?: unknown; apiStatus?: number } = {}
 ): Promise<{ page: Page; close: () => Promise<void> }> {
   const app = await electron.launch({
-    args: [
-      resolve(__dirname, 'page-host/main.cjs'),
-      ...(process.platform === 'linux' ? ['--no-sandbox'] : [])
-    ],
+    args: electronArgs(resolve(__dirname, 'page-host/main.cjs')),
     env: {
       ...(process.env as Record<string, string>),
       PAGE_SCENARIO: JSON.stringify({
@@ -568,9 +567,20 @@ test.describe('the download page', () => {
       const chartBounds = await page.locator('.demo-chart').boundingBox()
       expect(flowBounds?.x).toBeLessThan(totalBounds?.x ?? 0)
       expect(totalBounds?.x).toBeLessThan(chartBounds?.x ?? 0)
+      // Classic scrollbars consume viewport width on Linux and Windows. The demo must fill
+      // the space actually available inside the hero, rather than a macOS-specific width.
+      await expect
+        .poll(async () => {
+          const frame = await page.locator('.demo-frame').boundingBox()
+          const stage = await page.locator('.demo-stage').boundingBox()
+          return frame && stage ? Math.abs(frame.width - stage.width) : Infinity
+        })
+        .toBeLessThanOrEqual(1)
       const demoBounds = await page.locator('.demo-frame').boundingBox()
-      expect(demoBounds?.width).toBeLessThanOrEqual(342)
-      expect(demoBounds?.width).toBeGreaterThan(330)
+      const availableWidth = await page.evaluate(() => document.documentElement.clientWidth)
+      expect(demoBounds!.width).toBeGreaterThan(availableWidth * 0.8)
+      expect(demoBounds!.x).toBeGreaterThanOrEqual(0)
+      expect(demoBounds!.x + demoBounds!.width).toBeLessThanOrEqual(availableWidth)
       for (const tab of await page.locator('.os-tabs button').all()) {
         const padding = await tab.evaluate((button) => {
           const buttonRect = button.getBoundingClientRect()
