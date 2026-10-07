@@ -58,7 +58,7 @@ jobs:
 
       # Electron needs a display even with its window hidden.
       - name: Run smoke tests
-        run: xvfb-run --auto-servernum npm run test:e2e:smoke
+        run: xvfb-run --auto-servernum --server-args="-screen 0 1280x1024x24 -noreset" npm run test:e2e:smoke
 
       - name: Upload report
         if: failure()
