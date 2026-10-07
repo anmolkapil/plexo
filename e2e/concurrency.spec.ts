@@ -1,8 +1,9 @@
 import { expect, test } from '@playwright/test'
 import {
   ConcurrencyController,
-  DISK_PATIENCE_TICKS,
+  DISK_PATIENCE_MS,
   DISK_RECOVER_MS,
+  DiskWatch,
   RECOVER_MS,
   type Action,
   type NetworkSnapshot
@@ -217,40 +218,139 @@ test.describe('stream count', () => {
     ).toEqual([])
   })
 
-  test('a disk that holds most streams up halves them, and they double back once it keeps up', () => {
+  test('the disk is judged by the clock: looks close together are not patience', () => {
     const controller = new ConcurrencyController(MAX)
-    const tick = (now: number, streams: number, held: number): Action[] =>
-      controller.tick({ now, networks: [network('a', streams, { held })], spareWork: 1000 })
+    const tick = (now: number, streams: number): Action[] =>
+      controller.tick({
+        now,
+        networks: [network('a', streams)],
+        spareWork: 1000,
+        disk: { reading: 'behind', since: 0 }
+      })
     // Not before it has lasted, and no growth meanwhile.
-    for (let i = 1; i < DISK_PATIENCE_TICKS; i++) expect(tick(0, 32, 20)).toEqual([])
-    expect(tick(0, 32, 20)).toEqual([{ kind: 'retire', networkId: 'a', count: 16 }])
-    // Half held is not most.
-    for (let i = 0; i < 2 * DISK_PATIENCE_TICKS; i++) expect(tick(1, 16, 8)).toEqual([])
-    expect(tick(DISK_RECOVER_MS, 16, 0)).toEqual([{ kind: 'add', networkId: 'a', count: 16 }])
+    expect(tick(0, 16)).toEqual([])
+    expect(tick(1, 16)).toEqual([])
+    expect(tick(DISK_PATIENCE_MS - 1, 16)).toEqual([])
+    expect(tick(DISK_PATIENCE_MS, 16)).toEqual([{ kind: 'retire', networkId: 'a', count: 8 }])
+    // The next cut needs as long again at the new count.
+    expect(tick(DISK_PATIENCE_MS + 1, 8)).toEqual([])
+    expect(tick(2 * DISK_PATIENCE_MS, 8)).toEqual([{ kind: 'retire', networkId: 'a', count: 4 }])
   })
 
-  test('the disk is judged for the whole download, and every network halves together', () => {
+  test('a disk behind at every count is left with one stream, and keeps it', () => {
+    const counts = run(new ConcurrencyController(MAX), 32, 30_000, () => true)
+    expect(counts.indexOf(1) * LOOK_MS).toBeLessThanOrEqual(6 * DISK_PATIENCE_MS)
+    expect(counts.slice(counts.indexOf(1))).toEqual(counts.slice(counts.indexOf(1)).map(() => 1))
+  })
+
+  test('a disk that was only busy for a moment soon gives the streams back', () => {
+    const counts = run(new ConcurrencyController(MAX), 32, 30_000, (_, now) => now < 1_000)
+    expect(Math.min(...counts)).toBe(16)
+    expect(counts.indexOf(32, 1) * LOOK_MS).toBeLessThanOrEqual(
+      2 * DISK_PATIENCE_MS + DISK_RECOVER_MS
+    )
+    expect(counts.at(-1)).toBe(32)
+  })
+
+  test('a disk cut leaves a server ceiling, and its pace, alone', () => {
+    const counts = run(
+      new ConcurrencyController(MAX),
+      32,
+      RECOVER_MS - LOOK_MS,
+      (_, now) => now >= 500 && now < 2_000,
+      (now) => (now === 0 ? 2 : 0)
+    )
+    // Back at the 30 the server allowed at the disk's pace, not a stream a minute; never past it.
+    expect(Math.min(...counts)).toBe(8)
+    expect(counts.at(-1)).toBe(30)
+    expect(Math.max(...counts.slice(1))).toBe(30)
+  })
+
+  test('a refusal at the moment the disk cuts still counts', () => {
+    const counts = run(
+      new ConcurrencyController(MAX),
+      32,
+      RECOVER_MS,
+      (_, now) => now < 2_000,
+      (now) => (now === DISK_PATIENCE_MS ? 5 : 0)
+    )
+    expect(Math.min(...counts)).toBe(4)
+    expect(Math.max(...counts.slice(1))).toBe(27)
+  })
+
+  test('a disk behind only now and then neither cuts nor raises', () => {
+    // Behind long enough for one cut, then every other look.
+    const counts = run(new ConcurrencyController(MAX), 32, 60_000, (_, now) =>
+      now <= DISK_PATIENCE_MS ? true : (now / LOOK_MS) % 2 === 1
+    )
+    expect(counts.slice(DISK_PATIENCE_MS / LOOK_MS)).toEqual(
+      counts.slice(DISK_PATIENCE_MS / LOOK_MS).map(() => 16)
+    )
+  })
+
+  test('the disk cuts every network together', () => {
     const controller = new ConcurrencyController(MAX)
-    const tick = (heldA: number, heldB: number): Action[] =>
+    expect(
       controller.tick({
-        now: 0,
-        networks: [network('a', 8, { held: heldA }), network('b', 8, { held: heldB })],
-        spareWork: 0
+        now: DISK_PATIENCE_MS,
+        networks: [network('a', 8), network('b', 8)],
+        spareWork: 0,
+        disk: { reading: 'behind', since: 0 }
       })
-    // A fast network fills its writers and a slow one doesn't: that alone is not the disk.
-    for (let i = 0; i < 2 * DISK_PATIENCE_TICKS; i++) expect(tick(8, 0)).toEqual([])
-    for (let i = 1; i < DISK_PATIENCE_TICKS; i++) expect(tick(8, 2)).toEqual([])
-    expect(tick(8, 2)).toEqual([
+    ).toEqual([
       { kind: 'retire', networkId: 'a', count: 4 },
       { kind: 'retire', networkId: 'b', count: 4 }
     ])
   })
 
   test('the disk leaves a count the user picked alone', () => {
-    const controller = new ConcurrencyController(4, false)
-    for (let i = 0; i < 2 * DISK_PATIENCE_TICKS; i++)
-      expect(
-        controller.tick({ now: 0, networks: [network('a', 4, { held: 4 })], spareWork: 1000 })
-      ).toEqual([])
+    const counts = run(new ConcurrencyController(4, false), 4, 30_000, () => true)
+    expect(counts).toEqual(counts.map(() => 4))
   })
 })
+
+test.describe('disk watch', () => {
+  test('reads the download as a whole, by the clock', () => {
+    const watch = new DiskWatch()
+    watch.sample(0, 8, 5, 0)
+    expect(watch.reading).toBe('behind')
+    watch.sample(400, 8, 6, 0)
+    expect(watch.lasted('behind', 400)).toBe(400)
+    // Held, but nothing has landed for a while: a stalled disk isn't judged.
+    watch.sample(DISK_PATIENCE_MS, 8, 8, 0)
+    expect(watch.reading).toBe('unknown')
+    // Half held is not most.
+    watch.sample(2_000, 8, 4, 2_000)
+    expect(watch.reading).toBe('keeping-up')
+    expect(watch.lasted('behind', 2_000)).toBe(0)
+  })
+})
+
+const LOOK_MS = 500
+
+/** One network, looked at every LOOK_MS from 0 to `ms` as HttpTransfer does: all its streams are
+ * held while `behind`, and the server refuses `refused` of them. The streams it ran after each
+ * look. */
+function run(
+  controller: ConcurrencyController,
+  streams: number,
+  ms: number,
+  behind: (streams: number, now: number) => boolean,
+  refused: (now: number) => number = () => 0
+): number[] {
+  const watch = new DiskWatch()
+  const counts: number[] = []
+  for (let now = 0; now <= ms; now += LOOK_MS) {
+    watch.sample(now, streams, behind(streams, now) ? streams : 0, now)
+    const refusedNow = refused(now)
+    const actions = controller.tick({
+      now,
+      networks: [network('a', streams, { refused: refusedNow, served: streams - refusedNow })],
+      spareWork: 1000,
+      disk: { reading: watch.reading, since: watch.since }
+    })
+    for (const action of actions) streams += action.kind === 'add' ? action.count : -action.count
+    counts.push(streams)
+  }
+  return counts
+}

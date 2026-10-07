@@ -17,7 +17,7 @@ export interface ChunkDownloadOptions {
   onNetworkProgress: (bytesReceivedThisRun: number) => void
   /** Bytes accepted by the destination writer; safe to include in resumable progress. */
   onProgress: (bytesDownloadedThisRun: number) => void
-  /** Whether reading is held up by the disk: its writer is full, or flushing the last bytes. */
+  /** Whether delivered bytes wait on the disk: its writer is full, or writing the last bytes. */
   onWriteWait?: (waiting: boolean) => void
   signal: AbortSignal
   /** The version the download started on, plus any confirmed to serve identical bytes. */
@@ -357,13 +357,13 @@ export function downloadChunk(options: ChunkDownloadOptions): Promise<void> {
               )
               return
             }
-            // Windows cannot reliably reopen/remove a file until its handle closes.
             bodyEnded = true
+            // Held until its last bytes are written; closing the file isn't the disk falling
+            // behind.
             onWriteWait?.(true)
-            fileStream.once('close', () => {
-              onWriteWait?.(false)
-              finish(resolve)
-            })
+            fileStream.once('finish', () => onWriteWait?.(false))
+            // Windows cannot reliably reopen/remove a file until its handle closes.
+            fileStream.once('close', () => finish(resolve))
             fileStream.end()
           })
         })

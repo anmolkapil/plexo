@@ -72,7 +72,8 @@ interface RuntimeFields {
   publishing: boolean
   pushScheduled: boolean
   persistenceTimer?: NodeJS.Timeout
-  checkpointPending?: boolean
+  /** A routine checkpoint waits its turn: it will save whatever has changed by then. */
+  checkpointQueued?: boolean
   persistenceChain: Promise<void>
   removed: boolean
   /** Updates sent to the window so far (see DownloadUpdate). */
@@ -1635,14 +1636,14 @@ export class DownloadManager {
   }
 
   private schedulePersistence(runtime: DownloadRuntime): void {
-    if (this.suspending || runtime.removed || runtime.persistenceTimer || runtime.checkpointPending)
+    if (this.suspending || runtime.removed || runtime.persistenceTimer || runtime.checkpointQueued)
       return
     runtime.persistenceTimer = setTimeout(() => {
       runtime.persistenceTimer = undefined
-      runtime.checkpointPending = true
-      void this.persistNow(runtime).finally(() => {
-        runtime.checkpointPending = false
-      })
+      // One running and one waiting at most, however slow the disk: the waiting one takes the
+      // state when its turn comes, so nothing scheduled meanwhile is lost.
+      runtime.checkpointQueued = true
+      void this.persistNow(runtime)
     }, CHECKPOINT_INTERVAL_MS)
   }
 
@@ -1656,6 +1657,7 @@ export class DownloadManager {
     const operation = runtime.persistenceChain
       .catch(() => {})
       .then(async () => {
+        runtime.checkpointQueued = false
         if (runtime.removed) return
         const dir = this.downloadDir(runtime.state.id)
         const path = this.manifestPath(runtime.state.id)

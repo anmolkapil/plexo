@@ -19,17 +19,19 @@
 //   link has expired or been denied. That is waited out or reported elsewhere (see finishFailed
 //   in downloadManager.ts), and the count stays. The network doesn't grow meanwhile.
 // - A disk that can't keep up holds each stream's reading until its writes catch up. Streams
-//   writing to scattered places are what slow a hard drive down, so once most of the download's
-//   streams have been held up for DISK_PATIENCE_TICKS in a row, every network halves, and none
-//   grows or recovers while that lasts; each DISK_RECOVER_MS the disk keeps up, each may double
-//   again. A busy disk passes, and a server that caps each connection's speed needs its streams
-//   back quickly. The disk is decided for the whole download, not per network: a stream only
+//   writing to scattered places are what slow a hard drive down, so while the disk has been behind
+//   for DISK_PATIENCE_MS (see DiskWatch) no network grows, and every network is cut to half the
+//   most any runs; each DISK_RECOVER_MS it keeps up, the cap doubles. A hard drive behind at every
+//   count is down to the one stream it writes fastest with in seconds, and a disk that was only
+//   busy for a moment soon has its streams back. Searching between the counts seen keeping up and
+//   seen behind was tried: in simulation it never did better, and it was slow to recover once a
+//   busy disk freed up. The disk is decided for the whole download, not per network: a stream only
 //   fills its writer when it receives fast, so a fast network would read as held and a slow one
 //   wouldn't, and the fast one alone would be cut while the slow one's streams kept writing all
-//   over the disk. Held only counts while writes are still landing: a disk that has stopped
-//   altogether (another program, a drive waking up) is waited out, as fewer streams wouldn't
-//   help it. A download the disk keeps up with is never held, so this costs nothing anywhere
-//   else. The user's own pick is kept, as it is for everything but refusals.
+//   over the disk. The cap is the disk's own: a server's refusals keep their ceiling and pace
+//   beside it, and each network runs the lower of the two. A download the disk keeps up with is
+//   never behind, so this costs nothing anywhere else. The user's own pick is kept, as it is for
+//   everything but refusals.
 // - Otherwise each network is decided on its own, so one that drops out or comes back never
 //   disturbs the others.
 //
@@ -38,9 +40,10 @@
 
 /** How long a lowered limit holds before it may rise by one. */
 export const RECOVER_MS = 60_000
-/** Snapshots in a row the download's streams must mostly wait on the disk before they halve. */
-export const DISK_PATIENCE_TICKS = 2
-/** How long a limit the disk set holds before it may double. */
+/** How long the disk must stay behind before streams are cut, and how recently a write must have
+ * landed for held streams to say it is behind rather than stalled. */
+export const DISK_PATIENCE_MS = 500
+/** How long the disk must keep up before the cap it set rises. */
 export const DISK_RECOVER_MS = 10_000
 
 export interface NetworkSnapshot {
@@ -53,9 +56,12 @@ export interface NetworkSnapshot {
   refused: number
   /** Its streams that received data since the last snapshot. */
   served: number
-  /** Its streams whose reading is held up for the disk right now, while the download's writes are
-   * landing. */
-  held?: number
+}
+
+/** What DiskWatch reads, and since when without a break. */
+export interface DiskSnapshot {
+  reading: DiskReading
+  since: number
 }
 
 export interface Snapshot {
@@ -64,27 +70,57 @@ export interface Snapshot {
   networks: readonly NetworkSnapshot[]
   /** How many more streams the waiting blocks could keep busy. */
   spareWork: number
+  /** Absent, the disk isn't judged. */
+  disk?: DiskSnapshot
 }
 
 export type Action = { kind: 'add' | 'retire'; networkId: string; count: number }
 
-/** Whether most of a download's streams are held up by the disk (see the rules above). */
-export function mostlyHeld(networks: readonly NetworkSnapshot[]): boolean {
-  let streams = 0
-  let held = 0
-  for (const network of networks) {
-    streams += network.streams
-    held += network.held ?? 0
+/** - behind: most of the download's streams hold bytes the disk hasn't taken, while writes land.
+ * - keeping-up: most don't.
+ * - unknown: no streams, or held while nothing lands: a disk that has stopped altogether
+ *   (another program, a drive waking up) is waited out, as fewer streams wouldn't help it. */
+export type DiskReading = 'behind' | 'keeping-up' | 'unknown'
+
+/** Whether the disk is what holds a download back, judged by the clock rather than by how often
+ * it is looked at: a look between two others only extends a reading or breaks it. */
+export class DiskWatch {
+  reading: DiskReading = 'unknown'
+  since = 0
+
+  /** One look at the download: its streams, how many hold bytes the disk hasn't taken, and when a
+   * write last landed. */
+  sample(now: number, streams: number, held: number, landedAt: number): void {
+    const reading: DiskReading =
+      streams === 0
+        ? 'unknown'
+        : held * 2 <= streams
+          ? 'keeping-up'
+          : now - landedAt < DISK_PATIENCE_MS
+            ? 'behind'
+            : 'unknown'
+    if (reading === this.reading) return
+    this.reading = reading
+    this.since = now
   }
-  return held * 2 > streams
+
+  /** How long it has read `reading` without a break; 0 if it doesn't now. */
+  lasted(reading: DiskReading, now: number): number {
+    return this.reading === reading ? now - this.since : 0
+  }
+
+  reset(): void {
+    this.reading = 'unknown'
+  }
 }
 
 export class ConcurrencyController {
   /** Networks a server has refused on: the most streams each may run for now, and when that was
    * last changed. */
-  private readonly ceilings = new Map<string, { limit: number; since: number; byDisk?: boolean }>()
-  /** For how many snapshots in a row most of the download's streams have waited on the disk. */
-  private diskBound = 0
+  private readonly ceilings = new Map<string, { limit: number; since: number }>()
+  /** The most streams any network may run while the disk can't keep up (null: no cap), and when
+   * it last moved. */
+  private disk = { cap: null as number | null, movedAt: 0 }
 
   constructor(
     /** The most streams a network may run. */
@@ -97,46 +133,59 @@ export class ConcurrencyController {
     const actions: Action[] = []
     const { now } = snapshot
     let spare = snapshot.spareWork
-    const held = this.grows && mostlyHeld(snapshot.networks)
-    this.diskBound = held ? this.diskBound + 1 : 0
-    const halve = this.diskBound >= DISK_PATIENCE_TICKS
-    if (halve) this.diskBound = 0
+    if (this.grows) this.judgeDisk(snapshot)
+    const diskHolds = this.grows && !!snapshot.disk && snapshot.disk.reading !== 'keeping-up'
     for (const network of snapshot.networks) {
       const { id, streams } = network
       const refusedNow = network.refused > 0 && network.served > 0
       let entry = this.ceilings.get(id)
-      if (halve && streams > 1) {
-        const limit = Math.min(Math.ceil(streams / 2), entry?.limit ?? Infinity)
-        // A limit a server's refusal set recovers as a refusal's does.
-        this.ceilings.set(id, (entry = { limit, since: now, byDisk: entry ? entry.byDisk : true }))
-      } else if (refusedNow) {
+      if (refusedNow) {
         const limit = Math.max(1, Math.min(streams - network.refused, entry?.limit ?? Infinity))
         this.ceilings.set(id, (entry = { limit, since: now }))
-      } else if (
-        entry &&
-        network.refused === 0 &&
-        !held &&
-        now - entry.since >= (entry.byDisk ? DISK_RECOVER_MS : RECOVER_MS)
-      ) {
-        entry.limit = entry.byDisk ? entry.limit * 2 : entry.limit + 1
+      } else if (entry && network.refused === 0 && now - entry.since >= RECOVER_MS) {
+        entry.limit++
         entry.since = now
         if (entry.limit >= this.maxPerNetwork) {
           this.ceilings.delete(id)
           entry = undefined
         }
       }
-      const ceiling = Math.min(this.maxPerNetwork, entry?.limit ?? Infinity)
+      const ceiling = Math.min(
+        this.maxPerNetwork,
+        entry?.limit ?? Infinity,
+        this.disk.cap ?? Infinity
+      )
       if (streams > ceiling) {
         actions.push({ kind: 'retire', networkId: id, count: streams - ceiling })
         continue
       }
-      // Not while the server is turning requests away.
-      if (network.refused > 0 || held || streams === 0 || network.answered < streams) continue
+      // Not while the server is turning requests away, or the disk isn't keeping up.
+      if (network.refused > 0 || diskHolds || streams === 0 || network.answered < streams) continue
       const count = Math.min(this.grows ? streams : Infinity, ceiling - streams, spare)
       if (count < 1) continue
       spare -= count
       actions.push({ kind: 'add', networkId: id, count })
     }
     return actions
+  }
+
+  /** Moves the disk's cap (see the rules above). */
+  private judgeDisk({ now, disk, networks }: Snapshot): void {
+    if (!disk) return
+    const streams = Math.max(0, ...networks.map((network) => network.streams))
+    const d = this.disk
+    // Only what was seen since the cap last moved says anything about the count it allows.
+    const lasted = now - Math.max(disk.since, d.movedAt)
+    if (disk.reading === 'behind' && lasted >= DISK_PATIENCE_MS && streams > 1) {
+      d.cap = Math.ceil(streams / 2)
+    } else if (
+      disk.reading === 'keeping-up' &&
+      lasted >= DISK_RECOVER_MS &&
+      d.cap !== null &&
+      streams > 0
+    ) {
+      d.cap = streams * 2 >= this.maxPerNetwork ? null : streams * 2
+    } else return
+    d.movedAt = now
   }
 }

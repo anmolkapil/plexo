@@ -85,7 +85,8 @@ export async function markSparse(path: string): Promise<boolean> {
       )
       return ok !== 0
     } finally {
-      await call(lib.closeHandle, handle)
+      // The file is sparse or not by now, whatever closing says.
+      await call(lib.closeHandle, handle).catch(() => {})
     }
   } catch {
     return false
