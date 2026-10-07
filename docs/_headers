@@ -1,0 +1,15 @@
+# Filenames aren't content-hashed, so keep TTLs short enough that edits propagate.
+/assets/fonts/*
+  Cache-Control: public, max-age=2592000
+
+/*.css
+  Cache-Control: public, max-age=3600
+
+/*.js
+  Cache-Control: public, max-age=3600
+
+/*.svg
+  Cache-Control: public, max-age=86400
+
+/*.png
+  Cache-Control: public, max-age=86400
