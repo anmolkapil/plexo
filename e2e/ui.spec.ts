@@ -25,6 +25,9 @@ async function stubNativeUi(
 }
 
 test.describe('a torrent through the UI', () => {
+  // This journey inspects a peer row, not network reassignment. Keep one network stable;
+  // routing across networks and globally unique peer IDs are checked by torrent specs/invariants.
+  test.use({ appEnv: { PLEXO_E2E_INTERFACES: interfacesEnv({ a: NETWORKS.a }) } })
   test('choose its files, watch its peers, finish', async ({ plexo, dirs }) => {
     const swarm = await new Swarm().start()
     try {
@@ -72,11 +75,7 @@ test.describe('a torrent through the UI', () => {
       // What it runs. A peer has no progress of its own: a dash, not a bar.
       await expect(peerRow).toContainText('WebTorrent')
       await expect(peerRow.getByRole('progressbar')).toHaveCount(0)
-      // Each peer's number is its own across the download: no two rows share one, whichever
-      // networks they're on.
-      for (const button of await page.getByRole('button', { name: /^\d+ peers?/ }).all()) {
-        if ((await button.getAttribute('aria-expanded')) !== 'true') await button.click()
-      }
+      // Each rendered peer has its own number.
       const numbers = (await page.getByText(/^Peer #\d+$/).allTextContents()).map((text) =>
         text.trim()
       )
@@ -114,6 +113,55 @@ test.describe('a torrent through the UI', () => {
 })
 
 test.describe('UI journeys @smoke', () => {
+  test('minimum window keeps download controls and a network row in view', async ({
+    plexo,
+    serve
+  }) => {
+    const minimum = await plexo.evaluateMain(({ BrowserWindow }) => {
+      const window = BrowserWindow.getAllWindows()[0]
+      const [width, height] = window.getMinimumSize()
+      window.setSize(width, height)
+      return { minimum: [width, height], size: window.getSize() }
+    }, null)
+    expect(minimum.minimum).toEqual([720, 620])
+    expect(minimum.size).toEqual(minimum.minimum)
+    const origin = await serve({ size: SIZE })
+    const reached = origin.hold(0)
+    await plexo.start(origin.url(), origin.sha256)
+    await reached
+    const page = plexo.page
+    await page.getByRole('button', { name: 'Open test.bin', exact: true }).click()
+    // An empty bar is still a progress indicator: its track and accessible value must exist
+    // before the server sends the first byte.
+    const progress = page.getByRole('table', { name: 'Networks' }).getByRole('progressbar').first()
+    await expect(progress).toHaveAttribute('aria-valuenow', '0')
+    await expect(progress).toBeVisible()
+    await expect(page.getByRole('button', { name: 'Pause', exact: true })).toBeInViewport({
+      ratio: 1
+    })
+    await expect(page.getByRole('columnheader', { name: 'Network', exact: true })).toBeInViewport({
+      ratio: 1
+    })
+    await expect(
+      page.getByRole('table', { name: 'Networks' }).getByRole('checkbox').first()
+    ).toBeInViewport({ ratio: 1 })
+    expect(
+      await page.evaluate(
+        () => document.documentElement.scrollWidth <= document.documentElement.clientWidth
+      )
+    ).toBe(true)
+    await page.getByRole('button', { name: 'Pause', exact: true }).click()
+    await expect(page.getByRole('button', { name: 'Resume', exact: true })).toBeInViewport({
+      ratio: 1
+    })
+    origin.release()
+    await page.getByRole('button', { name: 'Resume', exact: true }).click()
+    await plexo.waitForHttpStatus('completed')
+    await expect(page.getByRole('button', { name: /Show in (Finder|folder)/ })).toBeInViewport({
+      ratio: 1
+    })
+  })
+
   test('paste a link, start, pause, resume, finish, reveal the file', async ({
     plexo,
     serve,
@@ -236,6 +284,9 @@ test.describe('settings @smoke', () => {
       await stubNativeUi(plexo, dirs.dest)
       await plexo.newDownload()
       await page().getByRole('button', { name: 'Change…' }).click()
+      const destinationRow = (): Locator =>
+        page().getByText('Save to', { exact: true }).locator('..')
+      const chosenDestination = await destinationRow().innerText()
       await page().keyboard.press('Escape')
       // A function: the window, and so the page, is a new one after a relaunch.
       const networksMenu = (): Locator =>
@@ -257,7 +308,10 @@ test.describe('settings @smoke', () => {
         await expect(page().getByRole('alertdialog')).toBeHidden()
         await expect(page().getByRole('button', { name: labelAfterSwitch })).toBeVisible()
         await plexo.newDownload()
-        await expect(page().getByText(dirs.dest)).toBeVisible()
+        await expect(destinationRow()).toHaveText(chosenDestination, { useInnerText: true })
+        // Presentation may abbreviate home; persistence must retain the usable absolute path.
+        const saved = JSON.parse(await readFile(join(dirs.userData, 'app-settings.json'), 'utf8'))
+        expect(saved.destinationDir).toBe(dirs.dest)
         await page().keyboard.press('Escape')
         await networksMenu().click()
         await expect(page().getByText('Office fibre')).toBeVisible()
@@ -310,13 +364,16 @@ test.describe('no networks', () => {
 
   test('a network appearing makes the list ready for downloads @smoke', async ({ plexo }) => {
     await expect(plexo.page.getByText('No networks connected')).toBeVisible()
+    // A manual scan is safe while the list stays empty. Once an interface appears, the
+    // background monitor can remove this button before Playwright finishes clicking it.
+    await plexo.page.getByRole('button', { name: 'Scan again' }).click()
+    await expect(plexo.page.getByText('No networks connected')).toBeVisible()
     await plexo.evaluateMain(
       (_electron, value) => {
         process.env['PLEXO_E2E_INTERFACES'] = value
       },
       interfacesEnv({ a: NETWORKS['a'] })
     )
-    await plexo.page.getByRole('button', { name: 'Scan again' }).click()
     await expect(plexo.page.getByText('No downloads yet')).toBeVisible()
   })
 })

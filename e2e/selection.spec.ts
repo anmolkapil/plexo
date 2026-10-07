@@ -120,10 +120,13 @@ test('trashing finished torrent files preserves unrelated files in the torrent f
     await plexo.page
       .getByRole('checkbox', { name: `Select ${completed.fileName}`, exact: true })
       .check()
-    await plexo.page.getByRole('button', { name: /^Move files to Trash…/ }).click()
+    const trashName = process.platform === 'win32' ? 'Recycle Bin' : 'Trash'
+    await plexo.page
+      .getByRole('button', { name: `Move files to ${trashName}… (1)`, exact: true })
+      .click()
     await plexo.page
       .getByRole('alertdialog')
-      .getByRole('button', { name: 'Move files to Trash', exact: true })
+      .getByRole('button', { name: `Move files to ${trashName}`, exact: true })
       .click()
     await expect(plexo.page.getByText('No downloads yet', { exact: true })).toBeVisible()
     expect(await readFile(join(completed.destinationPath, 'personal.txt'), 'utf8')).toBe('keep me')
