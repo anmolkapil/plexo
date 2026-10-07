@@ -8,7 +8,14 @@ import type {
 } from '../../shared/types'
 import { testKnobs, testStreamsPerNetwork } from '../testKnobs'
 import { advanceBlock, retractBlock } from './blockProgress'
-import { ConcurrencyController, type Action, type Snapshot } from './concurrency'
+import {
+  ConcurrencyController,
+  DISK_PATIENCE_TICKS,
+  DISK_RECOVER_MS,
+  mostlyHeld,
+  type Action,
+  type Snapshot
+} from './concurrency'
 import { downloadChunk, fetchRange, HttpStatusError, RemoteChangedError } from './chunkDownloader'
 import { compareVersion, type FileVersion } from './fileVersion'
 import { interleave, MAX_STREAMS_PER_NETWORK, startingStreams } from './plan'
@@ -244,6 +251,9 @@ export class HttpTransfer implements Transfer {
   /** Decides how many streams each network runs; kept for the whole download, so a pause and
    * resume doesn't forget what it has found out. */
   private concurrency: ConcurrencyController | null
+  /** Ticks in a row most streams have been held up by the disk, and when that last held. */
+  private diskHeldTicks = 0
+  private diskHeldAt = 0
 
   constructor(
     private readonly runtime: HttpTransferTarget,
@@ -313,13 +323,30 @@ export class HttpTransfer implements Transfer {
   tick(now: number): void {
     this.refreshStuckConnections(now)
     this.host.reconcile()
-    this.adjustStreams(this.concurrency?.tick(this.concurrencySnapshot()))
+    const snapshot = this.concurrencySnapshot()
+    this.noteDisk(snapshot, now)
+    this.adjustStreams(this.concurrency?.tick(snapshot))
     // Each refusal is counted once.
     for (const self of this.chunkRuntimes.values()) {
       self.refused = false
       self.served = false
       self.wrote = false
     }
+  }
+
+  /** Tells the user the disk is what's holding the download back: as soon as Auto would act on
+   * it, and until the disk has kept up for as long as Auto waits to add streams back. Whatever
+   * the stream count, Auto or picked. */
+  private noteDisk(snapshot: Snapshot, now: number): void {
+    const held = mostlyHeld(snapshot.networks)
+    this.diskHeldTicks = held ? this.diskHeldTicks + 1 : 0
+    if (held) this.diskHeldAt = now
+    const limited =
+      this.diskHeldTicks >= DISK_PATIENCE_TICKS ||
+      (!!this.runtime.state.diskLimited && now - this.diskHeldAt < DISK_RECOVER_MS)
+    if (limited === !!this.runtime.state.diskLimited) return
+    this.runtime.state.diskLimited = limited || undefined
+    this.host.scheduleUpdate()
   }
 
   running(): Iterable<Promise<void>> {

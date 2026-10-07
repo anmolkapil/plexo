@@ -68,6 +68,17 @@ export interface Snapshot {
 
 export type Action = { kind: 'add' | 'retire'; networkId: string; count: number }
 
+/** Whether most of a download's streams are held up by the disk (see the rules above). */
+export function mostlyHeld(networks: readonly NetworkSnapshot[]): boolean {
+  let streams = 0
+  let held = 0
+  for (const network of networks) {
+    streams += network.streams
+    held += network.held ?? 0
+  }
+  return held * 2 > streams
+}
+
 export class ConcurrencyController {
   /** Networks a server has refused on: the most streams each may run for now, and when that was
    * last changed. */
@@ -86,13 +97,7 @@ export class ConcurrencyController {
     const actions: Action[] = []
     const { now } = snapshot
     let spare = snapshot.spareWork
-    let streamsNow = 0
-    let heldNow = 0
-    for (const network of snapshot.networks) {
-      streamsNow += network.streams
-      heldNow += network.held ?? 0
-    }
-    const held = this.grows && heldNow * 2 > streamsNow
+    const held = this.grows && mostlyHeld(snapshot.networks)
     this.diskBound = held ? this.diskBound + 1 : 0
     const halve = this.diskBound >= DISK_PATIENCE_TICKS
     if (halve) this.diskBound = 0

@@ -1,5 +1,5 @@
 import { SPEED_HISTORY_SECONDS, type DownloadState } from '@shared/types'
-import { Folder } from 'lucide-react'
+import { AlertTriangle, Folder } from 'lucide-react'
 import { memo, useEffect, useState } from 'react'
 import { BlockGrid } from '../components/BlockGrid'
 import { ColorBadge } from '../components/ColorBadge'
@@ -52,17 +52,21 @@ function BigStat({
   label,
   value,
   unit,
-  valueClass
+  valueClass,
+  note
 }: {
   label: string
   value: string | number
   unit?: string
   valueClass: string
+  /** Beside the label, e.g. a warning about what holds the value down. */
+  note?: React.ReactNode
 }): React.JSX.Element {
   return (
     <>
-      <div className="font-mono text-[10px] leading-none font-medium tracking-[0.2em] text-muted-foreground">
+      <div className="flex items-center gap-1.5 font-mono text-[10px] leading-none font-medium tracking-[0.2em] text-muted-foreground">
         {label}
+        {note}
       </div>
       <div className="flex items-baseline gap-[7px]">
         <div
@@ -256,6 +260,30 @@ export const DownloadingScreen = memo(function DownloadingScreen({
                 value={isPaused ? '—' : speedValue}
                 unit={isPaused ? undefined : speedUnit}
                 valueClass={isPaused ? 'text-muted-foreground' : 'text-foreground'}
+                note={
+                  !isPaused &&
+                  download.kind === 'http' &&
+                  download.diskLimited && (
+                    <Tooltip>
+                      <TooltipTrigger
+                        render={
+                          <span
+                            role="img"
+                            aria-label="Limited by disk"
+                            className="inline-flex text-[var(--swatch-amber)]"
+                          >
+                            <AlertTriangle aria-hidden className="size-3" />
+                          </span>
+                        }
+                      />
+                      <TooltipContent>
+                        Limited by disk: it can&apos;t save as fast as the network delivers. Plexo
+                        uses fewer connections until it catches up. A faster drive, such as an SSD,
+                        would download faster.
+                      </TooltipContent>
+                    </Tooltip>
+                  )
+                }
               />
               <div className="flex items-center gap-2 font-mono text-[10px] leading-none font-medium tabular-nums text-muted-foreground">
                 <InlineStat label="AVG" value={formatSpeed(avgSpeedBytesPerSec)} />

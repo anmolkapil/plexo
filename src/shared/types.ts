@@ -229,6 +229,8 @@ export interface HttpDownloadState extends DownloadStateBase {
   blocks: HttpBlockState[]
   totalBlocks: number
   blockSizeBytes: number
+  /** The disk can't keep up: most streams are waiting for their writes (see concurrency.ts). */
+  diskLimited?: boolean
 }
 
 export interface TorrentDownloadState extends DownloadStateBase {

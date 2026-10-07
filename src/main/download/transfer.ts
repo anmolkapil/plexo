@@ -220,6 +220,7 @@ export function clearSpeeds(state: DownloadState): void {
   const connections = state.kind === 'http' ? state.streams : state.peers
   for (const connection of connections) connection.speedBytesPerSec = 0
   for (const network of state.networks) network.speedBytesPerSec = 0
+  if (state.kind === 'http') state.diskLimited = undefined
   if (state.kind === 'torrent') {
     state.uploadSpeedBytesPerSec = 0
     for (const network of state.networks) network.uploadSpeedBytesPerSec = 0
