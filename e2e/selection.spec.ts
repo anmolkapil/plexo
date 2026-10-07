@@ -1,6 +1,6 @@
 import { existsSync } from 'node:fs'
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
-import { basename, join } from 'node:path'
+import { basename, dirname, join } from 'node:path'
 import { BLOCK, expect, test, treeSha } from './fixtures'
 import { seededBytes } from './origin'
 import { named, Swarm, torrentFileOnDisk } from './torrentSwarm'
@@ -183,4 +183,41 @@ test('cancelling an unfinished torrent preserves unrelated files in its folder',
   } finally {
     await swarm.stop()
   }
+})
+
+test('a removal that fails for one download still removes the rest, and asks again about only that one', async ({
+  plexo,
+  serve,
+  dirs
+}) => {
+  const first = await serve({ size: BLOCK })
+  await plexo.start(first.url(), first.sha256, { fileName: 'goes.bin' })
+  await plexo.waitForStatus('completed')
+  const second = await serve({ size: BLOCK })
+  await plexo.start(second.url(), second.sha256, { fileName: 'stays.bin' })
+  await expect
+    .poll(async () => (await plexo.all()).filter((d) => d.status === 'completed').length)
+    .toBe(2)
+  const trashed = join(dirname(dirs.dest), 'test-trash')
+  await mkdir(trashed)
+  await plexo.evaluateMain(({ shell }, dest) => {
+    shell.trashItem = async (path: string): Promise<void> => {
+      const { rename } = process.getBuiltinModule('node:fs/promises')
+      const { basename, join } = process.getBuiltinModule('node:path')
+      if (basename(path) === 'stays.bin') throw new Error('Trash is not available')
+      await rename(path, join(dest, basename(path)))
+    }
+  }, trashed)
+
+  const page = plexo.page
+  await page.getByRole('checkbox', { name: 'Select goes.bin', exact: true }).check()
+  await page.getByRole('checkbox', { name: 'Select stays.bin', exact: true }).check()
+  await page.getByRole('button', { name: /^Move files to/ }).click()
+  const dialog = page.getByRole('alertdialog')
+  await dialog.getByRole('button', { name: 'Delete files', exact: true }).click()
+
+  await expect(dialog.getByRole('alert')).toContainText('1 of 2 couldn’t be removed')
+  await expect(dialog.getByRole('heading', { name: 'Delete file?' })).toBeVisible()
+  await expect(page.getByRole('checkbox', { name: 'Select goes.bin' })).toHaveCount(0)
+  expect(existsSync(join(trashed, 'goes.bin'))).toBe(true)
 })

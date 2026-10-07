@@ -3,8 +3,9 @@ import type { ActionId, DownloadItem } from '../utils/downloadActions'
 
 export interface Actions {
   /** Does `id` to `targets`, or asks first where it deletes something. Resolves once it's been
-   * sent (a question that's asked resolves at once). */
-  perform: (id: ActionId, targets: DownloadItem[]) => Promise<void>
+   * sent (a question that's asked resolves at once): true if it went through, false if it failed
+   * (the reason is in `error`). */
+  perform: (id: ActionId, targets: DownloadItem[]) => Promise<boolean>
   /** Asks to clear the whole finished list. */
   askClearFinished: () => void
 }

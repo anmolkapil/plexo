@@ -415,7 +415,7 @@ const DownloadRow = memo(function DownloadRow({
   onSelect: (id: string, on: boolean) => void
   onOpen: (id: string) => void
   /** Does what the row's button says, the way the menu, the toolbar and its screen do. */
-  onPerform: (id: ActionId, targets: Item[]) => Promise<void>
+  onPerform: (id: ActionId, targets: Item[]) => Promise<boolean>
 }): React.JSX.Element {
   const formatSpeed = useFormatSpeed()
   const [working, setWorking] = useState(false)

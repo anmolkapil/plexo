@@ -28,8 +28,12 @@ export function DownloadActionsProvider({
   const [dialogError, setDialogError] = useState<string | null>(null)
 
   const perform = useCallback(
-    async (id: ActionId, targets: DownloadItem[]): Promise<void> => {
+    async (id: ActionId, targets: DownloadItem[]): Promise<boolean> => {
       setError(null)
+      const fail = (cause: unknown): false => {
+        setError(describeError(cause))
+        return false
+      }
       switch (id) {
         case 'pause':
         case 'resume':
@@ -42,31 +46,43 @@ export function DownloadActionsProvider({
             )
           )
           const failed = results.find((result) => result.status === 'rejected')
-          if (failed) setError(describeError(failed.reason))
-          return
+          return failed ? fail(failed.reason) : true
         }
         case 'fix':
           setFixing(targets[0] as DownloadState)
-          return
+          return true
         case 'again': {
           // Nothing of it can be kept: it goes, and its link waits in New download to start over.
+          // Only once it's really gone, so the new one can't collide with what's left of it.
           const [item] = targets
-          useAppStore.getState().removeDownload(item.id)
+          try {
+            await window.plexo.removeDownload(item.id)
+          } catch (cause) {
+            return fail(cause)
+          }
+          useAppStore.getState().forgetDownload(item.id)
           setView({ name: 'list' })
           openNewDownload(item.url)
-          return
+          return true
         }
         case 'open':
-          await window.plexo.openDownload(targets[0].id)
-          return
-        case 'reveal':
-          await window.plexo.revealDownload(targets[0].id)
-          return
+        case 'reveal': {
+          try {
+            const [item] = targets
+            const found =
+              id === 'open'
+                ? await window.plexo.openDownload(item.id)
+                : await window.plexo.revealDownload(item.id)
+            return found || fail('That file is no longer where it was saved.')
+          } catch (cause) {
+            return fail(cause)
+          }
+        }
         case 'copy':
-          await navigator.clipboard
+          return navigator.clipboard
             .writeText(targets.map((item) => item.url).join('\n'))
-            .catch(() => {})
-          return
+            .then(() => true)
+            .catch(fail)
         case 'cancel':
         case 'remove':
         case 'trash':
@@ -76,6 +92,7 @@ export function DownloadActionsProvider({
             items: targets,
             clearAll: false
           })
+          return true
       }
     },
     [setView, openNewDownload]
@@ -88,28 +105,37 @@ export function DownloadActionsProvider({
 
   const confirmRemoval = async (): Promise<void> => {
     if (!confirmation || busy) return
+    const { mode, items, clearAll } = confirmation
     setBusy(true)
     setDialogError(null)
     try {
-      if (confirmation.clearAll) await window.plexo.clearHistory()
-      else {
-        for (const item of confirmation.items) {
-          await window.plexo.removeDownload(item.id, { trashFile: confirmation.mode === 'trash' })
-          useAppStore.setState((store) => {
-            const { [item.id]: removed, ...downloads } = store.downloads
-            void removed
-            return { downloads, history: store.history.filter((entry) => entry.id !== item.id) }
-          })
+      // One failing doesn't hold back the rest: each that goes is dropped from the window and
+      // from the question, so what's left asked about is exactly what still needs doing.
+      const gone = new Set<string>()
+      let firstFailure: unknown
+      if (clearAll) {
+        await window.plexo.clearHistory()
+      } else {
+        for (const item of items) {
+          try {
+            await window.plexo.removeDownload(item.id, { trashFile: mode === 'trash' })
+            useAppStore.getState().forgetDownload(item.id)
+            gone.add(item.id)
+          } catch (cause) {
+            firstFailure ??= cause
+          }
         }
       }
       // Showing one that's gone: back to the list.
       const view = useAppStore.getState().view
-      if (
-        view.name === 'download' &&
-        (confirmation.clearAll || confirmation.items.some((item) => item.id === view.id))
-      )
-        setView({ name: 'list' })
-      setConfirmation(null)
+      if (view.name === 'download' && (clearAll || gone.has(view.id))) setView({ name: 'list' })
+      const left = items.filter((item) => !gone.has(item.id))
+      if (!clearAll && left.length > 0) {
+        setConfirmation({ mode, items: left, clearAll })
+        setDialogError(
+          `${left.length} of ${items.length} couldn’t be removed: ${describeError(firstFailure)}`
+        )
+      } else setConfirmation(null)
     } catch (cause) {
       setDialogError(describeError(cause))
     } finally {

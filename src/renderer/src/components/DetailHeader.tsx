@@ -18,7 +18,7 @@ import { Button } from './ui/button'
 export function DetailHeader({ download }: { download: DownloadItem }): React.JSX.Element {
   const setView = useAppStore((store) => store.setView)
   const { perform } = useDownloadActions()
-  const { busy } = useDownloadActionsState()
+  const { busy, error } = useDownloadActionsState()
   const manage = manageActions(download)
   const next = headerActions(download)
 
@@ -31,7 +31,7 @@ export function DetailHeader({ download }: { download: DownloadItem }): React.JS
 
   const run = (id: ActionId): void => {
     if (id === 'pause' || id === 'resume' || id === 'retry') setWorking({ id, state })
-    void perform(id, [download]).catch(() => setWorking(null))
+    void perform(id, [download]).then((done) => done || setWorking(null))
   }
 
   const button = (
@@ -64,6 +64,11 @@ export function DetailHeader({ download }: { download: DownloadItem }): React.JS
         Downloads
       </button>
       <div className="flex-1" />
+      {error && (
+        <p role="alert" className="min-w-0 truncate text-[12px] text-destructive" title={error}>
+          {error}
+        </p>
+      )}
       {manage.map((id) => button(id, ACTION_META[id].destructive ? 'destructive' : 'secondary'))}
       {next.map((id, index) =>
         // The last is the main one; Pause is never the main one, it's the way to stop.
