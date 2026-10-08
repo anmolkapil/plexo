@@ -25,7 +25,6 @@ const EXTENSION_ORIGIN = /^(chrome|moz)-extension:\/\/[a-z0-9-]+$/i
 export interface BridgeHost {
   manager: DownloadManager
   offer: (offer: Offer) => void
-  showWindow: () => void
 }
 
 let host: BridgeHost | null = null
@@ -195,7 +194,8 @@ async function add(
     res.once('close', () => !res.writableFinished && resolve())
   )
   const probe = await checked(request, gone)
-  // The extension gave up and the browser kept the download: adding it too would make two.
+  // The extension gave up and the browser kept the download: adding it too would make two. From
+  // here on nothing awaits, so the answer can't come after the extension has stopped waiting.
   if (res.writableEnded || res.destroyed) return
   if (typeof probe === 'string') return keep(probe)
   if (
@@ -206,17 +206,13 @@ async function add(
   ) {
     return keep('smaller than the minimum size')
   }
-  if (probe.kind === 'http' && (await host.manager.refreshFromBrowser(probe, request.browser))) {
-    host.showWindow()
-    return taken()
-  }
-
   host.offer({
     url: request.url,
     probe,
     browser: request.browser,
     from: request.browser?.name,
-    signedInTo: signedInTo(request, probe)
+    signedInTo: signedInTo(request, probe),
+    resumes: probe.kind === 'http' ? host.manager.failedMatch(probe) : undefined
   })
   taken()
 }

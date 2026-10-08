@@ -410,6 +410,8 @@ export interface PendingLink {
   probe?: ProbeResult
   from?: string
   signedInTo?: string
+  /** A failed download this looks like the same file as, for the user to resume instead. */
+  resumes?: { id: string; fileName: string }
 }
 
 export interface StartTorrentDownloadRequest extends StartDownloadRequestBase {

@@ -54,8 +54,10 @@ export interface IpcContract {
    * `trashFile`: then it goes to the Trash. */
   removeDownload: { args: [id: string, options?: { trashFile?: boolean }]; result: void }
   checkForUpdate: { args: []; result: UpdateInfo | null }
-  /** Oldest first, each only once. */
-  takePendingLinks: { args: []; result: PendingLink[] }
+  /** Oldest first: every link not yet started or dismissed. */
+  pendingLinks: { args: []; result: PendingLink[] }
+  /** Resumes the failed download a link was matched to, from that link (see relinkDownload). */
+  resumeFromLink: { args: [linkId: string, downloadId: string]; result: void }
   /** Forgets the sign-in of a link that won't be started. */
   dismissLink: { args: [id: string]; result: void }
 }

@@ -14,8 +14,9 @@ export interface Offer extends Omit<PendingLink, 'id'> {
   browser?: BrowserContext
 }
 
-const queue: (Offer & { id: string })[] = []
-const shown = new Map<string, BrowserContext>()
+// Every link is kept here until it's started or let go, not handed over once: the browser has
+// already dropped its copy, and the window's own list is lost when the window closes or reloads.
+const links = new Map<string, Offer>()
 
 /** A magnet link, or the path of a .torrent file that exists; anything else isn't taken. */
 export function acceptedLink(candidate: string): string | null {
@@ -53,25 +54,26 @@ export function bringForward(window: BrowserWindow): void {
   window.focus()
 }
 
-/** Queued, so a link that arrives before the window is ready isn't lost. */
 export function offerLink(offer: Offer, window: BrowserWindow | null): void {
-  queue.push({ ...offer, id: randomUUID() })
+  links.set(randomUUID(), offer)
   if (!window || window.isDestroyed()) return
   bringForward(window)
   window.webContents.send(IpcChannels.linkReceived)
 }
 
-export function takePendingLinks(): PendingLink[] {
-  return queue.splice(0).map(({ browser, ...link }) => {
-    if (browser) shown.set(link.id, browser)
-    return link
+/** Oldest first. */
+export function pendingLinks(): PendingLink[] {
+  return [...links].map(([id, offer]) => {
+    const { browser, ...link } = offer
+    void browser
+    return { id, ...link }
   })
 }
 
-export function shownBrowser(id: string): BrowserContext | undefined {
-  return shown.get(id)
+export function pendingLink(id: string): Offer | undefined {
+  return links.get(id)
 }
 
 export function releaseLink(id: string): void {
-  shown.delete(id)
+  links.delete(id)
 }

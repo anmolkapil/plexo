@@ -1,4 +1,5 @@
 import type {
+  BrowserContext,
   HttpBlockState,
   HttpStreamState,
   DownloadNetwork,
@@ -215,6 +216,59 @@ const MAX_SAMPLES = 8
 /** A sample must come from a server presenting the new label; behind a load balancer the next
  * request may land on another one, so take a few tries at reaching it. */
 const SAMPLE_TRIES = 4
+
+/**
+ * Re-fetches a spread of the bytes `target` already has on disk from `url` and compares them.
+ * 'unknown' when there's nothing on disk to compare yet, or the samples couldn't be fetched.
+ * `label`: only a reply from a server presenting it counts.
+ */
+export async function compareSamples(
+  target: Pick<HttpTransferTarget, 'blocks' | 'file'>,
+  url: string,
+  browser: BrowserContext | undefined,
+  connection: StreamConnection,
+  label?: FileVersion
+): Promise<'same' | 'different' | 'unknown'> {
+  const withData = target.blocks.filter((block) => block.bytesDownloaded > 0)
+  const step = Math.max(1, withData.length / MAX_SAMPLES)
+  const picks = Array.from(
+    { length: Math.min(MAX_SAMPLES, withData.length) },
+    (_, i) => withData[Math.floor(i * step)]
+  )
+
+  let compared = 0
+  for (const block of picks) {
+    let local: Buffer
+    try {
+      local = await target.file.read(
+        block.rangeStart,
+        Math.min(SAMPLE_BYTES, block.bytesDownloaded)
+      )
+    } catch {
+      continue
+    }
+    if (local.length === 0) continue
+
+    for (let tries = 0; tries < SAMPLE_TRIES; tries++) {
+      try {
+        const remote = await fetchRange(
+          url,
+          block.rangeStart,
+          block.rangeStart + local.length - 1,
+          connection,
+          browser
+        )
+        if (label && compareVersion([label], remote.version).kind !== 'same') continue
+        if (!remote.body.equals(local)) return 'different'
+        compared += 1
+        break
+      } catch {
+        return 'unknown'
+      }
+    }
+  }
+  return compared > 0 ? 'same' : 'unknown'
+}
 
 /**
  * Fetches a download over HTTP: streams, each one connection to the server through one network,
@@ -1141,48 +1195,9 @@ export class HttpTransfer implements Transfer {
     seen: FileVersion
   ): Promise<'same' | 'different' | 'unknown'> {
     if (compareVersion(this.acceptedVersions, seen).kind === 'same') return 'same'
-
     // Every byte on disk came from an accepted version: mismatched responses are rejected
-    // before anything is written.
-    const withData = this.runtime.blocks.filter((block) => block.bytesDownloaded > 0)
-    const step = Math.max(1, withData.length / MAX_SAMPLES)
-    const picks = Array.from(
-      { length: Math.min(MAX_SAMPLES, withData.length) },
-      (_, i) => withData[Math.floor(i * step)]
-    )
-
-    let compared = 0
-    for (const block of picks) {
-      let local: Buffer
-      try {
-        local = await this.runtime.file.read(
-          block.rangeStart,
-          Math.min(SAMPLE_BYTES, block.bytesDownloaded)
-        )
-      } catch {
-        continue
-      }
-      if (local.length === 0) continue
-
-      for (let tries = 0; tries < SAMPLE_TRIES; tries++) {
-        try {
-          const remote = await fetchRange(
-            this.runtime.requestPayload.url,
-            block.rangeStart,
-            block.rangeStart + local.length - 1,
-            connection,
-            this.runtime.requestPayload.browser
-          )
-          // A reply from a server still presenting an accepted label proves nothing here.
-          if (compareVersion([seen], remote.version).kind !== 'same') continue
-          if (!remote.body.equals(local)) return 'different'
-          compared += 1
-          break
-        } catch {
-          return 'unknown'
-        }
-      }
-    }
-    return compared > 0 ? 'same' : 'unknown'
+    // before anything is written. A reply still presenting an accepted label proves nothing.
+    const { url, browser } = this.runtime.requestPayload
+    return compareSamples(this.runtime, url, browser, connection, seen)
   }
 }

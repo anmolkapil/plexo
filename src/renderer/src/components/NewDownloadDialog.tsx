@@ -247,6 +247,21 @@ function NewDownloadForm({ onDone }: { onDone: () => void }): React.JSX.Element 
     if (path) setUrl(path)
   }
 
+  const handleResume = async (): Promise<void> => {
+    const resumes = shownLink?.resumes
+    if (!shownLink || !resumes) return
+    setStarting(true)
+    setStartError(null)
+    try {
+      await window.plexo.resumeFromLink(shownLink.id, resumes.id)
+      useAppStore.setState({ view: { name: 'download', id: resumes.id } })
+      finishLink(true)
+    } catch (error) {
+      setStartError(describeError(error))
+      setStarting(false)
+    }
+  }
+
   const handleStart = async (): Promise<void> => {
     if (probe.status !== 'ready' || !canStart) return
     setStarting(true)
@@ -392,7 +407,7 @@ function NewDownloadForm({ onDone }: { onDone: () => void }): React.JSX.Element 
           </Button>
         </div>
 
-        {shownLink && (
+        {shownLink?.from && (
           <div className="flex h-6 items-center gap-1.5 self-start rounded-full border-[0.5px] border-[var(--color-wifi-border)] bg-[var(--color-wifi-bg)] px-2.5 text-[12px] font-medium text-[var(--color-wifi-text)]">
             {shownLink.signedInTo ? (
               <Lock aria-hidden className="size-3" />
@@ -400,11 +415,29 @@ function NewDownloadForm({ onDone }: { onDone: () => void }): React.JSX.Element 
               <Globe aria-hidden className="size-3" />
             )}
             {[
-              `From ${shownLink.from ?? 'your browser'}`,
+              `From ${shownLink.from}`,
               shownLink.signedInTo && `with your ${shownLink.signedInTo} sign-in`
             ]
               .filter(Boolean)
               .join(' · ')}
+          </div>
+        )}
+
+        {shownLink?.resumes && (
+          <div className="flex items-center gap-3 rounded-lg border-[0.5px] border-border bg-card px-3 py-2 text-[12.5px]">
+            <span className="min-w-0 flex-1">
+              Same file as <span className="font-medium">{shownLink.resumes.fileName}</span>, which
+              failed. Resume that instead?
+            </span>
+            <Button
+              type="button"
+              variant="secondary"
+              size="sm"
+              disabled={starting}
+              onClick={() => void handleResume()}
+            >
+              Resume it
+            </Button>
           </div>
         )}
 

@@ -141,8 +141,7 @@ app.whenReady().then(async () => {
   downloadManager = registerIpcHandlers(() => mainWindow)
   void startBridge({
     manager: downloadManager,
-    offer: (link) => offerLink(link, ensureWindow()),
-    showWindow: () => bringForward(ensureWindow())
+    offer: (link) => offerLink(link, ensureWindow())
   }).catch((error) => console.error('[plexo] browser bridge failed to start', error))
   // Unlike magnet:, plexo:// is Plexo's own, so registering it takes nothing from another app. A
   // development build has no fixed path to register.

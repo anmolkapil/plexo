@@ -226,8 +226,10 @@ export const useAppStore = create<AppStore>((set, get) => ({
   },
 
   receiveLinks: async () => {
-    // main hands each link over only once, so overlapping calls can't take the same one.
-    const arrived = await window.plexo.takePendingLinks().catch(() => [])
+    // main lists every link still waiting, so a window that was closed or reloaded gets them back.
+    const pending = await window.plexo.pendingLinks().catch(() => [])
+    const known = new Set(get().links.map((link) => link.id))
+    const arrived = pending.filter((link) => !known.has(link.id))
     if (arrived.length === 0) return
     const links = [...get().links, ...arrived]
     set({ links, newDownloadOpen: true })

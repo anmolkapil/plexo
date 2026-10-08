@@ -54,10 +54,12 @@ const plexoApi = {
   removeDownload: (downloadId: string, options?: { trashFile?: boolean }) =>
     invoke('removeDownload', downloadId, options),
   checkForUpdate: () => invoke('checkForUpdate'),
-  takePendingLinks: () => invoke('takePendingLinks'),
+  pendingLinks: () => invoke('pendingLinks'),
+  resumeFromLink: (linkId: string, downloadId: string) =>
+    invoke('resumeFromLink', linkId, downloadId),
   dismissLink: (id: string) => invoke('dismissLink', id),
 
-  /** takePendingLinks() has the new link. */
+  /** pendingLinks() has the new link. */
   onLinkReceived: (callback: () => void): (() => void) => {
     const listener = (): void => callback()
     ipcRenderer.on(IpcChannels.linkReceived, listener)
