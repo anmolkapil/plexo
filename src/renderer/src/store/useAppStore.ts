@@ -7,6 +7,7 @@ import type {
   NetworkInterfaceInfo,
   NetworkPreference,
   NetworkPreferences,
+  PendingLink,
   SpeedUnit,
   ThemeSource,
   UpdateInfo
@@ -57,6 +58,12 @@ interface AppStore {
 
   /** Lifted out of the Idle screen so it survives a swap to/from the No-connections screen. */
   draftUrl: string
+  /** Handed-over links stacked in New download, oldest first. */
+  links: PendingLink[]
+  /** -1 while New download shows a link typed or pasted there instead. */
+  linkIndex: number
+  /** Bumped to remount New download's form for another link. */
+  formKey: number
   /** The link last started: still on the clipboard afterwards, so not offered again. */
   startedUrl: string
   /** Persisted — the last folder picked, falling back to downloadsDir. */
@@ -79,6 +86,11 @@ interface AppStore {
   /** Opens New download, with `link` in its link field when one is given. */
   openNewDownload: (link?: string) => void
   closeNewDownload: () => void
+  receiveLinks: () => Promise<void>
+  showLink: (index: number) => void
+  finishLink: (started: boolean) => void
+  /** Another link was typed over the shown one: the field keeps what was typed. */
+  letShownLinkGo: () => void
   setDownloadsAtOnce: (count: number) => void
   /** Each one applies at once, to every download (see main/network/limits.ts). */
   setSpeedLimit: (bytesPerSec: number | undefined) => void
@@ -123,6 +135,9 @@ export const useAppStore = create<AppStore>((set, get) => ({
   speedUnit: initial.speedUnit,
 
   draftUrl: '',
+  links: [],
+  linkIndex: -1,
+  formKey: 0,
   startedUrl: '',
   destinationDir: initial.destinationDir ?? initial.downloadsDir,
 
@@ -203,7 +218,46 @@ export const useAppStore = create<AppStore>((set, get) => ({
   openNewDownload: (link) =>
     set(link === undefined ? { newDownloadOpen: true } : { newDownloadOpen: true, draftUrl: link }),
 
-  closeNewDownload: () => set({ newDownloadOpen: false }),
+  closeNewDownload: () => {
+    const { links, linkIndex } = get()
+    if (linkIndex >= 0) return get().finishLink(false)
+    if (links.length > 0) return get().showLink(links.length - 1)
+    set({ newDownloadOpen: false })
+  },
+
+  receiveLinks: async () => {
+    // main hands each link over only once, so overlapping calls can't take the same one.
+    const arrived = await window.plexo.takePendingLinks().catch(() => [])
+    if (arrived.length === 0) return
+    const links = [...get().links, ...arrived]
+    set({ links, newDownloadOpen: true })
+    get().showLink(links.length - 1)
+  },
+
+  showLink: (index) => {
+    const link = get().links[index]
+    if (link) set({ linkIndex: index, draftUrl: link.url, formKey: get().formKey + 1 })
+  },
+
+  finishLink: (started) => {
+    const { links, linkIndex } = get()
+    const link = links[linkIndex]
+    if (!link) return
+    // Started, main has already forgotten its sign-in.
+    if (!started) void window.plexo.dismissLink(link.id).catch(() => {})
+    const left = links.filter((_, index) => index !== linkIndex)
+    set({ links: left, linkIndex: -1, draftUrl: '' })
+    if (left.length > 0) get().showLink(left.length - 1)
+    else set({ newDownloadOpen: false })
+  },
+
+  letShownLinkGo: () => {
+    const { links, linkIndex } = get()
+    const link = links[linkIndex]
+    if (!link) return
+    void window.plexo.dismissLink(link.id).catch(() => {})
+    set({ links: links.filter((_, index) => index !== linkIndex), linkIndex: -1 })
+  },
 
   setDownloadsAtOnce: (downloadsAtOnce) => {
     set({ downloadsAtOnce })

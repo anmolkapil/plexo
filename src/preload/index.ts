@@ -34,8 +34,8 @@ const plexoApi = {
   pathForFile: (file: File) => webUtils.getPathForFile(file),
   readClipboardText: () => invoke('readClipboardText'),
   revealDownload: (id: string) => invoke('revealDownload', id),
-  startDownload: (request: IpcContract['startDownload']['args'][0]) =>
-    invoke('startDownload', request),
+  startDownload: (request: IpcContract['startDownload']['args'][0], linkId?: string) =>
+    invoke('startDownload', request, linkId),
   listDownloads: () => invoke('listDownloads'),
   listHistory: () => invoke('listHistory'),
   clearHistory: () => invoke('clearHistory'),
@@ -54,9 +54,10 @@ const plexoApi = {
   removeDownload: (downloadId: string, options?: { trashFile?: boolean }) =>
     invoke('removeDownload', downloadId, options),
   checkForUpdate: () => invoke('checkForUpdate'),
-  takePendingLink: () => invoke('takePendingLink'),
+  takePendingLinks: () => invoke('takePendingLinks'),
+  dismissLink: (id: string) => invoke('dismissLink', id),
 
-  /** The OS handed Plexo a link (a magnet link, a .torrent): takePendingLink() has it. */
+  /** takePendingLinks() has the new link. */
   onLinkReceived: (callback: () => void): (() => void) => {
     const listener = (): void => callback()
     ipcRenderer.on(IpcChannels.linkReceived, listener)

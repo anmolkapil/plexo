@@ -12,7 +12,8 @@
     "typecheck:node": "tsc --noEmit -p tsconfig.node.json --composite false",
     "typecheck:web": "tsc --noEmit -p tsconfig.web.json --composite false",
     "typecheck:e2e": "tsc -p tsconfig.e2e.json",
-    "typecheck": "npm run typecheck:node && npm run typecheck:web && npm run typecheck:e2e",
+    "typecheck:extension": "tsc -p extension/tsconfig.json",
+    "typecheck": "npm run typecheck:node && npm run typecheck:web && npm run typecheck:e2e && npm run typecheck:extension",
     "prestart": "install-electron",
     "start": "electron-vite preview",
     "predev": "install-electron",
@@ -23,6 +24,7 @@
     "build:win": "npm run build && electron-builder --win",
     "build:mac": "electron-vite build && electron-builder --mac",
     "build:linux": "electron-vite build && electron-builder --linux",
+    "build:extension": "node extension/build.mjs",
     "test:e2e": "playwright test",
     "test:e2e:smoke": "playwright test --grep @smoke"
   },

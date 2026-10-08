@@ -1,14 +1,21 @@
+import { randomUUID } from 'node:crypto'
 import { statSync } from 'node:fs'
 import { isAbsolute } from 'node:path'
-import type { BrowserWindow } from 'electron'
+import { app, type BrowserWindow } from 'electron'
 import { IpcChannels } from '../shared/ipc-channels'
+import type { BrowserContext, PendingLink } from '../shared/types'
 
-// Links the OS hands Plexo — a magnet link clicked in a browser, a .torrent opened from the file
-// manager — for the window's link field. They're never started on their own: the user still sees
+// Links the OS hands Plexo (a magnet link clicked in a browser, a .torrent opened from the file
+// manager) or the browser extension does. They're never started on their own: the user still sees
 // what the link is and presses Start.
 
-/** The latest link handed over and not yet taken by the window. */
-let pending: string | null = null
+/** The browser's sign-in stays in main: the window never sees it. */
+export interface Offer extends Omit<PendingLink, 'id'> {
+  browser?: BrowserContext
+}
+
+const queue: (Offer & { id: string })[] = []
+const shown = new Map<string, BrowserContext>()
 
 /** A magnet link, or the path of a .torrent file that exists; anything else isn't taken. */
 export function acceptedLink(candidate: string): string | null {
@@ -30,22 +37,41 @@ export function linkFromArgs(argv: readonly string[]): string | null {
   return null
 }
 
-/**
- * Hands `link` to the window: it's kept until the window takes it (takePendingLink), so one that
- * arrives before the window is ready isn't lost. The window is brought forward.
- */
-export function offerLink(link: string, window: BrowserWindow | null): void {
-  pending = link
-  if (!window || window.isDestroyed()) return
+/** Windows and macOS keep a background app from taking focus: Windows only flashes the taskbar
+ * button unless the window is briefly on top, and macOS needs `steal`. */
+export function bringForward(window: BrowserWindow): void {
   if (window.isMinimized()) window.restore()
+  if (process.platform === 'win32') {
+    window.setAlwaysOnTop(true)
+    window.show()
+    window.focus()
+    window.setAlwaysOnTop(false)
+    return
+  }
+  if (process.platform === 'darwin') app.focus({ steal: true })
   window.show()
   window.focus()
+}
+
+/** Queued, so a link that arrives before the window is ready isn't lost. */
+export function offerLink(offer: Offer, window: BrowserWindow | null): void {
+  queue.push({ ...offer, id: randomUUID() })
+  if (!window || window.isDestroyed()) return
+  bringForward(window)
   window.webContents.send(IpcChannels.linkReceived)
 }
 
-/** The link handed over, once: whoever takes it puts it in the link field. */
-export function takePendingLink(): string | null {
-  const link = pending
-  pending = null
-  return link
+export function takePendingLinks(): PendingLink[] {
+  return queue.splice(0).map(({ browser, ...link }) => {
+    if (browser) shown.set(link.id, browser)
+    return link
+  })
+}
+
+export function shownBrowser(id: string): BrowserContext | undefined {
+  return shown.get(id)
+}
+
+export function releaseLink(id: string): void {
+  shown.delete(id)
 }

@@ -655,6 +655,7 @@ export class HttpTransfer implements Transfer {
       attempt.startedAt = Date.now()
       await downloadChunk({
         url: this.runtime.requestPayload.url,
+        browser: this.runtime.requestPayload.browser,
         rangeStart: block.rangeStart + attempt.startOffset,
         rangeEnd: block.rangeEnd,
         connection: self.connection,
@@ -1169,7 +1170,8 @@ export class HttpTransfer implements Transfer {
             this.runtime.requestPayload.url,
             block.rangeStart,
             block.rangeStart + local.length - 1,
-            connection
+            connection,
+            this.runtime.requestPayload.browser
           )
           // A reply from a server still presenting an accepted label proves nothing here.
           if (compareVersion([seen], remote.version).kind !== 'same') continue

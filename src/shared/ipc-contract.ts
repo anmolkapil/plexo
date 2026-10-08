@@ -3,6 +3,7 @@ import type {
   DownloadUpdate,
   FinishedDownload,
   NetworkInterfaceInfo,
+  PendingLink,
   ProbeResult,
   StartDownloadRequest,
   TorrentFileEntry,
@@ -25,7 +26,8 @@ export interface IpcContract {
   /** Shows a download's file in its folder, by the download's own path. False when nothing is
    * there any more: history is re-sent, with it marked missing. */
   revealDownload: { args: [id: string]; result: boolean }
-  startDownload: { args: [request: StartDownloadRequest]; result: string }
+  /** `linkId`: the PendingLink whose browser sign-in it starts with. */
+  startDownload: { args: [request: StartDownloadRequest, linkId?: string]; result: string }
   /** Every download, oldest first, each as a snapshot. */
   listDownloads: { args: []; result: DownloadUpdate[] }
   /** Finished downloads, newest first. One is forgotten with removeDownload. */
@@ -52,6 +54,8 @@ export interface IpcContract {
    * `trashFile`: then it goes to the Trash. */
   removeDownload: { args: [id: string, options?: { trashFile?: boolean }]; result: void }
   checkForUpdate: { args: []; result: UpdateInfo | null }
-  /** A link the OS handed over (main/openLinks.ts), once; null when there's none. */
-  takePendingLink: { args: []; result: string | null }
+  /** Oldest first, each only once. */
+  takePendingLinks: { args: []; result: PendingLink[] }
+  /** Forgets the sign-in of a link that won't be started. */
+  dismissLink: { args: [id: string]; result: void }
 }

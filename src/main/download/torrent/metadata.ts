@@ -63,10 +63,15 @@ export async function readTorrentFile(path: string): Promise<Uint8Array> {
   }
 }
 
-/** A .torrent file a link points at. */
-export async function downloadTorrentFile(url: string, timeoutMs: number): Promise<Uint8Array> {
+/** A .torrent file a link points at. `headers` are for `url`: on a redirect to another origin,
+ * fetch drops their Cookie. */
+export async function downloadTorrentFile(
+  url: string,
+  timeoutMs: number,
+  headers: Record<string, string>
+): Promise<Uint8Array> {
   const response = await fetch(url, {
-    headers: { 'User-Agent': 'Plexo/1.0' },
+    headers,
     signal: AbortSignal.timeout(timeoutMs)
   })
   if (!response.ok || !response.body) {

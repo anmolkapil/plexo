@@ -4,12 +4,13 @@ import { randomUUID } from 'node:crypto'
 import { lstat, readFile, readdir, rename, rm, stat, statfs, writeFile } from 'node:fs/promises'
 import { basename, dirname, isAbsolute, join, sep } from 'node:path'
 import type { BrowserWindow } from 'electron'
-import { app, Notification, powerSaveBlocker, shell } from 'electron'
+import { app, Notification, powerSaveBlocker, safeStorage, shell } from 'electron'
 import { IpcChannels } from '../../shared/ipc-channels'
 import {
   DOWNLOADS_AT_ONCE,
   SPEED_HISTORY_SECONDS,
   type AppSettings,
+  type BrowserContext,
   type DownloadNetwork,
   type DownloadState,
   type DownloadStatus,
@@ -21,6 +22,7 @@ import {
   type HttpDownloadState,
   type NetworkInterfaceInfo,
   type NetworkStatus,
+  type HttpProbeResult,
   type StartDownloadRequest,
   type StartHttpDownloadRequest,
   type StartTorrentDownloadRequest,
@@ -41,6 +43,7 @@ import { planBlocks, planDownload, planPieces } from './plan'
 import { restoreBlocks, restorePieces, saveBlocks, type SavedBlocks } from './savedProgress'
 import { chosenFiles, finishedFiles, wantedPieces } from './torrent/files'
 import { probeUrl } from './probe'
+import { browserContextFrom } from './browserContext'
 import { describeTorrent, probedTorrentFile } from './torrent/metadata'
 import { TorrentDestination } from './torrent/torrentDestination'
 import { TorrentTransfer } from './torrent/torrentTransfer'
@@ -115,6 +118,8 @@ interface PersistedDownloadBase {
   publicationPath?: string
   publicationIdentity?: { dev: number; ino: number }
   requestPayload: StartDownloadRequest
+  /** Kept apart from requestPayload, sealed (see sealBrowser). */
+  browser?: string
 }
 
 type PersistedState =
@@ -124,6 +129,41 @@ type PersistedDownload = PersistedDownloadBase & {
   version: 7
   state: PersistedState
 } & SavedBlocks
+
+/** Cookies are never written in the clear. Without a keychain (Linux falls back to a fixed key)
+ * they aren't saved at all, and a download resumed after a restart goes without them. */
+function sealBrowser(browser: BrowserContext): string | undefined {
+  if (!safeStorage.isEncryptionAvailable()) return undefined
+  if (process.platform === 'linux' && safeStorage.getSelectedStorageBackend() === 'basic_text') {
+    return undefined
+  }
+  return safeStorage.encryptString(JSON.stringify(browser)).toString('base64')
+}
+
+function unsealBrowser(sealed: string): BrowserContext | undefined {
+  try {
+    return (
+      browserContextFrom(JSON.parse(safeStorage.decryptString(Buffer.from(sealed, 'base64')))) ??
+      undefined
+    )
+  } catch {
+    return undefined
+  }
+}
+
+/** A finished download drops its cookies: nothing will ask the server for it again. */
+function savedRequest(
+  runtime: DownloadRuntime
+): Pick<PersistedDownloadBase, 'requestPayload' | 'browser'> {
+  if (runtime.kind !== 'http' || !runtime.requestPayload.browser) {
+    return { requestPayload: runtime.requestPayload }
+  }
+  const { browser, ...requestPayload } = runtime.requestPayload
+  return {
+    requestPayload,
+    browser: runtime.state.status === 'completed' ? undefined : sealBrowser(browser)
+  }
+}
 
 const UI_UPDATE_MS = 200
 /** How often a running download takes stock (see run). */
@@ -601,7 +641,10 @@ export class DownloadManager {
     id: string,
     persisted: PersistedDownload
   ): Promise<DownloadRuntime | null> {
-    const { requestPayload } = persisted
+    const requestPayload: StartDownloadRequest =
+      persisted.requestPayload.kind === 'http' && typeof persisted.browser === 'string'
+        ? { ...persisted.requestPayload, browser: unsealBrowser(persisted.browser) }
+        : persisted.requestPayload
     const saved: SavedBlocks = { progress: persisted.progress, complete: persisted.complete }
     let state: DownloadState
     let runtime: DownloadRuntime
@@ -750,6 +793,11 @@ export class DownloadManager {
 
   async start(requestPayload: StartDownloadRequest): Promise<string> {
     await this.initialization
+    if (requestPayload.kind === 'http' && requestPayload.browser !== undefined) {
+      const browser = browserContextFrom(requestPayload.browser)
+      if (!browser) throw new Error('The browser’s details for this download couldn’t be read.')
+      requestPayload = { ...requestPayload, browser }
+    }
 
     const available = await this.networks.refresh()
     const selected = available.filter((iface) => requestPayload.interfaceIds.includes(iface.id))
@@ -846,7 +894,10 @@ export class DownloadManager {
         blocks,
         totalBlocks: blocks.length,
         blockSizeBytes,
-        startedAt: Date.now()
+        startedAt: Date.now(),
+        ...(requestPayload.browser && {
+          fromBrowser: requestPayload.browser.name ?? 'your browser'
+        })
       }
       runtime = this.newHttpRuntime(
         state,
@@ -911,7 +962,7 @@ export class DownloadManager {
   /** Gives a download whose link stopped working (a signed link ran out, say) a fresh link to the
    * same file, and resumes it from where it stopped. The file must be as big as before; whether
    * its bytes are the same is checked as on any resume (see HttpTransfer's version check). */
-  async relink(id: string, url: string): Promise<void> {
+  async relink(id: string, url: string, browser?: BrowserContext): Promise<void> {
     const runtime = this.runtimes.get(id)
     if (runtime?.kind !== 'http') throw new Error('Only web downloads support replacing a link.')
     const { status, resumable, totalBytes } = runtime.state
@@ -919,7 +970,10 @@ export class DownloadManager {
       throw new Error('Pause the download before replacing its link.')
     }
     if (resumable === false) throw new Error('This download can’t resume. Start it again.')
-    const probe = await probeUrl(url)
+    // A fresh link from the same site usually needs the same sign-in, so the old one carries over
+    // unless the browser sent a new one.
+    browser ??= runtime.requestPayload.browser
+    const probe = await probeUrl(url, browser)
     if (probe.kind !== 'http') throw new Error('That isn’t a link to a file')
     if ((probe.totalBytes ?? 0) !== totalBytes) {
       throw new Error(
@@ -932,9 +986,33 @@ export class DownloadManager {
       )
     }
     runtime.requestPayload.url = probe.finalUrl
+    runtime.requestPayload.browser = browser
     runtime.state.url = probe.finalUrl
     await this.persistNow(runtime)
     this.resume(id)
+  }
+
+  /** Downloading a failed file again in the browser (its sign-in ran out, say) resumes the failed
+   * one instead of starting a second copy. Paused downloads are left alone: the user paused them. */
+  async refreshFromBrowser(
+    probe: HttpProbeResult,
+    browser: BrowserContext | undefined
+  ): Promise<boolean> {
+    const sameVersion = (request: StartHttpDownloadRequest): boolean =>
+      (request.etag !== null && request.etag === probe.etag) ||
+      (request.lastModified !== null && request.lastModified === probe.lastModified)
+    const failed = [...this.runtimes.values()].find(
+      (runtime) =>
+        runtime.kind === 'http' &&
+        runtime.state.status === 'error' &&
+        runtime.state.resumable !== false &&
+        runtime.state.totalBytes > 0 &&
+        runtime.state.totalBytes === probe.totalBytes &&
+        sameVersion(runtime.requestPayload)
+    )
+    if (!failed) return false
+    await this.relink(failed.state.id, probe.finalUrl, browser)
+    return true
   }
 
   resume(id: string): void {
@@ -1688,7 +1766,7 @@ export class DownloadManager {
           partialPath: runtime.file.path,
           publicationPath: runtime.publicationPath,
           publicationIdentity: runtime.publicationIdentity,
-          requestPayload: runtime.requestPayload
+          ...savedRequest(runtime)
         }
         if (runtime.state.status === 'downloading' || runtime.state.status === 'paused') {
           await runtime.file.sync()

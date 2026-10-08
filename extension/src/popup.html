@@ -1,0 +1,105 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Plexo</title>
+    <link rel="stylesheet" href="ui.css" />
+    <style>
+      body {
+        width: 340px;
+      }
+      header {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        padding: 12px 14px;
+        border-bottom: 0.5px solid var(--border);
+      }
+      header img {
+        width: 22px;
+        height: 22px;
+      }
+      header strong {
+        flex: 1;
+        font-size: 14px;
+      }
+      #status {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        font: 11px var(--mono);
+        color: var(--text2);
+      }
+      #site-host {
+        font: 500 12.5px var(--mono);
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      #closed {
+        padding: 16px 14px;
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+        border-bottom: 0.5px solid var(--border);
+      }
+      footer {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        padding: 6px 6px 6px 14px;
+        background: var(--bg2);
+        font-size: 11.5px;
+        color: var(--text3);
+      }
+      footer span {
+        flex: 1;
+      }
+    </style>
+  </head>
+  <body>
+    <header>
+      <img src="icons/icon-32.png" alt="" />
+      <strong>Plexo</strong>
+      <div id="status" role="status">
+        <span class="dot" id="status-dot"></span><span id="status-text">…</span>
+      </div>
+    </header>
+
+    <div class="notice" id="access" hidden>
+      Plexo needs access to websites to send your sign-in with each download.
+      <button type="button" class="primary" id="grant">Allow access</button>
+    </div>
+
+    <div id="closed" hidden>
+      <div class="title">Plexo isn’t open</div>
+      <div class="muted">Downloads stay in the browser until it is.</div>
+      <div style="display: flex; align-items: center; gap: 12px">
+        <button type="button" id="open-plexo">Open Plexo</button>
+        <a href="https://getplexo.app" target="_blank" rel="noreferrer">Get Plexo</a>
+      </div>
+    </div>
+
+    <label class="row" for="capture">
+      <span class="grow">
+        <span class="title">Capture downloads</span>
+        <span class="muted" id="capture-hint"></span>
+      </span>
+      <input type="checkbox" role="switch" class="switch" id="capture" />
+    </label>
+
+    <label class="row" for="site" id="site-row" hidden>
+      <span class="grow">
+        <span id="site-host"></span>
+        <span class="muted" id="site-hint"></span>
+      </span>
+      <input type="checkbox" role="switch" class="switch" id="site" />
+    </label>
+
+    <footer>
+      <span>Right-click any link › Download with Plexo</span>
+      <button type="button" class="ghost" id="options">Options</button>
+    </footer>
+    <script src="popup.js"></script>
+  </body>
+</html>

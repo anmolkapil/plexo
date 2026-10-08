@@ -1,6 +1,6 @@
 import type { ProbeResult } from '@shared/types'
 import { cn } from 'cn'
-import { AlertTriangle, FolderOpen, X } from 'lucide-react'
+import { AlertTriangle, ChevronLeft, ChevronRight, FolderOpen, Globe, Lock, X } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 import { useFormatSpeedLimit } from '../hooks/useFormatSpeed'
 import { useNetworkUsage } from '../hooks/useNetworks'
@@ -40,6 +40,7 @@ const labelClass = 'w-16 shrink-0 text-[12.5px] text-[var(--text-secondary)]'
 export function NewDownloadDialog(): React.JSX.Element {
   const open = useAppStore((store) => store.newDownloadOpen)
   const close = useAppStore((store) => store.closeNewDownload)
+  const formKey = useAppStore((store) => store.formKey)
 
   return (
     <Dialog open={open} disablePointerDismissal onOpenChange={(next) => !next && close()}>
@@ -47,8 +48,9 @@ export function NewDownloadDialog(): React.JSX.Element {
         showCloseButton={false}
         className="flex max-h-[calc(100%-2rem)] flex-col gap-0 p-0 sm:max-w-[560px]"
       >
-        {/* Mounted only while open, so each opening starts fresh from the link field. */}
-        {open && <NewDownloadForm onDone={close} />}
+        {/* Mounted only while open, and keyed by what it shows, so each opening and each
+            download stacked in it starts fresh. */}
+        {open && <NewDownloadForm key={formKey} onDone={close} />}
       </DialogContent>
     </Dialog>
   )
@@ -59,6 +61,12 @@ function NewDownloadForm({ onDone }: { onDone: () => void }): React.JSX.Element 
   const homeDir = useAppStore((store) => store.homeDir)
   const url = useAppStore((store) => store.draftUrl)
   const setUrl = useAppStore((store) => store.setDraftUrl)
+  const links = useAppStore((store) => store.links)
+  const linkIndex = useAppStore((store) => store.linkIndex)
+  const showLink = useAppStore((store) => store.showLink)
+  const finishLink = useAppStore((store) => store.finishLink)
+  const letShownLinkGo = useAppStore((store) => store.letShownLinkGo)
+  const shownLink = linkIndex >= 0 ? links[linkIndex] : undefined
   const destinationDir = useAppStore((store) => store.destinationDir)
   const setDestinationDir = useAppStore((store) => store.setDestinationDir)
   const full = useAppStore(
@@ -114,12 +122,21 @@ function NewDownloadForm({ onDone }: { onDone: () => void }): React.JSX.Element 
       return
     }
 
+    // Checking here would go without the browser's sign-in, and could spend a single-use link.
+    const { links: stacked, linkIndex: shown } = useAppStore.getState()
+    const given = stacked[shown]
+    if (given && given.url !== trimmed) letShownLinkGo()
+    setFileNameOverride(null)
+    setSkippedFiles([])
+    if (given?.url === trimmed && given.probe) {
+      setProbe({ status: 'ready', result: given.probe })
+      return
+    }
+
     // Set once the link changes, cleared included: a magnet can take a while to answer, and its
     // answer is no longer wanted then.
     let stale = false
     setProbe({ status: 'probing' })
-    setFileNameOverride(null)
-    setSkippedFiles([])
     const timer = setTimeout(async () => {
       try {
         const result = await window.plexo.probeUrl(trimmed)
@@ -135,7 +152,7 @@ function NewDownloadForm({ onDone }: { onDone: () => void }): React.JSX.Element 
       stale = true
       clearTimeout(timer)
     }
-  }, [url])
+  }, [url, letShownLinkGo])
 
   const ready = probe.status === 'ready' ? probe.result : null
   const torrent = ready?.kind === 'torrent' ? ready.torrent : null
@@ -257,7 +274,8 @@ function NewDownloadForm({ onDone }: { onDone: () => void }): React.JSX.Element 
               ...common,
               kind: 'http',
               streamsPerNetwork: streamsChoice === 'auto' ? undefined : streamsChoice
-            }
+            },
+        shownLink?.id
       )
       // Remembered for the next download, like the folder. Not a single-stream pick: that's one
       // network because the file allows no more, not because the others were unwanted.
@@ -273,10 +291,14 @@ function NewDownloadForm({ onDone }: { onDone: () => void }): React.JSX.Element 
       // screen opens, unless it was only added to the queue.
       useAppStore.setState({
         startedUrl: url.trim(),
-        draftUrl: '',
         ...(full ? {} : { view: { name: 'download', id } as const })
       })
-      onDone()
+      if (shownLink) {
+        finishLink(true)
+      } else {
+        useAppStore.setState({ draftUrl: '' })
+        onDone()
+      }
     } catch (error) {
       setStartError(describeError(error))
       setStarting(false)
@@ -293,8 +315,35 @@ function NewDownloadForm({ onDone }: { onDone: () => void }): React.JSX.Element 
         void handleStart()
       }}
     >
-      <div className="border-b-[0.5px] border-border px-5 py-4">
-        <DialogTitle className="text-[16px] font-semibold">New download</DialogTitle>
+      <div className="flex items-center gap-2 border-b-[0.5px] border-border py-3 pr-3 pl-5">
+        <DialogTitle className="flex-1 py-1 text-[16px] font-semibold">New download</DialogTitle>
+        {shownLink && links.length > 1 && (
+          <div className="flex items-center gap-1">
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon-sm"
+              aria-label="Previous download"
+              disabled={linkIndex === 0}
+              onClick={() => showLink(linkIndex - 1)}
+            >
+              <ChevronLeft />
+            </Button>
+            <span className="min-w-12 text-center font-mono text-[11.5px] text-muted-foreground tabular-nums">
+              {linkIndex + 1} of {links.length}
+            </span>
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon-sm"
+              aria-label="Next download"
+              disabled={linkIndex === links.length - 1}
+              onClick={() => showLink(linkIndex + 1)}
+            >
+              <ChevronRight />
+            </Button>
+          </div>
+        )}
       </div>
 
       <div className="flex min-h-0 flex-col gap-3.5 overflow-y-auto px-5 py-4">
@@ -342,6 +391,22 @@ function NewDownloadForm({ onDone }: { onDone: () => void }): React.JSX.Element 
             Open .torrent…
           </Button>
         </div>
+
+        {shownLink && (
+          <div className="flex h-6 items-center gap-1.5 self-start rounded-full border-[0.5px] border-[var(--color-wifi-border)] bg-[var(--color-wifi-bg)] px-2.5 text-[12px] font-medium text-[var(--color-wifi-text)]">
+            {shownLink.signedInTo ? (
+              <Lock aria-hidden className="size-3" />
+            ) : (
+              <Globe aria-hidden className="size-3" />
+            )}
+            {[
+              `From ${shownLink.from ?? 'your browser'}`,
+              shownLink.signedInTo && `with your ${shownLink.signedInTo} sign-in`
+            ]
+              .filter(Boolean)
+              .join(' · ')}
+          </div>
+        )}
 
         {probe.status === 'probing' && (
           <div className="font-mono text-[11.5px] text-muted-foreground">Checking the link…</div>

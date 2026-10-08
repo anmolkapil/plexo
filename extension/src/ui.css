@@ -1,0 +1,201 @@
+/* The app's tokens (src/renderer/src/assets/main.css), so the extension looks like Plexo. */
+@font-face {
+  font-family: 'Manrope';
+  font-weight: 400 700;
+  src: url('fonts/Manrope-Variable.woff2') format('woff2');
+}
+@font-face {
+  font-family: 'Roboto Mono';
+  font-weight: 400 600;
+  src: url('fonts/RobotoMono-Variable.woff2') format('woff2');
+}
+
+:root {
+  color-scheme: light dark;
+  --bg: #ffffff;
+  --bg2: #fafafa;
+  --input: #ffffff;
+  --text: #1d1d1f;
+  --text2: #6e6e73;
+  --text3: #737377;
+  --border: #e0e0e2;
+  --strong: #b9b9bb;
+  --on: #1f8a70;
+  /* Darker than the app's #d97706, so white text on it reads at WCAG AA. */
+  --accent: #b45309;
+  --accent-on: #ffffff;
+  --warn: #92400e;
+  --warn-bg: #fef3c7;
+  --warn-border: #fde68a;
+  --mono: 'Roboto Mono', ui-monospace, Menlo, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #1b1e20;
+    --bg2: #202325;
+    --input: #242729;
+    --text: #eae7e2;
+    --text2: #a9adb2;
+    --text3: #8d9196;
+    --border: #2b2f33;
+    --strong: #3a3f44;
+    --on: #4ea89a;
+    --accent: #d8a44c;
+    --accent-on: #1b1408;
+    --warn: #e8bb6d;
+    --warn-bg: #33291a;
+    --warn-border: #54421f;
+  }
+}
+
+* {
+  box-sizing: border-box;
+}
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font:
+    13px/1.45 Manrope,
+    -apple-system,
+    'Helvetica Neue',
+    sans-serif;
+}
+[hidden] {
+  display: none !important;
+}
+a {
+  color: var(--accent);
+}
+.mono {
+  font-family: var(--mono);
+}
+.muted {
+  color: var(--text2);
+}
+.title {
+  font-size: 13.5px;
+  font-weight: 600;
+}
+
+.row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 14px;
+  border-bottom: 0.5px solid var(--border);
+}
+.grow {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 999px;
+  background: var(--text3);
+  flex-shrink: 0;
+}
+.dot.ok {
+  background: var(--on);
+}
+.dot.warn {
+  background: var(--accent);
+}
+
+/* A real checkbox under the switch look, so keyboards and screen readers still work. */
+.switch {
+  appearance: none;
+  margin: 0;
+  flex-shrink: 0;
+  width: 38px;
+  height: 22px;
+  border-radius: 999px;
+  background: var(--strong);
+  position: relative;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+.switch::after {
+  content: '';
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 16px;
+  height: 16px;
+  border-radius: 999px;
+  background: #ffffff;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
+  transition: transform 0.15s;
+}
+.switch:checked {
+  background: var(--on);
+}
+.switch:checked::after {
+  transform: translateX(16px);
+}
+.switch:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+.switch:focus-visible,
+button:focus-visible,
+input:focus-visible,
+a:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+button {
+  font: inherit;
+  font-weight: 500;
+  height: 32px;
+  padding: 0 12px;
+  border-radius: 8px;
+  border: 0.5px solid var(--border);
+  background: var(--bg2);
+  color: var(--text);
+  cursor: pointer;
+  text-decoration: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+button.primary {
+  border: none;
+  background: var(--accent);
+  color: var(--accent-on);
+  font-weight: 600;
+}
+button.ghost {
+  border: none;
+  background: transparent;
+  color: var(--text2);
+}
+
+input[type='text'],
+input[type='number'] {
+  font: inherit;
+  height: 32px;
+  padding: 0 10px;
+  border-radius: 8px;
+  border: 0.5px solid var(--strong);
+  background: var(--input);
+  color: var(--text);
+}
+
+.notice {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 12px 14px 0;
+  padding: 10px 12px;
+  border-radius: 8px;
+  border: 0.5px solid var(--warn-border);
+  background: var(--warn-bg);
+  color: var(--warn);
+  font-size: 12.5px;
+}

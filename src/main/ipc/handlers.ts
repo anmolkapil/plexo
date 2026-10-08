@@ -23,7 +23,7 @@ import { getDefaultDownloadsDir, getHomeDir } from '../download/paths'
 import { listHistory } from '../download/history'
 import { probeUrl } from '../download/probe'
 import { deviceBindingSupported } from '../network/deviceBinding'
-import { takePendingLink } from '../openLinks'
+import { releaseLink, shownBrowser, takePendingLinks } from '../openLinks'
 import { NetworkMonitor } from '../network/interfaces'
 import { loadSettings, saveSettings } from '../settings'
 import { testKnobs } from '../testKnobs'
@@ -181,13 +181,22 @@ export function registerIpcHandlers(getWindow: () => BrowserWindow | null): Down
     return result.filePaths[0]
   })
 
-  handle('takePendingLink', async () => takePendingLink())
+  handle('takePendingLinks', async () => takePendingLinks())
+  handle('dismissLink', async (_event, id) => releaseLink(id))
 
   handle('readClipboardText', async () => clipboard.readText())
 
   handle('revealDownload', async (_event, id) => manager.reveal(id))
 
-  handle('startDownload', async (_event, request) => manager.start(request))
+  // The browser's sign-in is attached here, so it never passes through the window.
+  handle('startDownload', async (_event, request, linkId) => {
+    const browser = linkId === undefined ? undefined : shownBrowser(linkId)
+    const id = await manager.start(
+      browser && request.kind === 'http' ? { ...request, browser } : request
+    )
+    if (linkId !== undefined) releaseLink(linkId)
+    return id
+  })
 
   handle('listDownloads', async () => manager.listDownloads())
 
