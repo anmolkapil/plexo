@@ -7,7 +7,6 @@ import {
   ContextMenuContent,
   ContextMenuItem,
   ContextMenuSeparator,
-  ContextMenuShortcut,
   ContextMenuTrigger
 } from './ui/context-menu'
 
@@ -47,7 +46,6 @@ export function DownloadContextMenu({
                 >
                   <meta.icon aria-hidden />
                   {menuLabel(id, targets)}
-                  {meta.shortcut && <ContextMenuShortcut>{meta.shortcut}</ContextMenuShortcut>}
                 </ContextMenuItem>
               )
             })}

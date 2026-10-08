@@ -5,6 +5,7 @@ import { Fragment, memo, useCallback, useEffect, useState } from 'react'
 import { DownloadContextMenu } from '../components/DownloadContextMenu'
 import { useDownloadActions, useDownloadActionsState } from '../components/downloadActionsContext'
 import { ACTION_META, toolbarLabel } from '../components/downloadActionMeta'
+import { MoreActionsMenu } from '../components/MoreActionsMenu'
 import { DownloadFilterMenu } from '../components/DownloadFilterMenu'
 import { CombineDiagram } from '../components/CombineDiagram'
 import { LimitsDialog } from '../components/LimitsDialog'
@@ -28,7 +29,13 @@ import {
   wantedBytes
 } from '../utils/format'
 import { useFormatSpeed } from '../hooks/useFormatSpeed'
-import { availableActions, isFinished, rowAction, type ActionId } from '../utils/downloadActions'
+import {
+  availableActions,
+  isFinished,
+  rowAction,
+  splitToolbar,
+  type ActionId
+} from '../utils/downloadActions'
 
 type Item = DownloadState | FinishedDownload
 
@@ -85,7 +92,7 @@ export function DownloadsScreen(): React.JSX.Element {
   const setFilter = useAppStore((store) => store.setDownloadFilter)
   const [selected, setSelected] = useState<Set<string>>(new Set())
   const { perform, askClearFinished } = useDownloadActions()
-  const { busy, error: actionError } = useDownloadActionsState()
+  const { busy } = useDownloadActionsState()
   const [limitsOpen, setLimitsOpen] = useState(false)
   const [limitsPage, setLimitsPage] = useState<string | null>(null)
   const [now, setNow] = useState(() => Date.now())
@@ -130,7 +137,7 @@ export function DownloadsScreen(): React.JSX.Element {
   const networkVisual = useNetworkVisuals()
   const selectRow = useCallback((id: string, on: boolean) => toggle([id], on), [toggle])
   const openRow = useCallback((id: string) => setView({ name: 'download', id }), [setView])
-  // Keys for the selection, as the menu shows them: Esc clears it, Select all, and Delete takes
+  // Keys for the selection: Esc clears it, Select all, and Delete takes
   // the selected off the list (with Cmd/Ctrl, moves their files to the Trash), each asking first.
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent): void => {
@@ -161,10 +168,9 @@ export function DownloadsScreen(): React.JSX.Element {
     return () => window.removeEventListener('keydown', onKeyDown)
   }, [items, chosen, perform])
 
-  // What the toolbar offers: what the menu does, for the ones it applies to, as buttons.
-  const toolbarActions = availableActions(chosen)
-    .flat()
-    .filter(({ id }) => ACTION_META[id].toolbar)
+  // What the toolbar offers: the two actions most needed for what's selected as buttons, and
+  // the rest of what the menu does for the selection behind More, so six never need more room.
+  const { buttons: toolbarButtons, more: moreActions } = splitToolbar(availableActions(chosen))
 
   return (
     <div className="flex h-full flex-col bg-background">
@@ -234,7 +240,7 @@ export function DownloadsScreen(): React.JSX.Element {
           </Button>
           <div className="flex-1" />
           <div className="flex min-w-0 items-center gap-2 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
-            {toolbarActions.map(({ id, targets }) => (
+            {toolbarButtons.map(({ id, targets }) => (
               <Button
                 key={id}
                 type="button"
@@ -246,12 +252,8 @@ export function DownloadsScreen(): React.JSX.Element {
                 {toolbarLabel(id, targets.length)}
               </Button>
             ))}
+            <MoreActionsMenu groups={moreActions} disabled={busy} />
           </div>
-        </div>
-      )}
-      {actionError && (
-        <div role="alert" className="border-b border-border px-5 py-2 text-[12px] text-destructive">
-          {actionError}
         </div>
       )}
 

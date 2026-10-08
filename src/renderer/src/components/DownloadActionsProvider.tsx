@@ -3,6 +3,8 @@ import { useCallback, useMemo, useState } from 'react'
 import { useAppStore } from '../store/useAppStore'
 import { describeError } from '../utils/format'
 import type { ActionId, DownloadItem } from '../utils/downloadActions'
+import { ActionErrorDialog } from './ActionErrorDialog'
+import { ACTION_META } from './downloadActionMeta'
 import { ActionsContext, StateContext } from './downloadActionsContext'
 import { FixLinkDialog } from './FixLinkDialog'
 import { RemoveDialog, type RemoveMode } from './RemoveDialog'
@@ -24,14 +26,14 @@ export function DownloadActionsProvider({
   } | null>(null)
   const [fixing, setFixing] = useState<DownloadState | null>(null)
   const [busy, setBusy] = useState(false)
-  const [error, setError] = useState<string | null>(null)
+  const [failure, setFailure] = useState<{ title: string; message: string } | null>(null)
   const [dialogError, setDialogError] = useState<string | null>(null)
 
   const perform = useCallback(
     async (id: ActionId, targets: DownloadItem[]): Promise<boolean> => {
-      setError(null)
+      // Said in a dialog, whichever screen it came from.
       const fail = (cause: unknown): false => {
-        setError(describeError(cause))
+        setFailure({ title: ACTION_META[id].failure, message: describeError(cause) })
         return false
       }
       switch (id) {
@@ -144,7 +146,7 @@ export function DownloadActionsProvider({
   }
 
   const actions = useMemo(() => ({ perform, askClearFinished }), [perform, askClearFinished])
-  const state = useMemo(() => ({ busy, error }), [busy, error])
+  const state = useMemo(() => ({ busy }), [busy])
 
   return (
     <ActionsContext.Provider value={actions}>
@@ -161,6 +163,7 @@ export function DownloadActionsProvider({
           onConfirm={() => void confirmRemoval()}
         />
         <FixLinkDialog download={fixing} onClose={() => setFixing(null)} />
+        <ActionErrorDialog failure={failure} onClose={() => setFailure(null)} />
       </StateContext.Provider>
     </ActionsContext.Provider>
   )

@@ -7,6 +7,7 @@ import {
   manageAction,
   manageActions,
   rowAction,
+  splitToolbar,
   type ActionId,
   type DownloadItem
 } from '../src/renderer/src/utils/downloadActions'
@@ -168,5 +169,57 @@ test.describe('the places that show them agree', () => {
     expect(manageAction(download({ status: 'paused' }))).toBe('cancel')
     expect(manageAction(download({ status: 'error', error: 'x' }))).toBe('remove')
     expect(manageAction(finished())).toBe('remove')
+  })
+})
+
+test.describe('the selection toolbar', () => {
+  const shown = (items: DownloadItem[]): { buttons: ActionId[]; more: ActionId[] } => {
+    const { buttons, more } = splitToolbar(availableActions(items))
+    return { buttons: buttons.map((a) => a.id), more: more.flat().map((a) => a.id) }
+  }
+
+  test('two buttons for every state, the rest behind More', () => {
+    expect(shown([download({ status: 'downloading' })])).toEqual({
+      buttons: ['pause', 'cancel'],
+      more: ['reveal', 'copy']
+    })
+    expect(shown([download({ status: 'paused' })])).toEqual({
+      buttons: ['resume', 'cancel'],
+      more: ['reveal', 'copy']
+    })
+    expect(shown([download({ status: 'error', error: 'reset' })])).toEqual({
+      buttons: ['retry', 'remove'],
+      more: ['copy']
+    })
+    expect(
+      shown([download({ status: 'error', error: 'reset', resumable: false })]).buttons
+    ).toEqual(['again', 'remove'])
+    expect(
+      shown([
+        download({ status: 'error', error: 'Server answered with status 403 for range request' })
+      ]).buttons
+    ).toEqual(['fix', 'remove'])
+    expect(shown([finished()])).toEqual({
+      buttons: ['open', 'reveal'],
+      more: ['copy', 'remove', 'trash']
+    })
+  })
+
+  test('several finished: remove and trash', () => {
+    expect(shown([finished({ id: 'a' }), finished({ id: 'b' })])).toEqual({
+      buttons: ['remove', 'trash'],
+      more: ['copy']
+    })
+  })
+
+  test('a mixed selection still gets two, and nothing is lost', () => {
+    const items = [
+      download({ id: 'a', status: 'downloading' }),
+      download({ id: 'b', status: 'paused' }),
+      finished({ id: 'c' })
+    ]
+    const { buttons, more } = shown(items)
+    expect(buttons).toHaveLength(2)
+    expect([...buttons, ...more].sort()).toEqual([...ids(items)].sort())
   })
 })

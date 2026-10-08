@@ -1,9 +1,20 @@
 import { existsSync } from 'node:fs'
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { basename, dirname, join } from 'node:path'
+import type { Page } from '@playwright/test'
 import { BLOCK, expect, test, treeSha } from './fixtures'
 import { seededBytes } from './origin'
 import { named, Swarm, torrentFileOnDisk } from './torrentSwarm'
+
+/** The selection toolbar keeps the next step as buttons; the rest is behind More actions. */
+async function openMore(page: Page): Promise<void> {
+  await page.getByRole('button', { name: 'More actions', exact: true }).click()
+}
+
+async function chooseMore(page: Page, name: string | RegExp): Promise<void> {
+  await openMore(page)
+  await page.getByRole('menuitem', { name }).click()
+}
 
 async function stubTrash(plexo: import('./fixtures').PlexoApp, destination: string): Promise<void> {
   await mkdir(destination)
@@ -57,16 +68,26 @@ test('mixed selection applies actions only to eligible downloads and keeps finis
   await expect(
     page.getByRole('button', { name: 'Fix link expired.bin', exact: true })
   ).toBeVisible()
+  // Whatever is selected, the toolbar holds its two fixed buttons, the next steps and More.
+  await expect(toolbar.getByRole('button')).toHaveText([
+    '',
+    'Select all',
+    'Resume (1)',
+    'Cancel downloads (1)',
+    ''
+  ])
+  await openMore(page)
   await expect(
-    page.getByRole('button', { name: 'Cancel downloads (1)', exact: true })
+    page.getByRole('menuitem', { name: 'Remove 2 from list', exact: true })
   ).toBeVisible()
+  await page.keyboard.press('Escape')
   // A finished and a failed download leave the list together, after asking.
-  await page.getByRole('button', { name: 'Remove from list (2)', exact: true }).click()
+  await chooseMore(page, 'Remove 2 from list')
   const removal = page.getByRole('alertdialog')
   await expect(removal.getByText(/lose the part they already downloaded/)).toBeVisible()
   await removal.getByRole('button', { name: 'Cancel', exact: true }).click()
   await expect(toolbar.getByText('3 selected', { exact: true })).toBeVisible()
-  await page.getByRole('button', { name: 'Remove from list (2)', exact: true }).click()
+  await chooseMore(page, 'Remove 2 from list')
   await page.getByRole('alertdialog').getByRole('button', { name: 'Remove', exact: true }).click()
   await expect(page.getByRole('button', { name: 'Open finished.bin', exact: true })).toBeHidden()
   expect(existsSync(finished.destinationPath)).toBe(true)
@@ -99,7 +120,7 @@ test('missing finished files can leave the list but are excluded from file remov
   await plexo.page
     .getByRole('checkbox', { name: `Select ${complete.fileName}`, exact: true })
     .check()
-  await expect(plexo.page.getByRole('button', { name: /^Move files/ })).toHaveCount(0)
+  await expect(plexo.page.getByRole('button', { name: /^Move/ })).toHaveCount(0)
   await plexo.page.getByRole('button', { name: 'Remove from list (1)', exact: true }).click()
   await plexo.page
     .getByRole('alertdialog')
@@ -107,6 +128,34 @@ test('missing finished files can leave the list but are excluded from file remov
     .click()
   await expect(plexo.page.getByText('No downloads yet', { exact: true })).toBeVisible()
   await rename(`${complete.destinationPath}.moved`, complete.destinationPath)
+})
+
+test('showing a file that has moved says so in a dialog, not on the page', async ({
+  plexo,
+  serve
+}) => {
+  const origin = await serve({ size: BLOCK })
+  await plexo.start(origin.url(), origin.sha256)
+  const complete = await plexo.waitForStatus('completed')
+  const { rename } = await import('node:fs/promises')
+  const page = plexo.page
+  // The window hasn't been told yet, so the menu still offers it.
+  await rename(complete.destinationPath, `${complete.destinationPath}.moved`)
+  try {
+    await page.getByRole('button', { name: `Open ${complete.fileName}`, exact: true }).click({
+      button: 'right'
+    })
+    await page.getByRole('menuitem', { name: /^Show in/ }).click()
+    const dialog = page.getByRole('alertdialog')
+    await expect(dialog.getByText('Couldn’t show file', { exact: true })).toBeVisible()
+    await expect(dialog.getByText('That file is no longer where it was saved.')).toBeVisible()
+    await dialog.getByRole('button', { name: 'OK', exact: true }).click()
+    await expect(dialog).toBeHidden()
+    // Nothing is left behind on the list itself.
+    await expect(page.getByRole('alert')).toHaveCount(0)
+  } finally {
+    await rename(`${complete.destinationPath}.moved`, complete.destinationPath)
+  }
 })
 
 test('trashing finished torrent files preserves unrelated files in the torrent folder', async ({
@@ -134,9 +183,7 @@ test('trashing finished torrent files preserves unrelated files in the torrent f
       .getByRole('checkbox', { name: `Select ${completed.fileName}`, exact: true })
       .check()
     const trashName = process.platform === 'win32' ? 'Recycle Bin' : 'Trash'
-    await plexo.page
-      .getByRole('button', { name: `Move files to ${trashName} (1)`, exact: true })
-      .click()
+    await chooseMore(plexo.page, `Move file to ${trashName}`)
     await plexo.page
       .getByRole('alertdialog')
       .getByRole('button', { name: 'Delete file', exact: true })
@@ -212,7 +259,7 @@ test('a removal that fails for one download still removes the rest, and asks aga
   const page = plexo.page
   await page.getByRole('checkbox', { name: 'Select goes.bin', exact: true }).check()
   await page.getByRole('checkbox', { name: 'Select stays.bin', exact: true }).check()
-  await page.getByRole('button', { name: /^Move files to/ }).click()
+  await page.getByRole('button', { name: /^Move to (Trash|Recycle Bin) \(2\)$/ }).click()
   const dialog = page.getByRole('alertdialog')
   await dialog.getByRole('button', { name: 'Delete files', exact: true }).click()
 

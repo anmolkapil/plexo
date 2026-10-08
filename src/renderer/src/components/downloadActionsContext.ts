@@ -4,7 +4,7 @@ import type { ActionId, DownloadItem } from '../utils/downloadActions'
 export interface Actions {
   /** Does `id` to `targets`, or asks first where it deletes something. Resolves once it's been
    * sent (a question that's asked resolves at once): true if it went through, false if it failed
-   * (the reason is in `error`). */
+   * (a dialog says why). */
   perform: (id: ActionId, targets: DownloadItem[]) => Promise<boolean>
   /** Asks to clear the whole finished list. */
   askClearFinished: () => void
@@ -13,12 +13,10 @@ export interface Actions {
 export interface ActionsState {
   /** A removal is under way. */
   busy: boolean
-  /** The last thing that failed, to show beside the list. */
-  error: string | null
 }
 
 export const ActionsContext = createContext<Actions | null>(null)
-export const StateContext = createContext<ActionsState>({ busy: false, error: null })
+export const StateContext = createContext<ActionsState>({ busy: false })
 
 /** The actions, which never change: safe to pass to memoized rows. */
 export function useDownloadActions(): Actions {
@@ -27,7 +25,7 @@ export function useDownloadActions(): Actions {
   return actions
 }
 
-/** Whether a removal is under way, and the last failure. Changes as they do. */
+/** Whether a removal is under way. Changes as it does. */
 export function useDownloadActionsState(): ActionsState {
   return useContext(StateContext)
 }

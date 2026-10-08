@@ -90,6 +90,47 @@ export function availableActions(items: DownloadItem[]): AvailableAction[][] {
   ).filter((group) => group.length > 0)
 }
 
+/** Which actions earn a button on the selection toolbar, most needed first; the rest are behind
+ * More. What's needed most is the next step (pause, resume, retry, fix, start over, open), then
+ * getting rid of it: a download in progress is cancelled, a finished one is shown, then removed.
+ * That gives each state two sensible buttons: Pause and Cancel; Resume and Cancel; Retry and
+ * Remove; Open and Show in Finder; and for several finished, Remove and Move to Trash. */
+export const TOOLBAR_PRIORITY: readonly ActionId[] = [
+  'pause',
+  'resume',
+  'retry',
+  'fix',
+  'again',
+  'open',
+  'cancel',
+  'reveal',
+  'remove',
+  'trash',
+  'copy'
+]
+
+/** How many go on the toolbar as buttons. */
+export const TOOLBAR_SLOTS = 2
+
+/** The toolbar's two buttons, and what's left for its More menu (the menu's own groups, less
+ * the buttons). */
+export function splitToolbar(groups: AvailableAction[][]): {
+  buttons: AvailableAction[]
+  more: AvailableAction[][]
+} {
+  const buttons = groups
+    .flat()
+    .sort((a, b) => TOOLBAR_PRIORITY.indexOf(a.id) - TOOLBAR_PRIORITY.indexOf(b.id))
+    .slice(0, TOOLBAR_SLOTS)
+  const shown = new Set(buttons.map(({ id }) => id))
+  return {
+    buttons,
+    more: groups
+      .map((group) => group.filter(({ id }) => !shown.has(id)))
+      .filter((group) => group.length > 0)
+  }
+}
+
 /** The single button a row shows when idle: the next step for that download, if it has one. */
 export const ROW_ACTIONS: readonly ActionId[] = ['pause', 'resume', 'retry', 'fix', 'again']
 
