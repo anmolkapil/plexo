@@ -18,7 +18,7 @@ test('RFC 2047 Q-encoding filename is decoded', () => {
 
 test('ISO-8859-1 filename* still wins over RFC 2047 filename', () => {
   const d =
-    "attachment; filename=\"=?UTF-8?B?dGVzdC50eHQ=?=\"; filename*=iso-8859-1'en'%A3%20rates.txt"
+    'attachment; filename="=?UTF-8?B?dGVzdC50eHQ=?="; filename*=iso-8859-1\'en\'%A3%20rates.txt'
   assert.equal(parseContentDispositionFilename(d), '\u00a3 rates.txt')
 })
 
