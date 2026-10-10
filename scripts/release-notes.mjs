@@ -49,10 +49,14 @@ if (arg === '--files') {
   // What the app's updater reads (src/main/updater.ts): each OS's latest*.yml (a GitHub-published
   // build never writes an rc*.yml), the zips macOS installs from, and blockmaps, which let an
   // update download only what changed.
+  // Named after the build they belong to, so read its version the same way (1.0.0 must not take
+  // 1.0.0-rc.15's).
+  const buildOf = (name) => name.replace(/\.blockmap$/, '').replace(/-mac\.zip$/, '.zip')
   const updateFiles = readdirSync(dist).filter(
     (name) =>
       /^latest(-[a-z0-9-]+)?\.yml$/.test(name) ||
-      (name.includes(version) && (name.endsWith('-mac.zip') || name.endsWith('.blockmap')))
+      ((name.endsWith('-mac.zip') || name.endsWith('.blockmap')) &&
+        buildOf(name).match(artifactName)?.[1] === version)
   )
   // Without them the release is invisible to every installed app.
   const channelFiles = updateFiles.filter((name) => name.endsWith('.yml'))
