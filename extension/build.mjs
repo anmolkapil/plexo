@@ -43,7 +43,12 @@ const manifests = {
     ...base,
     background: { scripts: ['background.js'] },
     browser_specific_settings: {
-      gecko: { id: 'extension@getplexo.app', strict_min_version: '121.0' }
+      gecko: {
+        id: 'extension@getplexo.app',
+        strict_min_version: '121.0',
+        // Everything goes to the local app on 127.0.0.1; nothing leaves the device.
+        data_collection_permissions: { required: ['none'] }
+      }
     }
   }
 }
