@@ -198,6 +198,8 @@ export function registerIpcHandlers(getWindow: () => BrowserWindow | null): Down
 
   handle('revealDownload', async (_event, id) => manager.reveal(id))
 
+  handle('openDownload', async (_event, id) => manager.open(id))
+
   // The browser's sign-in is attached here, so it never passes through the window.
   handle('startDownload', async (_event, request, linkId) => {
     const browser = linkId === undefined ? undefined : pendingLink(linkId)?.browser

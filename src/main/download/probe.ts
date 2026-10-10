@@ -32,9 +32,10 @@ interface ProbeResponse {
   headers: Headers
 }
 
-/** GET with a 1-byte range: cheaper than fetching the body, and unlike HEAD it
- * also tells us (via the 206 status) whether range requests actually work. */
-function requestOneByte(
+/** GET with a small range: cheaper than fetching the body, and unlike HEAD it also tells us (via
+ * the 206 status) whether range requests actually work. Not 1 byte: some file hosts answer a range
+ * that ends at byte 0 or 1 with the whole file, while serving every real chunk as asked (#101). */
+function requestFirstBytes(
   url: URL,
   deadline: number,
   browser: BrowserContext | undefined
@@ -47,7 +48,7 @@ function requestOneByte(
         hostname: url.hostname.replace(/^\[|\]$/g, ''),
         port: url.port || undefined,
         path: `${url.pathname}${url.search}`,
-        headers: { ...requestHeaders(url, browser), Range: 'bytes=0-0' }
+        headers: { ...requestHeaders(url, browser), Range: 'bytes=0-1023' }
       },
       (res) => {
         clearTimeout(timer)
@@ -92,7 +93,7 @@ async function requestFollowingRedirects(
   const deadline = Date.now() + PROBE_TIMEOUT_MS
 
   for (let redirect = 0; redirect <= MAX_REDIRECTS; redirect += 1) {
-    response = await requestOneByte(current, deadline, browser)
+    response = await requestFirstBytes(current, deadline, browser)
     if (response.statusCode >= 300 && response.statusCode < 400) {
       const location = headerValue(response.headers, 'location')
       if (!location) break
@@ -122,7 +123,7 @@ export async function probeUrl(rawUrl: string, browser?: BrowserContext): Promis
 
   const { current, response } = await requestFollowingRedirects(rawUrl, browser)
 
-  // An empty file can't satisfy a request for its first byte: the server answers 416 and gives
+  // An empty file can't satisfy a request for its first bytes: the server answers 416 and gives
   // the size as `bytes */0`. That's a valid, empty download, not an error.
   if (
     response?.statusCode === 416 &&
@@ -156,7 +157,7 @@ export async function probeUrl(rawUrl: string, browser?: BrowserContext): Promis
   }
 
   const contentRange = headerValue(response.headers, 'content-range')
-  // A server that supports range requests must answer our 1-byte range GET with 206 Partial Content.
+  // A server that supports range requests must answer our range GET with 206 Partial Content.
   // If it returned 200 OK, it ignored the Range header and sent the whole file — even if its headers
   // statically claim `Accept-Ranges: bytes`.
   const supportsRanges = response.statusCode === 206
@@ -168,7 +169,7 @@ export async function probeUrl(rawUrl: string, browser?: BrowserContext): Promis
   }
   if (totalBytes === null && response.statusCode === 200) {
     // Only trust Content-Length on a full (200) response — on a 206 it
-    // describes the single byte we asked for, not the whole file.
+    // describes the bytes we asked for, not the whole file.
     const contentLength = headerValue(response.headers, 'content-length')
     if (contentLength) totalBytes = Number(contentLength)
   }

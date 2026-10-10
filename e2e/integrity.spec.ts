@@ -1,5 +1,5 @@
 import { BLOCK, expect, LAN_ADDRESS, test } from './fixtures'
-import { seededBytes, type Fault, type LoggedRequest } from './origin'
+import { isProbe, seededBytes, type Fault, type LoggedRequest } from './origin'
 
 // B. A misbehaving server or network. The rule every case here must satisfy — enforced by the
 // automatic checks in fixtures.ts — is that a download never ends `completed` with wrong bytes:
@@ -91,11 +91,7 @@ test.describe('servers without range support @smoke', () => {
     const origin = await serve({ size: 20 * BLOCK, ranges: false })
     let transfers = 0
     origin.setRule(({ range }) =>
-      range?.start === 0 && range.end === 0
-        ? 'ok'
-        : transfers++ === 0
-          ? { cutAfter: 7 * BLOCK + 3 }
-          : 'ok'
+      isProbe(range) ? 'ok' : transfers++ === 0 ? { cutAfter: 7 * BLOCK + 3 } : 'ok'
     )
     await plexo.start(origin.url(), origin.sha256)
     await plexo.waitForStatus('completed')
@@ -112,9 +108,7 @@ test('one network dies for good mid-download; the other finishes it @smoke', asy
   let fromB = 0
   // Network b serves two blocks, then every request over it fails.
   origin.setRule(({ from, range }) =>
-    from !== '127.0.0.1' && range && !(range.start === 0 && range.end === 0) && fromB++ >= 2
-      ? { status: 503 }
-      : 'ok'
+    from !== '127.0.0.1' && range && !isProbe(range) && fromB++ >= 2 ? { status: 503 } : 'ok'
   )
   await plexo.start(origin.url(), origin.sha256, { networks: ['a', 'b'], connections: 2 })
   await plexo.waitForStatus('completed')
@@ -163,9 +157,7 @@ test.describe('permanent faults end in a clean error @smoke', () => {
   for (const [label, fault] of PERMANENT) {
     test(label, async ({ plexo, serve }) => {
       const origin = await serve({ size: SIZE })
-      origin.setRule(({ range }) =>
-        range && !(range.start === 0 && range.end === 0) ? fault : 'ok'
-      )
+      origin.setRule(({ range }) => (range && !isProbe(range) ? fault : 'ok'))
       await plexo.start(origin.url(), origin.sha256, { connections: 2 })
       const state = await plexo.waitForStatus('error')
       expect(state.error).toBeTruthy()

@@ -39,7 +39,7 @@ import { loadSettings } from '../settings'
 import { addToHistory, findInHistory, removeFromHistory } from './history'
 import { testKnobs } from '../testKnobs'
 import { DownloadFile } from './downloadFile'
-import { compareSamples, HttpTransfer, splittable } from './httpTransfer'
+import { compareSamples, HttpTransfer, pickedStreams, splittable } from './httpTransfer'
 import { normalizeEtag } from './fileVersion'
 import { ensureDirectory, pathExists, reserveDestinationPath } from './paths'
 import { planBlocks, planDownload, planPieces } from './plan'
@@ -464,6 +464,26 @@ export class DownloadManager {
     }
   }
 
+  /** Running downloads on Auto with `networkId` on: how many share its streams (see
+   * concurrency.ts). One that can't split runs a single stream, and a picked count is kept, so
+   * neither takes a share. */
+  private httpDownloadsOn(networkId: string): number {
+    let count = 0
+    for (const runtime of this.runtimes.values()) {
+      if (
+        runtime.kind === 'http' &&
+        runtime.state.status === 'downloading' &&
+        splittable(runtime.requestPayload) &&
+        pickedStreams(runtime.requestPayload) === undefined &&
+        runtime.state.networks.some(
+          (network) => network.id === networkId && network.status === 'on'
+        )
+      )
+        count++
+    }
+    return count
+  }
+
   private runningCount(): number {
     let running = 0
     for (const runtime of this.runtimes.values()) {
@@ -547,6 +567,7 @@ export class DownloadManager {
     const host: TransferHost = {
       networks: this.networks,
       limits: this.limits,
+      downloadsOn: (networkId) => this.httpDownloadsOn(networkId),
       reconcile: () => this.reconcile(runtime),
       failDownload: (message, discard) => this.failDownload(runtime, message, discard),
       failNetwork: (network, message) => this.failNetwork(runtime, network, message),
@@ -578,6 +599,7 @@ export class DownloadManager {
     const host: TransferHost = {
       networks: this.networks,
       limits: this.limits,
+      downloadsOn: (networkId) => this.httpDownloadsOn(networkId),
       reconcile: () => this.reconcile(runtime),
       failDownload: (message, discard) => this.failDownload(runtime, message, discard),
       failNetwork: (network, message) => this.failNetwork(runtime, network, message),
@@ -1550,16 +1572,34 @@ export class DownloadManager {
     this.historyChanged()
   }
 
-  /** Shows a download's file in its folder: by the download's own path, never one the window
+  /** Shows a download's file in its folder (while it's downloading, its `.plexo` staging file):
+   * by the download's own path, never one the window
    * names, and only once it's checked to be there — the window's view of that can be old (the
    * file moved or deleted since). When it isn't, the window is told to look again, and the
    * history it gets marks it missing. */
   async reveal(id: string): Promise<boolean> {
+    const runtime = this.runtimes.get(id)
+    const download = runtime?.state ?? (await findInHistory(id))
+    // Until it's published, what's on disk is its staging file (an HTTP download's
+    // `<name>.plexo`), not the path it will end up at.
+    const unfinished = runtime && runtime.state.status !== 'completed'
+    for (const path of [unfinished ? runtime.file.path : undefined, download?.destinationPath]) {
+      if (path && (await pathExists(path).catch(() => false))) {
+        shell.showItemInFolder(path)
+        return true
+      }
+    }
+    this.historyChanged()
+    return false
+  }
+
+  /** Opens a finished download with the app the OS picks for it; a torrent's folder opens in the
+   * file manager. Like reveal, it checks the path first and false means it's no longer there. */
+  async open(id: string): Promise<boolean> {
     const download = this.runtimes.get(id)?.state ?? (await findInHistory(id))
     const path = download?.destinationPath
     if (path && (await pathExists(path).catch(() => false))) {
-      shell.showItemInFolder(path)
-      return true
+      return (await shell.openPath(path)) === ''
     }
     this.historyChanged()
     return false

@@ -123,7 +123,7 @@ test('the cutoff stops torrent peers and uploads; reopening finishes the same fi
 
 async function openSchedule(plexo: PlexoApp): Promise<void> {
   await plexo.page.getByRole('button', { name: /^\d+ networks?/ }).click()
-  await plexo.page.getByRole('button', { name: 'Speed & data limits…', exact: true }).click()
+  await plexo.page.getByRole('button', { name: 'Speed & data limits', exact: true }).click()
   await plexo.page.getByRole('region', { name: 'Download schedule' }).scrollIntoViewIfNeeded()
 }
 

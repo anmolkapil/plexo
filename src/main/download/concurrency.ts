@@ -30,6 +30,10 @@
 //   refusals keep their ceiling and pace beside it, and each network runs the lower of the two. A
 //   download the disk keeps up with is never behind, so this costs nothing anywhere else. The
 //   user's own pick is kept, as it is for everything but refusals.
+// - Downloads running at once share a network's limit: each may run its even share of it (see
+//   TransferHost.downloadsOn), so four downloads on one network run 32 streams between them, not
+//   128. A download that starts lowers the others' share, and their extra streams retire; one that
+//   ends raises it, and they grow back.
 // - Otherwise each network is decided on its own, so one that drops out or comes back never
 //   disturbs the others.
 //
@@ -136,7 +140,9 @@ export class ConcurrencyController {
     /** The most streams a network may run. */
     private readonly maxPerNetwork: number,
     /** false: keep each network at maxPerNetwork (the user's pick) rather than doubling to it. */
-    private readonly grows = true
+    private readonly grows = true,
+    /** The most a network may run for this download's share of it now (see the rules above). */
+    private readonly share: (networkId: string) => number = () => Infinity
   ) {}
 
   tick(snapshot: Snapshot): Action[] {
@@ -172,11 +178,13 @@ export class ConcurrencyController {
     return actions
   }
 
-  /** The most streams a network may run now: the lower of a server's ceiling and the disk's cap,
-   * and never more than the limit. Also what a network joining the download starts with at most. */
+  /** The most streams a network may run now: the lowest of a server's ceiling, the disk's cap and
+   * this download's share, and never more than the limit. Also what a network joining the download
+   * starts with at most. */
   limit(networkId: string): number {
     return Math.min(
       this.maxPerNetwork,
+      this.share(networkId),
       this.ceilings.get(networkId)?.limit ?? Infinity,
       this.disk.cap ?? Infinity
     )

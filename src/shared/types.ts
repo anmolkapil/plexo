@@ -356,7 +356,7 @@ export interface AppSettings {
 /** bytes: MB/s. bits: Mbps, as internet plans and speed tests count them. */
 export type SpeedUnit = 'bytes' | 'bits'
 
-export const DOWNLOADS_AT_ONCE = { default: 2, min: 1, max: 8 }
+export const DOWNLOADS_AT_ONCE = { default: 2, min: 1, max: 4 }
 /** Seconds of speed history a download keeps (a sample a second), and so the span the throughput
  * chart always shows. */
 export const SPEED_HISTORY_SECONDS = 60

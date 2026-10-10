@@ -162,7 +162,7 @@ export function NetworksMenu({
             onOpenLimits(null)
           }}
         >
-          Speed &amp; data limits…
+          Speed &amp; data limits
         </button>
       </PopoverContent>
     </Popover>

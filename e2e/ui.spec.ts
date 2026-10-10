@@ -24,6 +24,27 @@ async function stubNativeUi(
   }, destination)
 }
 
+test('Show in Finder on a download in progress shows its staging file', async ({
+  plexo,
+  serve,
+  dirs
+}) => {
+  const origin = await serve({ size: SIZE })
+  await stubNativeUi(plexo, dirs.dest)
+  const reached = origin.hold(6 * BLOCK)
+  const id = await plexo.start(origin.url(), origin.sha256)
+  await reached
+  const { destinationPath } = (await plexo.api.listDownloads()).find(
+    (entry) => entry.state.id === id
+  )!.state
+  // The final file isn't there yet: what's on disk is `<name>.plexo`.
+  expect(await plexo.api.revealDownload(id)).toBe(true)
+  expect(
+    await plexo.evaluateMain(() => (globalThis as Record<string, unknown>).__revealed, null)
+  ).toEqual([`${destinationPath}.plexo`])
+  origin.release()
+})
+
 test.describe('a torrent through the UI', () => {
   // This journey inspects a peer row, not network reassignment. Keep one network stable;
   // routing across networks and globally unique peer IDs are checked by torrent specs/invariants.
@@ -42,7 +63,7 @@ test.describe('a torrent through the UI', () => {
       const page = plexo.page
 
       const link = await plexo.newDownload()
-      await page.getByRole('button', { name: 'Change…' }).click()
+      await page.getByRole('button', { name: 'Change' }).click()
       await link.fill(await torrentFileOnDisk(torrent))
       await page.getByRole('checkbox', { name: /b\.bin/ }).click()
       await plexo.expectNextDownload(
@@ -172,7 +193,7 @@ test.describe('UI journeys @smoke', () => {
     const page = plexo.page
 
     const link = await plexo.newDownload()
-    await page.getByRole('button', { name: 'Change…' }).click()
+    await page.getByRole('button', { name: 'Change' }).click()
     await link.fill(origin.url())
     const start = page.getByRole('button', { name: 'Download' })
     await expect(start).toBeEnabled()
@@ -220,13 +241,13 @@ test.describe('UI journeys @smoke', () => {
     await stubNativeUi(plexo, dirs.dest)
     const page = plexo.page
     let link = await plexo.newDownload()
-    await page.getByRole('button', { name: 'Change…' }).click()
+    await page.getByRole('button', { name: 'Change' }).click()
     await link.fill(origin.url())
 
     const reached = origin.hold(6 * BLOCK)
     await page.getByRole('button', { name: 'Download' }).click()
     await reached
-    await page.getByRole('button', { name: 'Cancel download…' }).click()
+    await page.getByRole('button', { name: 'Cancel download' }).click()
     await page.getByRole('button', { name: 'Cancel download', exact: true }).click()
     origin.release()
     // Gone, with what it had downloaded.
@@ -283,7 +304,7 @@ test.describe('settings @smoke', () => {
 
       await stubNativeUi(plexo, dirs.dest)
       await plexo.newDownload()
-      await page().getByRole('button', { name: 'Change…' }).click()
+      await page().getByRole('button', { name: 'Change' }).click()
       const destinationRow = (): Locator =>
         page().getByText('Save to', { exact: true }).locator('..')
       const chosenDestination = await destinationRow().innerText()

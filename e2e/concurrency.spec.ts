@@ -196,6 +196,20 @@ test.describe('stream count', () => {
     ).toEqual([])
   })
 
+  test('downloads running at once share a network: one starting retires the extra streams', () => {
+    let downloads = 1
+    const controller = new ConcurrencyController(MAX, true, () => Math.floor(MAX / downloads))
+    expect(controller.limit('a')).toBe(32)
+    downloads = 4
+    expect(controller.tick({ now: 0, networks: [network('a', 32)], spareWork: 1000 })).toEqual([
+      { kind: 'retire', networkId: 'a', count: 24 }
+    ])
+    downloads = 2
+    expect(controller.tick({ now: 0, networks: [network('a', 8)], spareWork: 1000 })).toEqual([
+      { kind: 'add', networkId: 'a', count: 8 }
+    ])
+  })
+
   test('a count the user picked is kept, not grown, and still backs off when refused', () => {
     const controller = new ConcurrencyController(4, false)
     expect(controller.tick({ now: 0, networks: [network('a', 4)], spareWork: 1000 })).toEqual([])

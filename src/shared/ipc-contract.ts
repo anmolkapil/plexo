@@ -26,6 +26,9 @@ export interface IpcContract {
   /** Shows a download's file in its folder, by the download's own path. False when nothing is
    * there any more: history is re-sent, with it marked missing. */
   revealDownload: { args: [id: string]; result: boolean }
+  /** Opens a download's file (a torrent's folder) with the OS default. False when it's gone or
+   * nothing could open it. */
+  openDownload: { args: [id: string]; result: boolean }
   /** `linkId`: the PendingLink whose browser sign-in it starts with. */
   startDownload: { args: [request: StartDownloadRequest, linkId?: string]; result: string }
   /** Every download, oldest first, each as a snapshot. */

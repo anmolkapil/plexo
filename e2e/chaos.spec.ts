@@ -10,7 +10,7 @@ import {
   PlexoApp,
   test
 } from './fixtures'
-import { Origin, type Fault } from './origin'
+import { isProbe, Origin, type Fault } from './origin'
 
 // H. Model-based chaos. fast-check generates random sequences of user actions and failures —
 // pause, resume, crash, quit, flaky server, waiting — and runs each against a real app and a
@@ -152,9 +152,7 @@ test('any sequence of pauses, crashes and faults still ends in the exact file @c
         // Kept automatic across the relaunches a crash or a quit brings.
         const app = new PlexoApp(dirs, connections === 'auto' ? { PLEXO_E2E_STREAMS: '' } : {})
         const real: Real = { app, origin, id: '', faults: [] }
-        origin.setRule(({ range }) =>
-          range && !(range.start === 0 && range.end === 0) ? real.faults.shift() : undefined
-        )
+        origin.setRule(({ range }) => (range && !isProbe(range) ? real.faults.shift() : undefined))
 
         try {
           await app.launch()

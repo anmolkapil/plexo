@@ -426,7 +426,7 @@ export function NetworkRow({
               size="xs"
               onClick={() => setExpanded((value) => !value)}
               aria-expanded={expanded}
-              className="h-auto cursor-pointer rounded-[4px] border-[0.5px] bg-card px-[7px] py-[3px] font-mono text-[10.5px] leading-none font-medium text-[var(--text-secondary)] aria-expanded:bg-secondary dark:bg-card"
+              className="h-auto cursor-default rounded-[4px] border-[0.5px] bg-card px-[7px] py-[3px] font-mono text-[10.5px] leading-none font-medium text-[var(--text-secondary)] aria-expanded:bg-secondary dark:bg-card"
             >
               {connections.length} {noun}
               {connections.length === 1 ? '' : 's'}{' '}
