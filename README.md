@@ -216,7 +216,7 @@ If Plexo is useful to you:
 
 Plexo is developed by [Anmol Kapil](https://github.com/anmolkapil).
 
-macOS code signing is provided by **Dhananjay Babasaheb Bhosale**: the Mac app is signed with his Apple Developer ID, so macOS shows his name as its developer.
+macOS code signing is provided by [Dhananjay Babasaheb Bhosale](https://github.com/DhananjayBhosale): the Mac app is signed with his Apple Developer ID, so macOS shows his name as its developer.
 
 ## License
 
