@@ -386,7 +386,7 @@ export class PlexoApp {
 
 const ALLOWED_NEXT: Record<DownloadStatus, DownloadStatus[]> = {
   queued: ['queued', 'downloading', 'paused', 'cancelled'],
-  downloading: ['downloading', 'paused', 'completed', 'error', 'cancelled'],
+  downloading: ['downloading', 'queued', 'paused', 'completed', 'error', 'cancelled'],
   // Resumed: at once, or into the queue when it's full.
   paused: ['paused', 'downloading', 'queued', 'error', 'cancelled'],
   completed: ['completed'],

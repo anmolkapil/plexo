@@ -3,6 +3,7 @@ import { useEffect, useState } from 'react'
 import { useAppStore } from '../store/useAppStore'
 import { formatBytes } from '../utils/format'
 import { useFormatSpeedLimit } from '../hooks/useFormatSpeed'
+import { useDownloadSchedule } from '../hooks/useDownloadSchedule'
 import { ScreenFooter } from './ScreenFooter'
 import { ThemeToggle } from './ThemeToggle'
 import { Switch } from './ui/switch'
@@ -53,6 +54,7 @@ function SpeedUnitToggle(): React.JSX.Element {
  * show them — repeated down here they only doubled up, or read as a limit with no cause. */
 export function StatusBar(): React.JSX.Element {
   const formatSpeedLimit = useFormatSpeedLimit()
+  const { message } = useDownloadSchedule()
   // A count, not the downloads: progress ticks don't re-render the footer.
   const waiting = useAppStore(
     (store) =>
@@ -89,6 +91,7 @@ export function StatusBar(): React.JSX.Element {
   return (
     <ScreenFooter className="gap-4 font-mono text-[11.5px] text-muted-foreground">
       <span className="min-w-0 flex-1 truncate tabular-nums">{status.join(' · ')}</span>
+      {message && <span className="truncate">{message}</span>}
       {/* Controls, most-flipped first: the edge holds the set-once view preferences. */}
       <div className="flex shrink-0 items-center gap-3">
         <UpdateIndicator />

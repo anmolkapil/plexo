@@ -1,12 +1,15 @@
+import { DEFAULT_DOWNLOAD_SCHEDULE, scheduleTime, validSchedule } from '@shared/downloadSchedule'
+import { ScheduleFields } from './ScheduleFields'
 import { DATA_LIMIT_PERIODS, dataUsageLabel, nextDataReset } from '@shared/dataLimits'
 import {
   DEFAULT_SLOW_MODE_SPEED,
   DOWNLOADS_AT_ONCE,
+  type AppSettings,
   type DataLimitPeriod,
   type NetworkPreference
 } from '@shared/types'
 import { Minus, Plus } from 'lucide-react'
-import { useEffect, useId, useState } from 'react'
+import { useEffect, useId, useRef, useState } from 'react'
 import { useNetworkUsage } from '../hooks/useNetworks'
 import { useNetworkVisuals } from '../hooks/useNetworkVisuals'
 import { useAppStore } from '../store/useAppStore'
@@ -22,6 +25,7 @@ import {
   AlertDialogCancel,
   AlertDialogAction
 } from './ui/alert-dialog'
+import { Alert, AlertDescription } from './ui/alert'
 import { Button } from './ui/button'
 import { Dialog, DialogContent, DialogTitle } from './ui/dialog'
 import { Input } from './ui/input'
@@ -31,11 +35,17 @@ import { ToggleGroup, ToggleGroupItem } from './ui/toggle-group'
 /** What the dialog edits: a copy taken when it opens, written back only on Save. */
 type Draft = Pick<
   ReturnType<typeof useAppStore.getState>,
-  'speedLimit' | 'slowMode' | 'slowModeSpeed' | 'downloadsAtOnce' | 'networkPreferences'
+  | 'speedLimit'
+  | 'slowMode'
+  | 'slowModeSpeed'
+  | 'downloadsAtOnce'
+  | 'networkPreferences'
+  | 'downloadSchedule'
 >
 
 /** All downloads as a fresh install has them. */
 const GENERAL_DEFAULTS = {
+  downloadSchedule: undefined,
   speedLimit: undefined,
   slowMode: false,
   slowModeSpeed: DEFAULT_SLOW_MODE_SPEED,
@@ -291,6 +301,10 @@ function GeneralPage({
           at the same time
         </div>
       </section>
+      <ScheduleFields
+        schedule={draft.downloadSchedule ?? DEFAULT_DOWNLOAD_SCHEDULE}
+        onChange={(downloadSchedule) => change({ downloadSchedule })}
+      />
       <div className="flex flex-wrap items-center gap-2 border-t-[0.5px] border-border pt-3">
         <Button
           variant="secondary"
@@ -306,8 +320,8 @@ function GeneralPage({
           <AlertDialogHeader>
             <AlertDialogTitle>Reset all downloads to defaults?</AlertDialogTitle>
             <AlertDialogDescription>
-              This resets total speed, slow mode and downloads at once. Network limits stay
-              unchanged.
+              This resets total speed, slow mode, downloads at once and the download schedule.
+              Network limits stay unchanged.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
@@ -535,20 +549,38 @@ function describeLimits(
  * Save; Cancel (or Escape) leaves everything as it was. Resetting data usage is the exception:
  * it's an action, not a setting, so it happens once confirmed. */
 export function LimitsDialog({
+  showSchedule = false,
   open,
   onOpenChange,
   page,
   onPageChange
 }: {
+  showSchedule?: boolean
   open: boolean
   onOpenChange: (open: boolean) => void
   /** The network shown, by interface id; null for General. */
   page: string | null
   onPageChange: (page: string | null) => void
 }): React.JSX.Element {
+  const contentRef = useRef<HTMLDivElement>(null)
   return (
     <Dialog open={open} disablePointerDismissal onOpenChange={onOpenChange}>
       <DialogContent
+        ref={contentRef}
+        initialFocus={
+          showSchedule
+            ? () => {
+                contentRef.current
+                  ?.querySelector<HTMLElement>('[aria-label="Download schedule"]')
+                  ?.scrollIntoView({ block: 'start' })
+                return (
+                  contentRef.current?.querySelector<HTMLElement>(
+                    '[aria-label="Enable download schedule"]'
+                  ) ?? false
+                )
+              }
+            : undefined
+        }
         showCloseButton={false}
         className="flex h-[min(520px,calc(100%-2rem))] max-w-[680px] flex-col gap-0 p-0 sm:max-w-[680px]"
       >
@@ -571,9 +603,22 @@ function LimitsEditor({
   const formatSpeedLimit = useFormatSpeedLimit()
   const interfaces = useAppStore((store) => store.interfaces)
   const [draft, setDraft] = useState<Draft>(() => {
-    const { speedLimit, slowMode, slowModeSpeed, downloadsAtOnce, networkPreferences } =
-      useAppStore.getState()
-    return { speedLimit, slowMode, slowModeSpeed, downloadsAtOnce, networkPreferences }
+    const {
+      speedLimit,
+      slowMode,
+      slowModeSpeed,
+      downloadsAtOnce,
+      networkPreferences,
+      downloadSchedule
+    } = useAppStore.getState()
+    return {
+      speedLimit,
+      slowMode,
+      slowModeSpeed,
+      downloadsAtOnce,
+      networkPreferences,
+      downloadSchedule
+    }
   })
   const change = (patch: Partial<Draft>): void =>
     setDraft((previous) => ({ ...previous, ...patch }))
@@ -585,19 +630,36 @@ function LimitsEditor({
         [id]: { ...previous.networkPreferences[id], ...patch }
       }
     }))
-  // Only what changed is written, so a running download isn't re-limited for nothing.
-  const save = (): void => {
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const valid = draft.downloadSchedule === undefined || validSchedule(draft.downloadSchedule)
+  // Save one patch so the schedule and limits take effect together. Failed saves keep the draft.
+  const save = async (): Promise<void> => {
+    setSaving(true)
+    setError(null)
     const store = useAppStore.getState()
-    if (draft.speedLimit !== store.speedLimit) store.setSpeedLimit(draft.speedLimit)
-    if (draft.slowMode !== store.slowMode) store.setSlowMode(draft.slowMode)
-    if (draft.slowModeSpeed !== store.slowModeSpeed) store.setSlowModeSpeed(draft.slowModeSpeed)
-    if (draft.downloadsAtOnce !== store.downloadsAtOnce) {
-      store.setDownloadsAtOnce(draft.downloadsAtOnce)
-    }
+    const patch: AppSettings = {}
+    if (draft.speedLimit !== store.speedLimit) patch.speedLimit = draft.speedLimit
+    if (draft.slowMode !== store.slowMode) patch.slowMode = draft.slowMode
+    if (draft.slowModeSpeed !== store.slowModeSpeed) patch.slowModeSpeed = draft.slowModeSpeed
+    if (draft.downloadsAtOnce !== store.downloadsAtOnce)
+      patch.downloadsAtOnce = draft.downloadsAtOnce
+    if (draft.downloadSchedule !== store.downloadSchedule)
+      patch.downloadSchedule = draft.downloadSchedule
     for (const [id, preference] of Object.entries(draft.networkPreferences)) {
-      if (preference !== store.networkPreferences[id]) store.setNetworkPreference(id, preference)
+      if (preference !== store.networkPreferences[id]) {
+        patch.networkPreferences ??= { ...store.networkPreferences }
+        patch.networkPreferences[id] = preference
+      }
     }
-    onClose()
+    try {
+      await window.plexo.updateSettings(patch)
+      useAppStore.setState(patch)
+      onClose()
+    } catch (cause) {
+      setError(describeError(cause))
+      setSaving(false)
+    }
   }
   const { speedLimit, slowMode, networkPreferences: preferences } = draft
   const running = useAppStore(
@@ -652,7 +714,12 @@ function LimitsEditor({
               ? 'Slow mode on'
               : speedLimit
                 ? `Limit ${formatSpeedLimit(speedLimit)}`
-                : 'No limit'
+                : 'No limit',
+            ...(draft.downloadSchedule?.enabled
+              ? [
+                  `${scheduleTime(draft.downloadSchedule.startMinute)}–${scheduleTime(draft.downloadSchedule.endMinute)}`
+                ]
+              : [])
           ])}
           <div className={navLabelClass}>Networks</div>
           {interfaces.map((iface) => {
@@ -671,7 +738,7 @@ function LimitsEditor({
             )
           })}
         </nav>
-        <div className="min-h-0 flex-1 overflow-y-auto px-4 py-3">
+        <fieldset disabled={saving} className="min-h-0 min-w-0 flex-1 overflow-y-auto px-4 py-3">
           {shown ? (
             <NetworkPage
               key={shown.id}
@@ -685,14 +752,23 @@ function LimitsEditor({
           ) : (
             <GeneralPage running={running} draft={draft} change={change} />
           )}
-        </div>
+        </fieldset>
       </div>
+      {(!valid || error) && (
+        <div className="px-4 pb-2">
+          <Alert variant="destructive">
+            <AlertDescription>
+              {error ?? 'Check schedule times, repeat days and end date.'}
+            </AlertDescription>
+          </Alert>
+        </div>
+      )}
       <div className="flex items-center justify-end gap-2 border-t-[0.5px] border-border px-4 py-2">
-        <Button type="button" variant="secondary" onClick={onClose}>
+        <Button type="button" variant="secondary" onClick={onClose} disabled={saving}>
           Cancel
         </Button>
-        <Button type="button" onClick={save}>
-          Save
+        <Button type="button" disabled={!valid || saving} onClick={() => void save()}>
+          {saving ? 'Saving…' : 'Save'}
         </Button>
       </div>
     </>

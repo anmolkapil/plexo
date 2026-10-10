@@ -206,6 +206,8 @@ interface DownloadStateBase {
    * thrown away, e.g. the file changed on the server. */
   resumable?: boolean
   startedAt: number
+  /** Enrolled in the scheduled queue; survives relaunches until manually paused. */
+  scheduled?: boolean
   /** While queued: its place in the queue, lowest first. */
   queuedAt?: number
   pausedAt?: number
@@ -317,9 +319,22 @@ export interface UpdateInfo {
   dismissed: boolean
 }
 
+/** A repeating window for all transfers, interpreted in the computer's local timezone. */
+export interface DownloadSchedule {
+  enabled: boolean
+  /** Minutes since local midnight. Equal start/stop times are invalid. */
+  startMinute: number
+  endMinute: number
+  /** Days on which a window starts, Sunday = 0. */
+  days: number[]
+  /** Last local date on which a window may start (YYYY-MM-DD). */
+  endDate?: string
+}
+
 /** What app-settings.json holds, and what the renderer sends to change it (merged over the saved
  * values, `undefined` clearing one). A missing field was never set. */
 export interface AppSettings {
+  downloadSchedule?: DownloadSchedule
   themeSource?: ThemeSource
   dismissedUpdateVersion?: string
   /** The last destination folder picked. */
@@ -350,6 +365,7 @@ export const DEFAULT_SLOW_MODE_SPEED = 2 * 1024 ** 2
 /** Everything the renderer needs for its first paint, read synchronously by the preload so no
  * saved value flashes in over a default a moment after launch. */
 export interface InitialState {
+  downloadSchedule?: DownloadSchedule
   homeDir: string
   downloadsDir: string
   themeSource: ThemeSource

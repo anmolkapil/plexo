@@ -5,6 +5,7 @@ import { useEffect, useRef, useState } from 'react'
 import { useFormatSpeedLimit } from '../hooks/useFormatSpeed'
 import { useNetworkUsage } from '../hooks/useNetworks'
 import { useNetworkVisuals } from '../hooks/useNetworkVisuals'
+import { useDownloadSchedule } from '../hooks/useDownloadSchedule'
 import { useAppStore } from '../store/useAppStore'
 import {
   acceptedLink,
@@ -57,6 +58,8 @@ export function NewDownloadDialog(): React.JSX.Element {
 }
 
 function NewDownloadForm({ onDone }: { onDone: () => void }): React.JSX.Element {
+  const { schedule, window: scheduleWindow } = useDownloadSchedule()
+  const scheduledWait = schedule?.enabled && !scheduleWindow.allowed
   const interfaces = useAppStore((store) => store.interfaces)
   const homeDir = useAppStore((store) => store.homeDir)
   const url = useAppStore((store) => store.draftUrl)
@@ -197,9 +200,11 @@ function NewDownloadForm({ onDone }: { onDone: () => void }): React.JSX.Element 
     ? 'Starting…'
     : probe.status === 'probing'
       ? 'Checking…'
-      : full
-        ? 'Add to queue'
-        : 'Download'
+      : scheduledWait
+        ? 'Add to scheduled queue'
+        : full
+          ? 'Add to queue'
+          : 'Download'
 
   // Two networks on one subnet: the OS sends both down one route, so there's nothing to combine.
   let subnetConflict: { subnet: string; names: string[] } | null = null
@@ -311,7 +316,7 @@ function NewDownloadForm({ onDone }: { onDone: () => void }): React.JSX.Element 
       // screen opens, unless it was only added to the queue.
       useAppStore.setState({
         startedUrl: url.trim(),
-        ...(full ? {} : { view: { name: 'download', id } as const })
+        ...(full || scheduledWait ? {} : { view: { name: 'download', id } as const })
       })
       if (linkId) {
         finishLink(linkId, true)

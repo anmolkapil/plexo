@@ -7,7 +7,9 @@ import { DownloadFilterMenu } from '../components/DownloadFilterMenu'
 import { CombineDiagram } from '../components/CombineDiagram'
 import { FixLinkDialog } from '../components/FixLinkDialog'
 import { LimitsDialog } from '../components/LimitsDialog'
+import { ScheduleIndicator } from '../components/ScheduleIndicator'
 import { networkStatusText } from '../components/NetworkRow'
+import { scheduleMessage, scheduleWindow } from '@shared/downloadSchedule'
 import { NetworksMenu } from '../components/NetworksMenu'
 import { TorrentBadge } from '../components/TorrentBadge'
 import {
@@ -104,6 +106,7 @@ export function DownloadsScreen(): React.JSX.Element {
   const [busy, setBusy] = useState(false)
   const [actionError, setActionError] = useState<string | null>(null)
   const [limitsOpen, setLimitsOpen] = useState(false)
+  const [showSchedule, setShowSchedule] = useState(false)
   const [limitsPage, setLimitsPage] = useState<string | null>(null)
   const [now, setNow] = useState(() => Date.now())
 
@@ -220,6 +223,12 @@ export function DownloadsScreen(): React.JSX.Element {
     }
   }
 
+  const openSchedule = (): void => {
+    setLimitsPage(null)
+    setShowSchedule(true)
+    setLimitsOpen(true)
+  }
+
   return (
     <div className="flex h-full flex-col bg-background">
       {chosen.length === 0 ? (
@@ -239,8 +248,10 @@ export function DownloadsScreen(): React.JSX.Element {
             </div>
           )}
           <div className="flex-1" />
+          <ScheduleIndicator onClick={openSchedule} />
           <NetworksMenu
             onOpenLimits={(page) => {
+              setShowSchedule(false)
               setLimitsPage(page)
               setLimitsOpen(true)
             }}
@@ -360,6 +371,7 @@ export function DownloadsScreen(): React.JSX.Element {
               </Button>
             )}
           </div>
+          <ScheduleIndicator onClick={openSchedule} />
         </div>
       )}
       {actionError && (
@@ -448,6 +460,7 @@ export function DownloadsScreen(): React.JSX.Element {
       <FixLinkDialog download={fixing} onClose={() => setFixing(null)} />
       <LimitsDialog
         open={limitsOpen}
+        showSchedule={showSchedule}
         onOpenChange={setLimitsOpen}
         page={limitsPage}
         onPageChange={setLimitsPage}
@@ -582,6 +595,7 @@ const DownloadRow = memo(function DownloadRow({
   onAgain: (item: Item) => void
 }): React.JSX.Element {
   const formatSpeed = useFormatSpeed()
+  const schedule = useAppStore((store) => store.downloadSchedule)
   const finished = isFinished(item) || item.status === 'completed'
   const badge = isFolder(item) ? 'DIR' : fileExtensionBadge(item.fileName)
   const wanted = wantedBytes(item)
@@ -623,7 +637,7 @@ const DownloadRow = memo(function DownloadRow({
         }
         break
       case 'queued':
-        detail = `Waiting for a turn · ${sizes}`
+        detail = `${schedule?.enabled && !scheduleWindow(schedule, now).allowed ? (scheduleMessage(schedule, now) ?? 'Waiting for a turn') : 'Waiting for a turn'} · ${sizes}`
         action = {
           label: 'Pause',
           icon: Pause,

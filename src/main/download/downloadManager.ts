@@ -5,12 +5,14 @@ import { lstat, readFile, readdir, rename, rm, stat, statfs, writeFile } from 'n
 import { basename, dirname, isAbsolute, join, sep } from 'node:path'
 import type { BrowserWindow } from 'electron'
 import { app, Notification, powerSaveBlocker, safeStorage, shell } from 'electron'
+import { scheduleWindow } from '../../shared/downloadSchedule'
 import { IpcChannels } from '../../shared/ipc-channels'
 import {
   DOWNLOADS_AT_ONCE,
   SPEED_HISTORY_SECONDS,
   type AppSettings,
   type BrowserContext,
+  type DownloadSchedule,
   type DownloadNetwork,
   type DownloadState,
   type DownloadStatus,
@@ -74,6 +76,7 @@ interface RuntimeFields {
   publicationIdentity?: { dev: number; ino: number }
   runPromise?: Promise<void>
   cancelPromise?: Promise<void>
+  scheduleStopping?: boolean
   publishing: boolean
   pushScheduled: boolean
   persistenceTimer?: NodeJS.Timeout
@@ -352,6 +355,9 @@ export class DownloadManager {
   private relinking = new Set<string>()
   private readonly initialization: Promise<void>
   private suspending = false
+  private scheduleLoaded = false
+  private downloadSchedule?: DownloadSchedule
+  private scheduleTimer?: NodeJS.Timeout
   /** Each network's addresses as last seen, by id: what tells a network that has changed. */
   private seenAddresses = new Map<string, string[]>()
   /** The powerSaveBlocker keeping the computer awake while a download runs (see keepAwake). */
@@ -365,20 +371,42 @@ export class DownloadManager {
     private getWindow: () => BrowserWindow | null,
     private networks: NetworkMonitor
   ) {
-    this.initialization = Promise.all([
-      this.restorePersistedDownloads(),
-      this.limits.loaded,
-      loadSettings().then((settings) => this.applySettings(settings))
-    ]).then(() => {})
+    this.initialization = Promise.all([this.restorePersistedDownloads(), this.limits.loaded]).then(
+      async () => {
+        // Read after recovery, including any settings saved while the manifests were loading.
+        await this.configureSettings(await loadSettings())
+      }
+    )
   }
 
   /** Takes up what the user set: how many run at once, and the limits. One running past a
    * lowered count is left to finish; a raised one starts the next ones in the queue. */
-  applySettings(settings: AppSettings): void {
+  async applySettings(settings: AppSettings): Promise<void> {
+    await this.initialization
+    await this.configureSettings(settings)
+  }
+
+  private async configureSettings(settings: AppSettings): Promise<void> {
+    this.downloadSchedule = settings.downloadSchedule
+    this.scheduleLoaded = true
+    const enrollmentChanged: DownloadRuntime[] = []
+    const scheduled = this.downloadSchedule?.enabled || undefined
+    for (const runtime of this.runtimes.values()) {
+      if (
+        (runtime.state.status === 'queued' || runtime.state.status === 'downloading') &&
+        runtime.state.scheduled !== scheduled
+      ) {
+        runtime.state.scheduled = scheduled
+        enrollmentChanged.push(runtime)
+        this.pushUpdate(runtime)
+      }
+    }
     this.downloadsAtOnce = settings.downloadsAtOnce ?? DOWNLOADS_AT_ONCE.default
     this.limits.configure(settings)
+    await this.refreshSchedule()
     this.limitsChanged()
-    this.pump()
+    await Promise.all(enrollmentChanged.map((runtime) => this.persistNow(runtime)))
+    this.armScheduleTimer()
   }
 
   /** A network ran out of data, or a limit changed: each download's networks are looked at
@@ -397,6 +425,45 @@ export class DownloadManager {
     }
   }
 
+  private armScheduleTimer(): void {
+    clearTimeout(this.scheduleTimer)
+    if (this.suspending || !this.downloadSchedule?.enabled) return
+    // Check the clock as well as exact boundaries, including timezone changes while running.
+    const now = Date.now()
+    const window = scheduleWindow(this.downloadSchedule, now)
+    const boundary = window.allowed ? window.endsAt : window.nextStart
+    this.scheduleTimer = setTimeout(
+      () => {
+        void this.refreshSchedule()
+          .catch((error) => console.error('[plexo] schedule', error))
+          .finally(() => this.armScheduleTimer())
+      },
+      boundary ? Math.max(1, Math.min(1000, boundary - now)) : 1000
+    )
+    this.scheduleTimer.unref()
+  }
+
+  private scheduleAllowsDownloads(): boolean {
+    return this.scheduleLoaded && scheduleWindow(this.downloadSchedule).allowed
+  }
+
+  /** Close transfers before the queue can start anything else. The queued intent is persisted,
+   * so a scheduled download can continue next night after a relaunch. */
+  private async refreshSchedule(): Promise<void> {
+    if (this.suspending) return
+    if (!this.scheduleAllowsDownloads()) {
+      await Promise.all(
+        [...this.runtimes.values()].map((runtime) =>
+          runtime.state.status === 'downloading' || runtime.scheduleStopping
+            ? this.pause(runtime.state.id, true)
+            : undefined
+        )
+      )
+    } else {
+      this.pump()
+    }
+  }
+
   private runningCount(): number {
     let running = 0
     for (const runtime of this.runtimes.values()) {
@@ -408,9 +475,9 @@ export class DownloadManager {
   /** Starts queued downloads, first queued first, while fewer than downloadsAtOnce run. Called
    * whenever one might have room: a run ended, a queued one went, the count went up. */
   private pump(): void {
-    if (this.suspending) return
+    if (this.suspending || !this.scheduleAllowsDownloads()) return
     const queued = [...this.runtimes.values()]
-      .filter((runtime) => runtime.state.status === 'queued')
+      .filter((runtime) => runtime.state.status === 'queued' && !runtime.scheduleStopping)
       .sort((a, b) => (a.state.queuedAt ?? 0) - (b.state.queuedAt ?? 0))
     for (const runtime of queued) {
       if (this.runningCount() >= this.downloadsAtOnce) return
@@ -424,6 +491,7 @@ export class DownloadManager {
       .filter((other) => other !== runtime && other.state.status === 'queued')
       .map((other) => other.state.queuedAt ?? 0)
     runtime.state.status = 'queued'
+    runtime.state.scheduled = this.downloadSchedule?.enabled || undefined
     // Time spent waiting isn't time spent downloading (begin adds it to totalPausedMs).
     runtime.state.pausedAt ??= Date.now()
     runtime.state.queuedAt = front
@@ -709,7 +777,7 @@ export class DownloadManager {
       return null
     }
     const units = unitsOf(runtime)
-    // Nothing starts by itself after a relaunch: running or waiting, it comes back paused.
+    // Restore paused first so the partial file can be checked before scheduled work is queued.
     if (state.status === 'downloading' || state.status === 'queued') {
       state.status = 'paused'
       state.pausedAt = persisted.savedAt || Date.now()
@@ -762,6 +830,11 @@ export class DownloadManager {
         }
         state.bytesDownloaded = units.reduce((sum, unit) => sum + unit.bytesDownloaded, 0)
       }
+    }
+
+    if (state.status === 'paused' && state.scheduled === true) {
+      state.status = 'queued'
+      state.queuedAt = persisted.state.queuedAt ?? state.startedAt
     }
 
     runtime.publicationPath = persisted.publicationPath
@@ -916,12 +989,13 @@ export class DownloadManager {
       )
     }
     // Decided only now: other starts may have taken the room while this one was set up.
-    const room = this.runningCount() < this.downloadsAtOnce
+    const room = this.runningCount() < this.downloadsAtOnce && this.scheduleAllowsDownloads()
     if (!room) this.enqueue(runtime, false)
+    runtime.state.scheduled = this.downloadSchedule?.enabled || undefined
     this.runtimes.set(id, runtime)
     await this.persistNow(runtime)
     this.pushUpdate(runtime)
-    if (room) this.launch(runtime)
+    if (room) this.begin(runtime)
 
     return id
   }
@@ -931,19 +1005,31 @@ export class DownloadManager {
     runtime.runPromise = this.run(runtime).finally(() => this.pump())
   }
 
-  async pause(id: string): Promise<void> {
+  async pause(id: string, forSchedule = false): Promise<void> {
     const runtime = this.runtimes.get(id)
     if (runtime?.state.status === 'queued') {
+      if (forSchedule) {
+        await runtime.runPromise
+        return
+      }
+      runtime.state.scheduled = undefined
       runtime.state.status = 'paused'
       runtime.state.queuedAt = undefined
       runtime.state.pausedAt ??= Date.now()
       this.pushUpdate(runtime)
+      await runtime.runPromise
       await this.persistNow(runtime)
       return
     }
     if (!runtime || runtime.state.status !== 'downloading' || runtime.publishing) return
 
-    runtime.state.status = 'paused'
+    if (forSchedule) {
+      runtime.scheduleStopping = true
+      this.enqueue(runtime, false)
+    } else {
+      runtime.state.status = 'paused'
+      runtime.state.scheduled = undefined
+    }
     runtime.state.pausedAt = Date.now()
     clearSpeeds(runtime.state)
     if (runtime.kind === 'http') {
@@ -964,8 +1050,13 @@ export class DownloadManager {
     runtime.transfer.reset()
     this.stopRun(runtime)
     this.pushUpdate(runtime)
-    await runtime.runPromise
-    await this.persistNow(runtime)
+    try {
+      await runtime.runPromise
+      await this.persistNow(runtime)
+    } finally {
+      runtime.scheduleStopping = false
+      this.pump()
+    }
   }
 
   /** Gives a download whose link stopped working (a signed link ran out, say) a fresh link to the
@@ -1120,13 +1211,14 @@ export class DownloadManager {
     // Switched back on, then off again while the paused run wound down: it stays paused.
     if (byNetwork && !networks.some((network) => network.enabled)) return
 
-    if (this.runningCount() >= this.downloadsAtOnce) {
+    if (this.runningCount() >= this.downloadsAtOnce || !this.scheduleAllowsDownloads()) {
       // Asked for by name, so it goes next.
       this.enqueue(runtime, true)
       runtime.state.error = undefined
       runtime.state.resumable = undefined
       runtime.pausedForNoNetwork = undefined
       this.pushUpdate(runtime)
+      await this.persistNow(runtime)
       return
     }
     this.begin(runtime)
@@ -1134,6 +1226,13 @@ export class DownloadManager {
 
   /** Starts a run of a paused, failed or queued download, from where it stopped. */
   private begin(runtime: DownloadRuntime): void {
+    if (this.suspending || !this.scheduleAllowsDownloads()) {
+      this.enqueue(runtime, false)
+      this.pushUpdate(runtime)
+      void this.persistNow(runtime)
+      return
+    }
+    runtime.state.scheduled = this.downloadSchedule?.enabled || undefined
     const { networks } = runtime.state
     runtime.state.status = 'downloading'
     runtime.state.queuedAt = undefined
@@ -1258,6 +1357,9 @@ export class DownloadManager {
    * a stall watchdog runs out, and every judgement made by the clock (a silent network, a
    * crawling connection) spans the sleep. All of it starts over. */
   systemResumed(): void {
+    void this.refreshSchedule().catch((error) =>
+      console.error('[plexo] schedule after wake', error)
+    )
     const now = Date.now()
     for (const runtime of this.runtimes.values()) {
       if (runtime.state.status !== 'downloading') continue
@@ -1466,10 +1568,15 @@ export class DownloadManager {
   async suspendAll(): Promise<void> {
     await this.initialization
     this.suspending = true
+    clearTimeout(this.scheduleTimer)
     await Promise.all(
       [...this.runtimes.values()].map(async (runtime) => {
-        if (runtime.state.status === 'downloading') await this.pause(runtime.state.id)
-        else await this.persistNow(runtime)
+        if (runtime.state.status === 'downloading')
+          await this.pause(runtime.state.id, runtime.state.scheduled === true)
+        else {
+          if (runtime.scheduleStopping) await runtime.runPromise
+          await this.persistNow(runtime)
+        }
       })
     )
     await this.limits.save()
@@ -1693,6 +1800,12 @@ export class DownloadManager {
       }
     }
     if (state.status !== 'downloading' || runtime.stop.signal.aborted) return
+    if (!this.scheduleAllowsDownloads()) {
+      void this.pause(state.id, true).catch((error) =>
+        console.error('[plexo] schedule cutoff', error)
+      )
+      return
+    }
 
     const enabled = state.networks.filter((network) => network.enabled)
     if (enabled.length > 0 && enabled.every((network) => network.status === 'failed')) {
@@ -1837,7 +1950,7 @@ export class DownloadManager {
           publicationIdentity: runtime.publicationIdentity,
           ...savedRequest(runtime)
         }
-        if (runtime.state.status === 'downloading' || runtime.state.status === 'paused') {
+        if (['downloading', 'paused', 'queued'].includes(runtime.state.status)) {
           await runtime.file.sync()
         }
         await ensureDirectory(dir)

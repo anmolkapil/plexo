@@ -88,6 +88,14 @@ Two buttons manage a network's limits, and both ask you to confirm:
 - **Reset data usage…** sets the network's usage for the current period back to zero, so a network that hit its allowance can be used again
 - **Remove limits…** clears the network's speed and data limits and keeps its recorded usage
 
+## Schedule overnight downloads
+
+Open **Networks → Speed & data limits… → All downloads** and find **Download schedule**. Enable the schedule, choose start and stop times in your computer’s local time, pick repeat days, and optionally set an end date. For a free-data window from midnight to 7 AM, use **00:00** and **07:00**.
+
+Outside those hours, new downloads and downloads you resume wait in the queue. At the stop time, active downloads and torrent uploads stop, keeping progress for the next window. Downloads you pause yourself stay paused. Scheduled work survives restarting Plexo; when the end date passes, it stays waiting until you change or disable the schedule. Disabling the schedule lets the queue start immediately.
+
+For a window crossing midnight, repeat days and the end date refer to the day it starts. Keep Plexo running and the computer awake for the scheduled start; Plexo keeps the computer awake while downloading, but does not wake a sleeping computer. Checking links and fetching magnet metadata when adding downloads can still use data outside the scheduled hours. The schedule controls Plexo’s transfers, not other apps or Plexo’s update check.
+
 ## How Plexo combines networks
 
 Your operating system sends all of a computer's traffic through one default connection and leaves the others idle. Plexo opens its own connections on each network you select, and downloads different parts of the file on each.
