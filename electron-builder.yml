@@ -43,6 +43,9 @@ mac:
   target:
     - target: dmg
       arch: [x64, arm64]
+    # Not for people: the app's updater installs from these (see src/main/updater.ts).
+    - target: zip
+      arch: [x64, arm64]
   entitlementsInherit: build/entitlements.mac.plist
   extendInfo:
     - NSDownloadsFolderUsageDescription: Plexo saves downloaded files to your Downloads folder.
@@ -60,7 +63,9 @@ mac:
           LSHandlerRank: Alternate
           CFBundleTypeExtensions: [torrent]
           LSItemContentTypes: [org.bittorrent.torrent]
-  notarize: false
+  # Signed when CSC_LINK/CSC_KEY_PASSWORD are set, and then notarized when APPLE_API_KEY,
+  # APPLE_API_KEY_ID and APPLE_API_ISSUER are (see .github/workflows/release.yml). An unsigned
+  # build still works, but can't update itself: macOS only installs signed updates.
 dmg:
   artifactName: ${name}-${version}-${arch}.${ext}
 linux:
@@ -75,9 +80,14 @@ linux:
   category: Utility
   # Offered for magnet links and .torrent files ("Open with"), not made their default.
   mimeTypes: [x-scheme-handler/magnet, application/x-bittorrent, x-scheme-handler/plexo]
+zip:
+  artifactName: ${name}-${version}-${arch}-mac.${ext}
 appImage:
   artifactName: ${name}-${version}-${arch}.${ext}
 npmRebuild: false
+# Where the app looks for updates. Builds never publish themselves (--publish never): the release
+# workflow uploads them, with the rc*.yml / latest*.yml files the updater reads.
 publish:
-  provider: generic
-  url: https://example.com/auto-updates
+  provider: github
+  owner: anmolkapil
+  repo: plexo

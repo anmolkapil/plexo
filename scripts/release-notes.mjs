@@ -46,7 +46,27 @@ if (files.length === 0) {
 }
 
 if (arg === '--files') {
-  console.log(files.map((file) => file.path).join('\n'))
+  // What the app's updater reads (src/main/updater.ts): each OS's channel file (rc-mac.yml, … for
+  // an rc; latest-mac.yml, … for a stable release), the zips macOS installs from, and blockmaps,
+  // which let an update download only what changed.
+  const channel = version.match(/-([a-z]+)/)?.[1] ?? 'latest'
+  const channelFile = new RegExp(`^${channel}(-[a-z0-9-]+)?\\.yml$`)
+  const updateFiles = readdirSync(dist).filter(
+    (name) =>
+      channelFile.test(name) ||
+      (name.includes(version) && (name.endsWith('-mac.zip') || name.endsWith('.blockmap')))
+  )
+  // Channel files carry no version in their name, so one left over from an older build would
+  // point every app at that build.
+  for (const name of updateFiles.filter((name) => name.endsWith('.yml'))) {
+    if (!readFileSync(join(dist, name), 'utf-8').includes(`version: ${version}\n`)) {
+      console.error(`dist/${name} isn't for ${version} — rebuild that platform.`)
+      process.exit(1)
+    }
+  }
+  console.log(
+    [...files.map((file) => file.path), ...updateFiles.map((name) => join(dist, name))].join('\n')
+  )
 } else {
   const notes = arg ? readFileSync(arg, 'utf-8').trim() + '\n\n' : ''
   console.log(notes + downloads.markdown(files, SITE))

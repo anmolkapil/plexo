@@ -5,7 +5,8 @@ import type {
   AppSettings,
   DownloadUpdate,
   InitialState,
-  NetworkInterfaceInfo
+  NetworkInterfaceInfo,
+  UpdateState
 } from '../shared/types'
 
 /** Typed wrapper around ipcRenderer.invoke — the channel name picks its args/result shape out of
@@ -54,7 +55,8 @@ const plexoApi = {
   cancelDownload: (downloadId: string) => invoke('cancelDownload', downloadId),
   removeDownload: (downloadId: string, options?: { trashFile?: boolean }) =>
     invoke('removeDownload', downloadId, options),
-  checkForUpdate: () => invoke('checkForUpdate'),
+  updateState: () => invoke('updateState'),
+  showUpdateMenu: () => invoke('showUpdateMenu'),
   pendingLinks: () => invoke('pendingLinks'),
   resumeFromLink: (linkId: string, downloadId: string) =>
     invoke('resumeFromLink', linkId, downloadId),
@@ -78,6 +80,12 @@ const plexoApi = {
     const listener = (): void => callback()
     ipcRenderer.on(IpcChannels.historyChanged, listener)
     return () => ipcRenderer.removeListener(IpcChannels.historyChanged, listener)
+  },
+
+  onUpdateState: (callback: (state: UpdateState) => void): (() => void) => {
+    const listener = (_event: IpcRendererEvent, state: UpdateState): void => callback(state)
+    ipcRenderer.on(IpcChannels.updateStateChanged, listener)
+    return () => ipcRenderer.removeListener(IpcChannels.updateStateChanged, listener)
   },
 
   onNetworksChanged: (callback: (networks: NetworkInterfaceInfo[]) => void): (() => void) => {

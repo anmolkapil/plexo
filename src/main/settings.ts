@@ -60,13 +60,11 @@ function sanitizeNetworkPreferences(parsed: unknown): NetworkPreferences {
 function sanitizeSettings(parsed: unknown): AppSettings {
   if (!isRecord(parsed)) return {}
 
-  const { themeSource, dismissedUpdateVersion, destinationDir, downloadsAtOnce } = parsed
+  const { themeSource, destinationDir, downloadsAtOnce } = parsed
   const settings: AppSettings = {}
   // 'system' was once an option — dropping it falls back to the OS appearance (loadThemeSource).
   if (themeSource === 'light' || themeSource === 'dark') settings.themeSource = themeSource
-  if (typeof dismissedUpdateVersion === 'string') {
-    settings.dismissedUpdateVersion = dismissedUpdateVersion
-  }
+  if (parsed.autoUpdate === false) settings.autoUpdate = false
   if (typeof destinationDir === 'string' && isAbsolute(destinationDir)) {
     settings.destinationDir = destinationDir
   }

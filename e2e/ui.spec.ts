@@ -285,72 +285,61 @@ test.describe('UI journeys @smoke', () => {
 
 // What a user sets is still set after they reload or restart — checked only through what they see.
 test.describe('settings @smoke', () => {
-  test.describe('with an update available', () => {
-    test.use({ appEnv: { PLEXO_FORCE_UPDATE_VERSION: '9.9.9' } })
+  test('every choice survives a reload and a restart, even made right before', async ({
+    plexo,
+    dirs
+  }) => {
+    const page = (): Page => plexo.page
+    const themeToggle = page().getByRole('button', { name: /^Switch to (dark|light) theme$/ })
+    // After switching, the toggle offers to switch back.
+    const labelAfterSwitch = (await themeToggle.getAttribute('aria-label'))!.includes('dark')
+      ? 'Switch to light theme'
+      : 'Switch to dark theme'
+    await themeToggle.click()
 
-    test('every choice survives a reload and a restart, even made right before', async ({
-      plexo,
-      dirs
-    }) => {
-      const page = (): Page => plexo.page
-      await page().getByRole('button', { name: 'Not now' }).click()
+    await stubNativeUi(plexo, dirs.dest)
+    await plexo.newDownload()
+    await page().getByRole('button', { name: 'Change' }).click()
+    const destinationRow = (): Locator => page().getByText('Save to', { exact: true }).locator('..')
+    const chosenDestination = await destinationRow().innerText()
+    await page().keyboard.press('Escape')
+    // A function: the window, and so the page, is a new one after a relaunch.
+    const networksMenu = (): Locator =>
+      page()
+        .getByRole('button', { name: /network/ })
+        .first()
+        .first()
+    await networksMenu().click()
+    await page().getByRole('button', { name: 'Edit network' }).first().click()
+    await page().getByRole('textbox', { name: 'Name' }).fill('Office fibre')
+    await page().getByRole('button', { name: 'Violet' }).click()
+    await page().getByRole('button', { name: 'Done' }).click()
+    await page().keyboard.press('Escape')
 
-      const themeToggle = page().getByRole('button', { name: /^Switch to (dark|light) theme$/ })
-      // After switching, the toggle offers to switch back.
-      const labelAfterSwitch = (await themeToggle.getAttribute('aria-label'))!.includes('dark')
-        ? 'Switch to light theme'
-        : 'Switch to dark theme'
-      await themeToggle.click()
-
-      await stubNativeUi(plexo, dirs.dest)
+    const expectAllKept = async (): Promise<void> => {
+      await expect(page().getByRole('button', { name: labelAfterSwitch })).toBeVisible()
       await plexo.newDownload()
-      await page().getByRole('button', { name: 'Change' }).click()
-      const destinationRow = (): Locator =>
-        page().getByText('Save to', { exact: true }).locator('..')
-      const chosenDestination = await destinationRow().innerText()
+      await expect(destinationRow()).toHaveText(chosenDestination, { useInnerText: true })
+      // Presentation may abbreviate home; persistence must retain the usable absolute path.
+      const saved = JSON.parse(await readFile(join(dirs.userData, 'app-settings.json'), 'utf8'))
+      expect(saved.destinationDir).toBe(dirs.dest)
       await page().keyboard.press('Escape')
-      // A function: the window, and so the page, is a new one after a relaunch.
-      const networksMenu = (): Locator =>
-        page()
-          .getByRole('button', { name: /network/ })
-          .first()
-          .first()
       await networksMenu().click()
+      await expect(page().getByText('Office fibre')).toBeVisible()
       await page().getByRole('button', { name: 'Edit network' }).first().click()
-      await page().getByRole('textbox', { name: 'Name' }).fill('Office fibre')
-      await page().getByRole('button', { name: 'Violet' }).click()
-      await page().getByRole('button', { name: 'Done' }).click()
+      await expect(page().getByRole('button', { name: 'Violet' })).toHaveAttribute(
+        'aria-pressed',
+        'true'
+      )
       await page().keyboard.press('Escape')
+      await page().keyboard.press('Escape')
+    }
 
-      const expectAllKept = async (): Promise<void> => {
-        // Waiting on the status bar's indicator first means the update check has answered, so
-        // the dialog's absence below is a real "stayed dismissed", not "not checked yet".
-        await expect(page().getByRole('link', { name: 'Update available: 9.9.9' })).toBeVisible()
-        await expect(page().getByRole('alertdialog')).toBeHidden()
-        await expect(page().getByRole('button', { name: labelAfterSwitch })).toBeVisible()
-        await plexo.newDownload()
-        await expect(destinationRow()).toHaveText(chosenDestination, { useInnerText: true })
-        // Presentation may abbreviate home; persistence must retain the usable absolute path.
-        const saved = JSON.parse(await readFile(join(dirs.userData, 'app-settings.json'), 'utf8'))
-        expect(saved.destinationDir).toBe(dirs.dest)
-        await page().keyboard.press('Escape')
-        await networksMenu().click()
-        await expect(page().getByText('Office fibre')).toBeVisible()
-        await page().getByRole('button', { name: 'Edit network' }).first().click()
-        await expect(page().getByRole('button', { name: 'Violet' })).toHaveAttribute(
-          'aria-pressed',
-          'true'
-        )
-        await page().keyboard.press('Escape')
-        await page().keyboard.press('Escape')
-      }
-
-      // No waiting for saves: a user doesn't either.
-      await page().reload()
-      await expectAllKept()
-      await plexo.relaunch()
-      await expectAllKept()
-    })
+    // No waiting for saves: a user doesn't either.
+    await page().reload()
+    await expectAllKept()
+    await plexo.relaunch()
+    await expectAllKept()
   })
 
   test('a broken settings file falls back to what a fresh install shows', async ({

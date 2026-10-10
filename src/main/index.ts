@@ -5,7 +5,8 @@ import icon from '../../resources/icon-dark.png?asset'
 import { registerIpcHandlers } from './ipc/handlers'
 import { keepsRunningForBrowser, startBridge } from './browserBridge'
 import { acceptedLink, bringForward, linkFromArgs, offerLink } from './openLinks'
-import { loadThemeSource, migrateLegacyNetworkPreferences } from './settings'
+import { loadSettings, loadThemeSource, migrateLegacyNetworkPreferences } from './settings'
+import { startUpdater } from './updater'
 import { testKnobs } from './testKnobs'
 import type { DownloadManager } from './download/downloadManager'
 
@@ -171,6 +172,7 @@ app.whenReady().then(async () => {
 
   createWindow()
   if (testKnobs.hideWindow) app.dock?.hide()
+  startUpdater(() => mainWindow, (await loadSettings()).autoUpdate !== false)
 
   app.on('activate', function () {
     if (BrowserWindow.getAllWindows().length === 0) createWindow()

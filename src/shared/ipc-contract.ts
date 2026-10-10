@@ -7,11 +7,12 @@ import type {
   ProbeResult,
   StartDownloadRequest,
   TorrentFileEntry,
-  UpdateInfo
+  UpdateState
 } from './types'
 
 /** The request/response half of the IPC surface (every IpcChannels entry except the
- * main->renderer push events, downloadUpdated, networksChanged, historyChanged and linkReceived) — one source of truth for
+ * main->renderer push events, downloadUpdated, networksChanged, historyChanged, linkReceived and
+ * updateStateChanged) — one source of truth for
  * both plexoApi (preload) and registerIpcHandlers (main), so a signature drift between the two
  * is a compile error instead of a runtime one. */
 export interface IpcContract {
@@ -56,7 +57,9 @@ export interface IpcContract {
   /** Removes a download, cancelling one under way. A finished one's file stays, unless
    * `trashFile`: then it goes to the Trash. */
   removeDownload: { args: [id: string, options?: { trashFile?: boolean }]; result: void }
-  checkForUpdate: { args: []; result: UpdateInfo | null }
+  updateState: { args: []; result: UpdateState }
+  /** The update menu, as a native menu at the pointer. */
+  showUpdateMenu: { args: []; result: void }
   /** Oldest first: every link not yet started or dismissed. */
   pendingLinks: { args: []; result: PendingLink[] }
   /** Resumes the failed download a link was matched to, from that link (see relinkDownload). */
