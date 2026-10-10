@@ -152,7 +152,7 @@ async function readJson(req: IncomingMessage): Promise<unknown> {
 
 function addRequestFrom(body: unknown): BridgeAddRequest | null {
   if (typeof body !== 'object' || body === null) return null
-  const { url, browser, pageUrl, minBytes } = body as Record<string, unknown>
+  const { url, browser, pageUrl, minBytes, fileName } = body as Record<string, unknown>
   if (typeof url !== 'string' || url.length > 8192 || !/^(https?:\/\/|magnet:\?)/i.test(url)) {
     return null
   }
@@ -162,11 +162,19 @@ function addRequestFrom(body: unknown): BridgeAddRequest | null {
     return null
   }
   if (minBytes !== undefined && !Number.isSafeInteger(minBytes)) return null
+  if (
+    fileName !== undefined &&
+    // eslint-disable-next-line no-control-regex -- a name, never a path or a control character
+    !(typeof fileName === 'string' && /^[^\x00-\x1f\x7f/\\]{1,255}$/.test(fileName))
+  ) {
+    return null
+  }
   return {
     url,
     browser: context,
     pageUrl: pageUrl as string | undefined,
-    minBytes: minBytes as number | undefined
+    minBytes: minBytes as number | undefined,
+    fileName: fileName as string | undefined
   }
 }
 
@@ -212,7 +220,11 @@ async function add(
   const gone = new Promise<void>((resolve) =>
     res.once('close', () => !res.writableFinished && resolve())
   )
-  const probe = await checked(request, gone)
+  const checkedProbe = await checked(request, gone)
+  const probe =
+    typeof checkedProbe !== 'string' && checkedProbe.kind === 'http' && request.fileName
+      ? { ...checkedProbe, suggestedFileName: request.fileName }
+      : checkedProbe
   // The extension gave up and the browser kept the download: adding it too would make two. From
   // here on nothing awaits, so the answer can't come after the extension has stopped waiting.
   if (res.writableEnded || res.destroyed) return

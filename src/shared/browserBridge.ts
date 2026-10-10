@@ -26,6 +26,8 @@ export interface BridgeAddRequest {
   browser?: BrowserContext
   pageUrl?: string
   minBytes?: number
+  /** The name the browser picked: only it saw a link's download attribute. */
+  fileName?: string
 }
 
 /** Plexo shows the download only once POST /confirm brings this back: the extension confirms

@@ -39,7 +39,9 @@ async function capture(item: chrome.downloads.DownloadItem): Promise<boolean> {
     url,
     browser: await browserContext([item.url, item.finalUrl], storeOf(item), item.referrer),
     pageUrl: item.referrer || undefined,
-    minBytes: settings.skipSmall ? settings.minMegabytes * 1024 * 1024 : undefined
+    minBytes: settings.skipSmall ? settings.minMegabytes * 1024 * 1024 : undefined,
+    // Chrome and Firefox both give a path here.
+    fileName: item.filename.split(/[\\/]/).pop() || undefined
   }
   const handoff = await send(request)
   if (typeof handoff === 'string') {
