@@ -2,26 +2,45 @@
 // Builds a GitHub Release from the files in dist/, so the Releases page describes each file the
 // same way the download page does (both use docs/downloads.js).
 //
-//   node scripts/release-notes.mjs v1.0.0-rc.8 [notes.md]   the release body: your notes, then the
+//   node scripts/release-notes.mjs v1.0.0-rc.8              the release body: the version's
+//                                                          docs/changelog.js entry, then the
 //                                                          downloads table
 //   node scripts/release-notes.mjs v1.0.0-rc.8 --files      the files to upload, one per line
+//   node scripts/release-notes.mjs v1.0.0-rc.8 --changelog  just the changelog entry; fails when
+//                                                          there isn't one
 //
-// Only files the download page knows how to describe are included, so update metadata, blockmaps
-// and anything else electron-builder leaves in dist/ never reach a release.
+// The notes describe only files the download page knows how to describe; the upload list adds
+// what the app's updater reads, and nothing else electron-builder leaves in dist/.
 import { readFileSync, readdirSync, statSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
-const { PlexoDownloads: downloads } = createRequire(import.meta.url)('../docs/downloads.js')
+const require = createRequire(import.meta.url)
+const { PlexoDownloads: downloads } = require('../docs/downloads.js')
+const { PlexoChangelog: changelog } = require('../docs/changelog.js')
 
 const REPO = 'anmolkapil/plexo'
 const SITE = 'https://getplexo.app/'
 
 const [tag, arg] = process.argv.slice(2)
 if (!tag || !/^v\d/.test(tag)) {
-  console.error('usage: release-notes.mjs <tag, e.g. v1.0.0-rc.8> [notes.md | --files]')
+  console.error('usage: release-notes.mjs <tag, e.g. v1.0.0-rc.8> [--files | --changelog]')
   process.exit(2)
+}
+
+const KIND = { new: 'New', faster: 'Faster', improved: 'Improved', fixed: 'Fixed' }
+const entry = changelog.find((candidate) => candidate.version === tag)
+if (!entry) {
+  console.error(`No ${tag} entry in docs/changelog.js — add one, then tag again.`)
+  process.exit(1)
+}
+const whatsNew =
+  "## What's new\n\n" +
+  entry.items.map((item) => `- **${KIND[item.kind]}: ${item.title}.** ${item.text}`).join('\n')
+if (arg === '--changelog') {
+  console.log(whatsNew)
+  process.exit(0)
 }
 
 const version = tag.slice(1)
@@ -76,7 +95,6 @@ if (arg === '--files') {
     [...files.map((file) => file.path), ...updateFiles.map((name) => join(dist, name))].join('\n')
   )
 } else {
-  const notes = arg ? readFileSync(arg, 'utf-8').trim() + '\n\n' : ''
-  console.log(notes + downloads.markdown(files, SITE))
+  console.log(whatsNew + '\n\n' + downloads.markdown(files, SITE))
   console.error(`${files.length} files: ${files.map((file) => file.name).join(', ')}`)
 }

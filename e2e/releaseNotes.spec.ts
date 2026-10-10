@@ -32,11 +32,24 @@ function writeChannelFiles(root: string, version: string, names = channelFiles):
   }
 }
 
+/** A changelog with one entry for each of `versions`, in docs/changelog.js's shape. */
+function writeChangelog(root: string, versions: string[]): void {
+  const entries = versions.map((version) => ({
+    version: `v${version}`,
+    items: [{ kind: 'fixed', title: 'Fixes', text: `What changed in ${version}.` }]
+  }))
+  writeFileSync(
+    join(root, 'docs/changelog.js'),
+    `module.exports.PlexoChangelog = ${JSON.stringify(entries)}\n`
+  )
+}
+
 function prepareRelease(root: string, files: string[]): string {
   for (const dir of ['scripts', 'docs', 'dist']) mkdirSync(join(root, dir), { recursive: true })
   for (const file of ['scripts/release-notes.mjs', 'docs/downloads.js']) {
     copyFileSync(resolve(__dirname, '..', file), join(root, file))
   }
+  writeChangelog(root, ['1.0.0-rc.1', '1.0.0', '1.0.0-rc.11+build.1'])
   for (const file of files) writeFileSync(join(root, 'dist', file), 'build')
   return join(root, 'scripts/release-notes.mjs')
 }
@@ -72,13 +85,11 @@ test.describe('release artifact selection @smoke', () => {
           .sort()
       )
 
-      const notesPath = join(root, 'notes.md')
-      writeFileSync(notesPath, 'Release changes.\n')
-      const notes = spawnSync(process.execPath, [script, `v${version}`, notesPath], {
-        encoding: 'utf8'
-      })
+      const notes = spawnSync(process.execPath, [script, `v${version}`], { encoding: 'utf8' })
       expect(notes.status, notes.stderr).toBe(0)
-      expect(notes.stdout).toContain('Release changes.\n\n## Downloads')
+      expect(notes.stdout).toContain(
+        `## What's new\n\n- **Fixed: Fixes.** What changed in ${version}.\n\n## Downloads`
+      )
       for (const file of expected) {
         const url = `https://github.com/anmolkapil/plexo/releases/download/v${version}/${file}`
         expect(notes.stdout.split(url + ')')).toHaveLength(2)
@@ -88,6 +99,23 @@ test.describe('release artifact selection @smoke', () => {
       }
     })
   }
+
+  // The workflow runs --changelog before building, so a tag without notes stops there.
+  test('a version with no changelog entry is refused', () => {
+    const root = test.info().outputPath('release')
+    const script = prepareRelease(root, builds('1.0.0-rc.2'))
+    writeChannelFiles(root, '1.0.0-rc.2')
+    for (const mode of [[], ['--files'], ['--changelog']]) {
+      const result = spawnSync(process.execPath, [script, 'v1.0.0-rc.2', ...mode], {
+        encoding: 'utf8'
+      })
+      expect(result).toMatchObject({
+        status: 1,
+        stdout: '',
+        stderr: expect.stringContaining('No v1.0.0-rc.2 entry in docs/changelog.js')
+      })
+    }
+  })
 
   // Either way the release would reach no installed app, or point them all at another build.
   test('a release without its own latest*.yml is refused', () => {

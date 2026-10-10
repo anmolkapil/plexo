@@ -1,14 +1,49 @@
 /*
- * The "What's new" panel on the download page. The page shows the entry whose `version` matches
- * the latest GitHub release's tag; a release with no entry here falls back to its own notes.
+ * What's new in each version: the top of its GitHub Release's notes (scripts/release-notes.mjs).
+ * A version tag with no entry here doesn't build (.github/workflows/release.yml), so add the
+ * entry in the same PR as the version bump, newest first.
  *
- * Add the next version's entry before publishing it, newest first. `kind` is one of new, faster,
- * improved or fixed; `text` may wrap `code` in backticks.
+ * `kind` is one of new, faster, improved or fixed; `text` may wrap `code` in backticks.
  */
 ;(function (root) {
   'use strict'
 
   root.PlexoChangelog = [
+    {
+      version: 'v1.0.0-rc.15',
+      items: [
+        {
+          kind: 'new',
+          title: 'Automatic updates',
+          text: 'New versions download in the background and install when you restart. The update button in the bottom bar shows how far along it is. Turn automatic updates off there, or in the Plexo menu on a Mac.'
+        },
+        {
+          kind: 'new',
+          title: 'Scheduled downloads',
+          text: 'Let downloads run only at set times, like overnight, under Networks → Speed & data limits. Outside those times they wait in the queue. Plexo needs to be running for them to start.'
+        },
+        {
+          kind: 'new',
+          title: 'Downloads from your browser',
+          text: 'The Plexo extension for Chrome, Edge and Firefox hands a download to Plexo with your sign-in, so files behind a login download as they do in the browser.'
+        },
+        {
+          kind: 'new',
+          title: 'Right-click a download',
+          text: 'Every action for a download, from Pause to Move file to Trash, is in its right-click menu. Text fields get Cut, Copy and Paste too.'
+        },
+        {
+          kind: 'improved',
+          title: 'Easier on busy networks',
+          text: 'Downloads on Auto now share each network’s 32 streams instead of each taking 32, and up to four run at once.'
+        },
+        {
+          kind: 'fixed',
+          title: 'Smaller fixes',
+          text: 'Servers that answered Plexo’s first check with the whole file now download in parallel, and file names sent encoded (like `=?UTF-8?B?…?=`) are saved readable.'
+        }
+      ]
+    },
     {
       version: 'v1.0.0-rc.12',
       items: [
