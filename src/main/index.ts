@@ -150,8 +150,7 @@ app.whenReady().then(async () => {
 
   // The macOS About window (Plexo › About Plexo); its copyright comes from electron-builder.yml.
   app.setAboutPanelOptions({
-    credits:
-      'Developed by Anmol Kapil.\nmacOS code signing provided by Dhananjay Babasaheb Bhosale.'
+    credits: 'Developed by Anmol Kapil.\nmacOS code signing provided by Dhananjay Bhosale.'
   })
 
   // Applied before the window is created so the initial background/icon already match —
