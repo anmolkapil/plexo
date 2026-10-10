@@ -3,6 +3,7 @@ import type {
   DownloadUpdate,
   FinishedDownload,
   NetworkInterfaceInfo,
+  PendingLink,
   ProbeResult,
   StartDownloadRequest,
   TorrentFileEntry,
@@ -28,7 +29,8 @@ export interface IpcContract {
   /** Opens a download's file (a torrent's folder) with the OS default. False when it's gone or
    * nothing could open it. */
   openDownload: { args: [id: string]; result: boolean }
-  startDownload: { args: [request: StartDownloadRequest]; result: string }
+  /** `linkId`: the PendingLink whose browser sign-in it starts with. */
+  startDownload: { args: [request: StartDownloadRequest, linkId?: string]; result: string }
   /** Every download, oldest first, each as a snapshot. */
   listDownloads: { args: []; result: DownloadUpdate[] }
   /** Finished downloads, newest first. One is forgotten with removeDownload. */
@@ -55,6 +57,10 @@ export interface IpcContract {
    * `trashFile`: then it goes to the Trash. */
   removeDownload: { args: [id: string, options?: { trashFile?: boolean }]; result: void }
   checkForUpdate: { args: []; result: UpdateInfo | null }
-  /** A link the OS handed over (main/openLinks.ts), once; null when there's none. */
-  takePendingLink: { args: []; result: string | null }
+  /** Oldest first: every link not yet started or dismissed. */
+  pendingLinks: { args: []; result: PendingLink[] }
+  /** Resumes the failed download a link was matched to, from that link (see relinkDownload). */
+  resumeFromLink: { args: [linkId: string, downloadId: string]; result: void }
+  /** Forgets the sign-in of a link that won't be started. */
+  dismissLink: { args: [id: string]; result: void }
 }

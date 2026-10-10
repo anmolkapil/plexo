@@ -48,9 +48,12 @@ mac:
     - NSDownloadsFolderUsageDescription: Plexo saves downloaded files to your Downloads folder.
     # Magnet links and .torrent files can be opened with Plexo, as one choice among others: it's
     # never made the default over a torrent client the user already has (LSHandlerRank).
+    # plexo:// is Plexo's own scheme, so registering it takes nothing from another app.
     - CFBundleURLTypes:
         - CFBundleURLName: Magnet link
           CFBundleURLSchemes: [magnet]
+        - CFBundleURLName: Plexo
+          CFBundleURLSchemes: [plexo]
       CFBundleDocumentTypes:
         - CFBundleTypeName: Torrent
           CFBundleTypeRole: Viewer
@@ -71,7 +74,7 @@ linux:
   maintainer: electronjs.org
   category: Utility
   # Offered for magnet links and .torrent files ("Open with"), not made their default.
-  mimeTypes: [x-scheme-handler/magnet, application/x-bittorrent]
+  mimeTypes: [x-scheme-handler/magnet, application/x-bittorrent, x-scheme-handler/plexo]
 appImage:
   artifactName: ${name}-${version}-${arch}.${ext}
 npmRebuild: false

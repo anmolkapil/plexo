@@ -1,0 +1,175 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Plexo extension options</title>
+    <link rel="stylesheet" href="ui.css" />
+    <style>
+      main {
+        max-width: 680px;
+        margin: 0 auto;
+        padding: 48px 20px 64px;
+        display: flex;
+        flex-direction: column;
+        gap: 28px;
+      }
+      header {
+        display: flex;
+        align-items: center;
+        gap: 14px;
+      }
+      header img {
+        width: 36px;
+        height: 36px;
+      }
+      h1 {
+        margin: 0;
+        font-size: 20px;
+      }
+      h2 {
+        margin: 0 0 10px;
+        font: 500 11px var(--mono);
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        color: var(--text3);
+      }
+      .card {
+        border: 0.5px solid var(--border);
+        border-radius: 12px;
+        background: var(--bg2);
+        overflow: hidden;
+      }
+      .card .row {
+        flex-wrap: wrap;
+        gap: 16px;
+        padding: 16px 18px;
+      }
+      .card .row:last-child {
+        border-bottom: none;
+      }
+      .card .grow {
+        flex: 1 1 260px;
+      }
+      #sites li {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        padding: 6px 8px 6px 18px;
+        border-top: 0.5px solid var(--border);
+        font: 12.5px var(--mono);
+      }
+      #sites li span {
+        flex: 1;
+        min-width: 0;
+        overflow-wrap: anywhere;
+      }
+      #sites {
+        margin: 0;
+        padding: 0;
+        list-style: none;
+      }
+      .links {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px 16px;
+        font-size: 12px;
+        color: var(--text3);
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <header>
+        <img src="icons/icon-128.png" alt="" />
+        <div class="grow">
+          <h1>Plexo</h1>
+          <div class="muted">Extension options</div>
+        </div>
+      </header>
+
+      <section>
+        <h2>Capture</h2>
+        <div class="card">
+          <label class="row" for="capture">
+            <span class="grow">
+              <span class="title">Capture downloads</span>
+              <span class="muted"
+                >Every download this browser starts opens in Plexo. If Plexo isn’t open, the browser
+                keeps it.</span
+              >
+            </span>
+            <input type="checkbox" role="switch" class="switch" id="capture" />
+          </label>
+          <div class="row">
+            <label class="grow" for="skip-small">
+              <span class="title">Skip small files</span>
+              <span class="muted">Files smaller than this stay in the browser.</span>
+            </label>
+            <input
+              type="number"
+              id="min-mb"
+              min="1"
+              step="1"
+              style="width: 64px"
+              aria-label="Minimum size in megabytes"
+            />
+            <span class="mono muted">MB</span>
+            <input type="checkbox" role="switch" class="switch" id="skip-small" />
+          </div>
+        </div>
+      </section>
+
+      <section>
+        <h2>Sites that keep their downloads</h2>
+        <div class="card">
+          <form class="row" id="add-site" style="flex-direction: column; align-items: stretch">
+            <span class="muted"
+              >Downloads from these sites and their subdomains stay in the browser. Right-click ›
+              Download with Plexo still works on them.</span
+            >
+            <span style="display: flex; gap: 8px">
+              <input
+                type="text"
+                id="site"
+                placeholder="example.com"
+                aria-label="Site to add"
+                class="mono"
+                style="flex: 1; min-width: 0"
+              />
+              <button type="submit">Add</button>
+            </span>
+            <span id="site-error" role="alert" style="color: var(--warn)" hidden
+              >That isn’t a site name.</span
+            >
+          </form>
+          <ul id="sites"></ul>
+          <div class="row muted" id="no-sites" style="border-top: 0.5px solid var(--border)">
+            No sites yet. Every site’s downloads go to Plexo.
+          </div>
+        </div>
+      </section>
+
+      <section>
+        <h2>Connection</h2>
+        <div class="card">
+          <div class="row">
+            <span class="grow">
+              <span class="title" style="display: flex; align-items: center; gap: 8px"
+                ><span class="dot" id="dot"></span><span id="connection">…</span></span
+              >
+              <span class="mono muted" id="port"></span>
+            </span>
+            <button type="button" id="open-plexo" hidden>Open Plexo</button>
+          </div>
+        </div>
+      </section>
+
+      <div class="links">
+        <span class="mono" id="version"></span>
+        <a href="https://getplexo.app" target="_blank" rel="noreferrer">Website</a>
+        <a href="https://github.com/anmolkapil/plexo" target="_blank" rel="noreferrer">GitHub</a>
+      </div>
+    </main>
+    <script src="options.js"></script>
+  </body>
+</html>

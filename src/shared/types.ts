@@ -231,6 +231,7 @@ export interface HttpDownloadState extends DownloadStateBase {
   blockSizeBytes: number
   /** The disk can't keep up: most streams are waiting for their writes (see concurrency.ts). */
   diskLimited?: boolean
+  fromBrowser?: string
 }
 
 export interface TorrentDownloadState extends DownloadStateBase {
@@ -334,6 +335,7 @@ export interface AppSettings {
   slowModeSpeed?: number
   /** How speeds are shown everywhere; sizes stay in bytes either way. */
   speedUnit?: SpeedUnit
+  browserExtensionUsed?: boolean
 }
 
 /** bytes: MB/s. bits: Mbps, as internet plans and speed tests count them. */
@@ -378,6 +380,38 @@ export interface StartHttpDownloadRequest extends StartDownloadRequestBase {
   kind: 'http'
   /** Streams per network the user picked; left out, the count is decided automatically. */
   streamsPerNetwork?: number
+  browser?: BrowserContext
+}
+
+/** The fields of chrome.cookies.Cookie that decide where it's sent. */
+export interface BrowserCookie {
+  name: string
+  value: string
+  /** With or without a leading dot: `hostOnly` decides whether subdomains get it. */
+  domain: string
+  hostOnly: boolean
+  path: string
+  secure: boolean
+}
+
+/** So a link that needs a signed-in session, or checks the page it came from, works as it does
+ * in the browser. */
+export interface BrowserContext {
+  cookies: BrowserCookie[]
+  referer?: string
+  userAgent?: string
+  name?: string
+}
+
+export interface PendingLink {
+  id: string
+  url: string
+  /** Reused by New download: checking a single-use link again would spend it. */
+  probe?: ProbeResult
+  from?: string
+  signedInTo?: string
+  /** A failed download this looks like the same file as, for the user to resume instead. */
+  resumes?: { id: string; fileName: string }
 }
 
 export interface StartTorrentDownloadRequest extends StartDownloadRequestBase {

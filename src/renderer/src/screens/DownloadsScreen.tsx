@@ -1,3 +1,4 @@
+import { EXTENSION_PAGE_URL } from '@shared/browserBridge'
 import type { DownloadState, FinishedDownload } from '@shared/types'
 import { ChevronRight, Plus, X } from 'lucide-react'
 import { cn } from 'cn'
@@ -394,6 +395,14 @@ function EmptyState(): React.JSX.Element {
             New download
             <span className="ml-1 font-mono text-[11px] opacity-70">{NEW_SHORTCUT}</span>
           </Button>
+          <a
+            href={EXTENSION_PAGE_URL}
+            target="_blank"
+            rel="noreferrer"
+            className="mt-2 text-[12px] text-[var(--text-secondary)] hover:text-foreground hover:underline"
+          >
+            Downloading in Chrome, Edge or Firefox? Get the browser extension
+          </a>
         </>
       )}
     </div>

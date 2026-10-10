@@ -1,9 +1,10 @@
 import { electronApp, is, optimizer } from '@electron-toolkit/utils'
-import { app, BrowserWindow, nativeTheme, shell } from 'electron'
+import { app, BrowserWindow, Menu, nativeImage, nativeTheme, shell, Tray } from 'electron'
 import { join } from 'path'
 import icon from '../../resources/icon-dark.png?asset'
 import { registerIpcHandlers } from './ipc/handlers'
-import { acceptedLink, linkFromArgs, offerLink } from './openLinks'
+import { keepsRunningForBrowser, startBridge } from './browserBridge'
+import { acceptedLink, bringForward, linkFromArgs, offerLink } from './openLinks'
 import { loadThemeSource, migrateLegacyNetworkPreferences } from './settings'
 import { testKnobs } from './testKnobs'
 import type { DownloadManager } from './download/downloadManager'
@@ -23,19 +24,27 @@ if (!app.requestSingleInstanceLock()) app.exit(0)
 let mainWindow: BrowserWindow | null = null
 let downloadManager: DownloadManager | null = null
 let quitAfterSuspending = false
+let tray: Tray | null = null
+
+/** Only once the app is ready. */
+function ensureWindow(): BrowserWindow {
+  if (!mainWindow || mainWindow.isDestroyed()) createWindow()
+  return mainWindow as BrowserWindow
+}
 
 /** A link the OS handed over goes to the window's link field (see openLinks.ts). */
 function offer(candidate: string): void {
   const link = acceptedLink(candidate)
   if (!link) return
-  offerLink(link, mainWindow)
+  // Before the app is ready the link waits; the window takes it once it opens.
+  offerLink({ url: link }, app.isReady() ? ensureWindow() : null)
 }
 
+// A plexo:// link from the browser extension arrives here too, with no link in it.
 app.on('second-instance', (_event, argv) => {
   const link = linkFromArgs(argv)
   if (link) return offer(link)
-  if (mainWindow?.isMinimized()) mainWindow.restore()
-  mainWindow?.focus()
+  bringForward(ensureWindow())
 })
 // macOS hands links over as events, and may do so before the app is ready.
 app.on('open-url', (event, url) => {
@@ -130,6 +139,13 @@ app.whenReady().then(async () => {
   })
 
   downloadManager = registerIpcHandlers(() => mainWindow)
+  void startBridge({
+    manager: downloadManager,
+    offer: (link) => offerLink(link, ensureWindow())
+  }).catch((error) => console.error('[plexo] browser bridge failed to start', error))
+  // Unlike magnet:, plexo:// is Plexo's own, so registering it takes nothing from another app. A
+  // development build has no fixed path to register.
+  if (app.isPackaged) app.setAsDefaultProtocolClient('plexo')
 
   nativeTheme.on('updated', () => {
     mainWindow?.setBackgroundColor(nativeTheme.shouldUseDarkColors ? '#1c1c1e' : '#ffffff')
@@ -162,7 +178,18 @@ app.on('before-quit', (event) => {
 })
 
 app.on('window-all-closed', () => {
-  if (process.platform !== 'darwin') {
-    app.quit()
-  }
+  if (process.platform === 'darwin') return
+  if (!keepsRunningForBrowser()) return app.quit()
+  // Kept running in the tray, so the browser extension can still reach it.
+  if (tray) return
+  tray = new Tray(nativeImage.createFromPath(icon).resize({ width: 16, height: 16 }))
+  tray.setToolTip('Plexo')
+  tray.on('click', () => bringForward(ensureWindow()))
+  tray.setContextMenu(
+    Menu.buildFromTemplate([
+      { label: 'Open Plexo', click: () => bringForward(ensureWindow()) },
+      { type: 'separator' },
+      { label: 'Quit Plexo', click: () => app.quit() }
+    ])
+  )
 })

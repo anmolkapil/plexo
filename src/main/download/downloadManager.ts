@@ -4,12 +4,13 @@ import { randomUUID } from 'node:crypto'
 import { lstat, readFile, readdir, rename, rm, stat, statfs, writeFile } from 'node:fs/promises'
 import { basename, dirname, isAbsolute, join, sep } from 'node:path'
 import type { BrowserWindow } from 'electron'
-import { app, Notification, powerSaveBlocker, shell } from 'electron'
+import { app, Notification, powerSaveBlocker, safeStorage, shell } from 'electron'
 import { IpcChannels } from '../../shared/ipc-channels'
 import {
   DOWNLOADS_AT_ONCE,
   SPEED_HISTORY_SECONDS,
   type AppSettings,
+  type BrowserContext,
   type DownloadNetwork,
   type DownloadState,
   type DownloadStatus,
@@ -21,6 +22,7 @@ import {
   type HttpDownloadState,
   type NetworkInterfaceInfo,
   type NetworkStatus,
+  type HttpProbeResult,
   type StartDownloadRequest,
   type StartHttpDownloadRequest,
   type StartTorrentDownloadRequest,
@@ -35,12 +37,14 @@ import { loadSettings } from '../settings'
 import { addToHistory, findInHistory, removeFromHistory } from './history'
 import { testKnobs } from '../testKnobs'
 import { DownloadFile } from './downloadFile'
-import { HttpTransfer, splittable } from './httpTransfer'
+import { compareSamples, HttpTransfer, splittable } from './httpTransfer'
+import { normalizeEtag } from './fileVersion'
 import { ensureDirectory, pathExists, reserveDestinationPath } from './paths'
 import { planBlocks, planDownload, planPieces } from './plan'
 import { restoreBlocks, restorePieces, saveBlocks, type SavedBlocks } from './savedProgress'
 import { chosenFiles, finishedFiles, wantedPieces } from './torrent/files'
 import { probeUrl } from './probe'
+import { browserContextFrom } from './browserContext'
 import { describeTorrent, probedTorrentFile } from './torrent/metadata'
 import { TorrentDestination } from './torrent/torrentDestination'
 import { TorrentTransfer } from './torrent/torrentTransfer'
@@ -61,7 +65,8 @@ import {
   compatibleInterfaces,
   NoCompatibleRouteError,
   resolveTargetWithin,
-  targetHost
+  targetHost,
+  StreamConnection
 } from '../network/routes'
 
 interface RuntimeFields {
@@ -115,6 +120,8 @@ interface PersistedDownloadBase {
   publicationPath?: string
   publicationIdentity?: { dev: number; ino: number }
   requestPayload: StartDownloadRequest
+  /** Kept apart from requestPayload, sealed (see sealBrowser). */
+  browser?: string
 }
 
 type PersistedState =
@@ -124,6 +131,46 @@ type PersistedDownload = PersistedDownloadBase & {
   version: 7
   state: PersistedState
 } & SavedBlocks
+
+/** Cookies are never written in the clear. Without a keychain (Linux falls back to a fixed key)
+ * they aren't saved at all, and a download resumed after a restart goes without them. */
+function sealBrowser(browser: BrowserContext): string | undefined {
+  if (!safeStorage.isEncryptionAvailable()) return undefined
+  if (process.platform === 'linux' && safeStorage.getSelectedStorageBackend() === 'basic_text') {
+    return undefined
+  }
+  // The keychain can refuse; the download is still saved, it just won't keep the sign-in.
+  try {
+    return safeStorage.encryptString(JSON.stringify(browser)).toString('base64')
+  } catch {
+    return undefined
+  }
+}
+
+function unsealBrowser(sealed: string): BrowserContext | undefined {
+  try {
+    return (
+      browserContextFrom(JSON.parse(safeStorage.decryptString(Buffer.from(sealed, 'base64')))) ??
+      undefined
+    )
+  } catch {
+    return undefined
+  }
+}
+
+/** A finished download drops its cookies: nothing will ask the server for it again. */
+function savedRequest(
+  runtime: DownloadRuntime
+): Pick<PersistedDownloadBase, 'requestPayload' | 'browser'> {
+  if (runtime.kind !== 'http' || !runtime.requestPayload.browser) {
+    return { requestPayload: runtime.requestPayload }
+  }
+  const { browser, ...requestPayload } = runtime.requestPayload
+  return {
+    requestPayload,
+    browser: runtime.state.status === 'completed' ? undefined : sealBrowser(browser)
+  }
+}
 
 const UI_UPDATE_MS = 200
 /** How often a running download takes stock (see run). */
@@ -301,6 +348,8 @@ async function ensureDiskSpace(destinationDir: string, requiredBytes: number): P
 
 export class DownloadManager {
   private runtimes = new Map<string, DownloadRuntime>()
+  /** Downloads whose new link is being checked: two at once could both pass and both resume. */
+  private relinking = new Set<string>()
   private readonly initialization: Promise<void>
   private suspending = false
   /** Each network's addresses as last seen, by id: what tells a network that has changed. */
@@ -601,7 +650,10 @@ export class DownloadManager {
     id: string,
     persisted: PersistedDownload
   ): Promise<DownloadRuntime | null> {
-    const { requestPayload } = persisted
+    const requestPayload: StartDownloadRequest =
+      persisted.requestPayload.kind === 'http' && typeof persisted.browser === 'string'
+        ? { ...persisted.requestPayload, browser: unsealBrowser(persisted.browser) }
+        : persisted.requestPayload
     const saved: SavedBlocks = { progress: persisted.progress, complete: persisted.complete }
     let state: DownloadState
     let runtime: DownloadRuntime
@@ -750,6 +802,11 @@ export class DownloadManager {
 
   async start(requestPayload: StartDownloadRequest): Promise<string> {
     await this.initialization
+    if (requestPayload.kind === 'http' && requestPayload.browser !== undefined) {
+      const browser = browserContextFrom(requestPayload.browser)
+      if (!browser) throw new Error('The browser’s details for this download couldn’t be read.')
+      requestPayload = { ...requestPayload, browser }
+    }
 
     const available = await this.networks.refresh()
     const selected = available.filter((iface) => requestPayload.interfaceIds.includes(iface.id))
@@ -846,7 +903,10 @@ export class DownloadManager {
         blocks,
         totalBlocks: blocks.length,
         blockSizeBytes,
-        startedAt: Date.now()
+        startedAt: Date.now(),
+        ...(requestPayload.browser && {
+          fromBrowser: requestPayload.browser.name ?? 'your browser'
+        })
       }
       runtime = this.newHttpRuntime(
         state,
@@ -909,18 +969,48 @@ export class DownloadManager {
   }
 
   /** Gives a download whose link stopped working (a signed link ran out, say) a fresh link to the
-   * same file, and resumes it from where it stopped. The file must be as big as before; whether
-   * its bytes are the same is checked as on any resume (see HttpTransfer's version check). */
-  async relink(id: string, url: string): Promise<void> {
+   * same file, and resumes it from where it stopped. `given`: a link already checked, with the
+   * browser sign-in it came with. */
+  async relink(
+    id: string,
+    url: string,
+    given?: { probe?: HttpProbeResult; browser?: BrowserContext }
+  ): Promise<void> {
     const runtime = this.runtimes.get(id)
     if (runtime?.kind !== 'http') throw new Error('Only web downloads support replacing a link.')
-    const { status, resumable, totalBytes } = runtime.state
-    if (status !== 'error' && status !== 'paused') {
-      throw new Error('Pause the download before replacing its link.')
+    const replaceable = (): boolean => {
+      const { status, resumable } = runtime.state
+      return (
+        this.runtimes.get(id) === runtime &&
+        resumable !== false &&
+        (status === 'error' || status === 'paused')
+      )
     }
-    if (resumable === false) throw new Error('This download can’t resume. Start it again.')
-    const probe = await probeUrl(url)
+    if (runtime.state.resumable === false) {
+      throw new Error('This download can’t resume. Start it again.')
+    }
+    if (!replaceable()) throw new Error('Pause the download before replacing its link.')
+    if (this.relinking.has(id)) throw new Error('A new link for this download is being checked.')
+    this.relinking.add(id)
+    try {
+      await this.replaceLink(runtime, url, replaceable, given)
+    } finally {
+      this.relinking.delete(id)
+    }
+  }
+
+  private async replaceLink(
+    runtime: HttpDownloadRuntime,
+    url: string,
+    replaceable: () => boolean,
+    given?: { probe?: HttpProbeResult; browser?: BrowserContext }
+  ): Promise<void> {
+    // A fresh link from the same site usually needs the same sign-in, so the old one carries over
+    // unless the browser sent a new one.
+    const browser = given?.browser ?? runtime.requestPayload.browser
+    const probe = given?.probe ?? (await probeUrl(url, browser))
     if (probe.kind !== 'http') throw new Error('That isn’t a link to a file')
+    const { totalBytes } = runtime.state
     if ((probe.totalBytes ?? 0) !== totalBytes) {
       throw new Error(
         `That link is to a different file: ${formatGigabytes(probe.totalBytes ?? 0)}, not ${formatGigabytes(totalBytes)}`
@@ -931,10 +1021,67 @@ export class DownloadManager {
         'This server doesn’t support resuming downloads. Try another link to the same file.'
       )
     }
+    // An ETag or date from another link proves nothing about its bytes: two different files can
+    // share them. Once resumed, only a label this download hasn't seen would make it compare
+    // bytes, so they're compared now, before anything from the new link is written.
+    const verdict = await this.compareWithDisk(runtime, probe.finalUrl, browser)
+    if (verdict === 'different') {
+      throw new Error('That link is to a different file: its bytes don’t match what’s downloaded.')
+    }
+    if (verdict === 'unknown') {
+      throw new Error('Plexo couldn’t check that link against what’s downloaded. Try again.')
+    }
+    if (!replaceable()) throw new Error('The download changed while its new link was checked.')
     runtime.requestPayload.url = probe.finalUrl
+    runtime.requestPayload.browser = browser
     runtime.state.url = probe.finalUrl
     await this.persistNow(runtime)
-    this.resume(id)
+    this.resume(runtime.state.id)
+  }
+
+  private async compareWithDisk(
+    runtime: HttpDownloadRuntime,
+    url: string,
+    browser: BrowserContext | undefined
+  ): Promise<'same' | 'different' | 'unknown'> {
+    // Nothing downloaded, nothing a different file could spoil.
+    if (!runtime.blocks.some((block) => block.bytesDownloaded > 0)) return 'same'
+    const available = await this.networks.refresh()
+    const enabled = (iface: NetworkInterfaceInfo): boolean =>
+      runtime.state.networks.some((network) => network.id === iface.id && network.enabled)
+    const network = available.find(enabled) ?? available[0]
+    if (!network) return 'unknown'
+    const connection = new StreamConnection(() => network, {
+      timeoutMs: testKnobs.stallTimeoutMs,
+      connectTimeoutMs: testKnobs.connectTimeoutMs
+    })
+    try {
+      return await compareSamples(runtime, url, browser, connection)
+    } finally {
+      connection.close()
+    }
+  }
+
+  /** A failed download this link looks like the same file as: same name, size and strong ETag.
+   * Only a suggestion for the user, who decides; relink then compares the bytes. */
+  failedMatch(probe: HttpProbeResult): { id: string; fileName: string } | undefined {
+    const strong = (etag: string | null): etag is string => etag !== null && !/^W\//i.test(etag)
+    if (!strong(probe.etag) || !probe.totalBytes) return undefined
+    const etag = normalizeEtag(probe.etag)
+    for (const runtime of this.runtimes.values()) {
+      if (runtime.kind !== 'http' || runtime.state.status !== 'error') continue
+      const { requestPayload: request, state } = runtime
+      if (
+        state.resumable !== false &&
+        state.totalBytes === probe.totalBytes &&
+        request.suggestedFileName === probe.suggestedFileName &&
+        strong(request.etag) &&
+        normalizeEtag(request.etag) === etag
+      ) {
+        return { id: state.id, fileName: state.fileName }
+      }
+    }
+    return undefined
   }
 
   resume(id: string): void {
@@ -1706,7 +1853,7 @@ export class DownloadManager {
           partialPath: runtime.file.path,
           publicationPath: runtime.publicationPath,
           publicationIdentity: runtime.publicationIdentity,
-          requestPayload: runtime.requestPayload
+          ...savedRequest(runtime)
         }
         if (runtime.state.status === 'downloading' || runtime.state.status === 'paused') {
           await runtime.file.sync()
