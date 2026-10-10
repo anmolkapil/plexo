@@ -10,8 +10,6 @@ export const BRIDGE_API = 1
 /** The extension waits a little longer than this, and Plexo adds nothing once it has given up,
  * so a download never ends up in both. */
 export const BRIDGE_DEADLINE_MS = 8000
-// ponytail: one page linking every store; it must exist before the extension ships.
-export const EXTENSION_PAGE_URL = 'https://getplexo.app/extension'
 
 export interface BridgePing {
   app: 'plexo'
