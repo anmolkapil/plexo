@@ -148,6 +148,12 @@ app.whenReady().then(async () => {
     console.error('[plexo] failed to migrate network-preferences.json', error)
   )
 
+  // The macOS About window (Plexo › About Plexo); its copyright comes from electron-builder.yml.
+  app.setAboutPanelOptions({
+    credits:
+      'Developed by Anmol Kapil.\nmacOS code signing provided by Dhananjay Babasaheb Bhosale.'
+  })
+
   // Applied before the window is created so the initial background/icon already match —
   // the saved preference otherwise only takes effect on the next 'updated' event.
   nativeTheme.themeSource = await loadThemeSource()

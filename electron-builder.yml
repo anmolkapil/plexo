@@ -1,5 +1,7 @@
 appId: com.plexo.app
 productName: Plexo
+# Shown in the macOS About window and Finder's Get Info, and in the Windows file properties.
+copyright: Copyright © 2026 Anmol Kapil
 afterPack: scripts/check-torrent-package.mjs
 directories:
   buildResources: build
