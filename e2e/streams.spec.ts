@@ -1,5 +1,6 @@
 import { BLOCK, expect, test } from './fixtures'
 import type { DownloadState } from '../src/shared/types'
+import { isProbe } from './origin'
 
 // N. How many streams a download runs, decided while it runs (see concurrency.ts), against a
 // server that limits it in each of the ways that matter.
@@ -17,7 +18,7 @@ test.describe('automatic stream count', () => {
     const origin = await serve({ size: 96 * BLOCK, bytesPerSecond: 256 * 1024 })
     const accepted = new Set<number>()
     origin.setRule(({ connection, range }) => {
-      if (range?.start === 0 && range.end === 0) return undefined // the probe
+      if (isProbe(range)) return undefined // the probe
       if (accepted.has(connection) || accepted.size < 4) {
         accepted.add(connection)
         return undefined
@@ -43,7 +44,7 @@ test.describe('automatic stream count', () => {
       const origin = await serve({ size: 256 * BLOCK, bytesPerSecond: 256 * 1024 })
       const accepted = new Set<number>()
       origin.setRule(({ connection, range }) => {
-        if (range?.start === 0 && range.end === 0) return undefined // the probe
+        if (isProbe(range)) return undefined // the probe
         if (accepted.has(connection) || accepted.size < 4) {
           accepted.add(connection)
           return undefined
@@ -68,7 +69,7 @@ test.describe('automatic stream count', () => {
       const origin = await serve({ size: 96 * BLOCK, bytesPerSecond: 256 * 1024 })
       let busyUntil = 0
       origin.setRule(({ range }) => {
-        if (range?.start === 0 && range.end === 0) return undefined // the probe
+        if (isProbe(range)) return undefined // the probe
         busyUntil ||= Date.now() + 1500
         return Date.now() < busyUntil ? { status: 503 } : undefined
       })

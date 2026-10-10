@@ -33,6 +33,10 @@ export type Fault =
   | { crawl: number }
   | { redirect: string }
 
+/** The app's probe (src/main/download/probe.ts asks for bytes=0-1023), as opposed to a chunk. */
+export const isProbe = (range: OriginRequest['range']): boolean =>
+  range?.start === 0 && range.end === 1023
+
 export interface OriginRequest {
   /** 1-based count of requests this server has seen. */
   n: number
@@ -189,9 +193,9 @@ export class Origin {
     this.holdRelease = null
   }
 
-  /** Requests that asked for byte ranges, i.e. the app's chunk requests (not the 1-byte probe). */
+  /** Requests that asked for byte ranges, i.e. the app's chunk requests (not the probe). */
   chunkRequests(): LoggedRequest[] {
-    return this.log.filter((entry) => !(entry.range?.start === 0 && entry.range.end === 0))
+    return this.log.filter((entry) => !isProbe(entry.range))
   }
 
   private async handle(req: IncomingMessage, res: ServerResponse): Promise<void> {
@@ -218,8 +222,8 @@ export class Origin {
       return
     }
 
-    // The app's 1-byte probes (bytes=0-0) are never held — only real transfers are.
-    const holdable = !(request.range?.start === 0 && request.range.end === 0)
+    // The app's probes are never held — only real transfers are.
+    const holdable = !isProbe(request.range)
     if (holdable && this.holdAt !== null && request.range && request.range.start > this.holdAt) {
       await this.releasePromise
     }
