@@ -298,7 +298,7 @@ function GeneralPage({
           disabled={atDefaults}
           onClick={() => setConfirmReset(true)}
         >
-          Reset to defaults…
+          Reset to defaults
         </Button>
       </div>
       <AlertDialog open={confirmReset} onOpenChange={setConfirmReset}>
@@ -439,7 +439,7 @@ function NetworkPage({
           disabled={busy || used === 0}
           onClick={() => setReset('usage')}
         >
-          Reset data usage…
+          Reset data usage
         </Button>
         <Button
           variant="secondary"
@@ -447,7 +447,7 @@ function NetworkPage({
           disabled={busy || (preference?.speedLimit === undefined && dataLimit === undefined)}
           onClick={() => setReset('limits')}
         >
-          Remove limits…
+          Remove limits
         </Button>
       </div>
       <AlertDialog open={reset !== null} onOpenChange={(open) => !open && !busy && setReset(null)}>

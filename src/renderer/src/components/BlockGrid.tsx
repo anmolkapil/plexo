@@ -313,7 +313,7 @@ export function BlockGrid({
                     onClick={goToActive}
                     aria-label={`Show the ${unit.toLowerCase()}s in progress`}
                     className={cn(
-                      'absolute right-4 z-10 flex size-6 cursor-pointer items-center justify-center rounded-full border-[0.5px] border-[var(--border-strong)] bg-card text-[var(--text-secondary)] shadow-[0_2px_8px_rgba(0,0,0,0.18)] hover:text-foreground dark:shadow-[0_2px_8px_rgba(0,0,0,0.55)] focus-visible:outline-2 focus-visible:outline-ring',
+                      'absolute right-4 z-10 flex size-6 cursor-default items-center justify-center rounded-full border-[0.5px] border-[var(--border-strong)] bg-card text-[var(--text-secondary)] shadow-[0_2px_8px_rgba(0,0,0,0.18)] hover:text-foreground dark:shadow-[0_2px_8px_rgba(0,0,0,0.55)] focus-visible:outline-2 focus-visible:outline-ring',
                       nearestActive < firstInView ? '-top-1' : '-bottom-1'
                     )}
                   >

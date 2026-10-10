@@ -129,18 +129,7 @@ export const DownloadingScreen = memo(function DownloadingScreen({
     return () => clearInterval(interval)
   }, [isPaused])
 
-  // Resuming round-trips through the main process to re-verify the download before flipping
-  // status away from 'paused' (an ETag re-check over the network for a real download) — with no
-  // feedback in between, a slow check reads as the button not having registered the click.
-  const [resuming, setResuming] = useState(false)
   const [filesOpen, setFilesOpen] = useState(false)
-  useEffect(() => {
-    if (!isPaused || download.error) {
-      // eslint-disable-next-line react-hooks/set-state-in-effect
-      setResuming(false)
-    }
-  }, [isPaused, download.error])
-
   useEffect(() => {
     if (isPaused) {
       const label = isQueued ? 'Queued' : 'Paused'
@@ -157,16 +146,6 @@ export const DownloadingScreen = memo(function DownloadingScreen({
     (download.totalPausedMs || 0) +
     (isPaused && download.pausedAt ? Math.max(0, now - download.pausedAt) : 0)
   const elapsedSeconds = Math.max(0, (now - download.startedAt - totalPausedMs) / 1000)
-
-  const handlePauseResume = (): void => {
-    // A queued one is paused out of the queue, as a running one is.
-    if (isPaused && !isQueued) {
-      setResuming(true)
-      void window.plexo.resumeDownload(download.id)
-    } else {
-      void window.plexo.pauseDownload(download.id)
-    }
-  }
 
   const effectiveSpeed = isPaused ? 0 : download.speedBytesPerSec
   const [speedValue, speedUnit] = formatSpeed(effectiveSpeed).split(' ')
@@ -225,20 +204,10 @@ export const DownloadingScreen = memo(function DownloadingScreen({
     : null
 
   const throughputStatusLabel = isPaused ? null : `LAST ${SPEED_HISTORY_SECONDS}S`
-  const pauseResumeLabel = resuming ? 'Resuming…' : isPaused && !isQueued ? 'Resume' : 'Pause'
 
   return (
     <div className="flex h-full flex-col bg-background">
-      <DetailHeader download={download}>
-        <Button
-          type="button"
-          variant={isPaused && !isQueued ? 'default' : 'secondary'}
-          onClick={handlePauseResume}
-          disabled={resuming}
-        >
-          {pauseResumeLabel}
-        </Button>
-      </DetailHeader>
+      <DetailHeader download={download} />
       {/* Hero band — always visible under the header */}
       <HeroBand>
         {/* At their designed size: a wider window opens a gap between the speed and the chart
@@ -385,7 +354,7 @@ export const DownloadingScreen = memo(function DownloadingScreen({
                     size="xs"
                     onClick={() => setFilesOpen((open) => !open)}
                     aria-expanded={filesOpen}
-                    className="h-auto cursor-pointer rounded-[4px] border-[0.5px] bg-card px-[7px] py-[3px] font-mono text-[10.5px] leading-none font-medium text-[var(--text-secondary)] aria-expanded:bg-secondary dark:bg-card"
+                    className="h-auto cursor-default rounded-[4px] border-[0.5px] bg-card px-[7px] py-[3px] font-mono text-[10.5px] leading-none font-medium text-[var(--text-secondary)] aria-expanded:bg-secondary dark:bg-card"
                   >
                     {describeFileCount(download.files.chosen, download.files.total)}{' '}
                     <span aria-hidden className="text-[7.5px] opacity-75">

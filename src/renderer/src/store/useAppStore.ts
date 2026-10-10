@@ -81,8 +81,8 @@ interface AppStore {
   receiveDownloadUpdate: (update: DownloadUpdate) => void
   /** Finished downloads as main lists them; any that finished leave `downloads`. */
   receiveHistory: (history: FinishedDownload[]) => void
-  /** Removes a download (cancelling one under way), or forgets a finished one. */
-  removeDownload: (id: string, options?: { trashFile?: boolean }) => void
+  /** Drops a download from the window's view once the main process has removed it. */
+  forgetDownload: (id: string) => void
   setView: (view: View) => void
   /** Opens New download, with `link` in its link field when one is given. */
   openNewDownload: (link?: string) => void
@@ -211,11 +211,10 @@ export const useAppStore = create<AppStore>((set, get) => ({
     set({ history, downloads })
   },
 
-  removeDownload: (id, options) => {
+  forgetDownload: (id) => {
     const { [id]: removed, ...downloads } = get().downloads
     void removed
     set({ downloads, history: get().history.filter((entry) => entry.id !== id) })
-    void window.plexo.removeDownload(id, options).catch(() => {})
   },
 
   setView: (view) => set({ view }),
