@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto'
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http'
 import { app } from 'electron'
 import {
@@ -5,6 +6,7 @@ import {
   BRIDGE_DEADLINE_MS,
   BRIDGE_PORTS,
   type BridgeAddRequest,
+  type BridgeHandoff,
   type BridgePing
 } from '../shared/browserBridge'
 import type { BrowserContext, ProbeResult } from '../shared/types'
@@ -19,6 +21,8 @@ import { loadSettings, saveSettings } from './settings'
 // this computer could already do more.
 
 const MAX_BODY_BYTES = 64 * 1024
+// The extension confirms within milliseconds of an answer; an unconfirmed offer is dropped.
+const HANDOFF_MS = 15_000
 // Any extension's origin: Firefox gives each install its own id, so ours can't be pinned.
 const EXTENSION_ORIGIN = /^(chrome|moz)-extension:\/\/[a-z0-9-]+$/i
 
@@ -29,6 +33,7 @@ export interface BridgeHost {
 
 let host: BridgeHost | null = null
 let listeningOn: number | null = null
+const handoffs = new Map<string, Offer>()
 let extensionUsed = false
 
 /** Once an extension has connected, closing the window keeps Plexo in the tray, where the
@@ -92,6 +97,11 @@ async function handle(req: IncomingMessage, res: ServerResponse, port: number): 
   if (req.method === 'OPTIONS') return end(res, 204, cors)
   const path = new URL(req.url ?? '/', 'http://local').pathname
 
+  // JSON only: a page can't send JSON here without a CORS preflight, which only an extension's
+  // origin passes.
+  if (req.method === 'POST' && !/^application\/json\b/i.test(req.headers['content-type'] ?? '')) {
+    return end(res, 415, cors)
+  }
   if (req.method === 'GET' && path === '/ping') {
     noteExtension()
     return json(res, 200, cors, {
@@ -101,13 +111,20 @@ async function handle(req: IncomingMessage, res: ServerResponse, port: number): 
     } satisfies BridgePing)
   }
   if (req.method === 'POST' && path === '/add') {
-    // JSON only: a page can't send JSON here without a CORS preflight, which only an extension's
-    // origin passes.
-    if (!/^application\/json\b/i.test(req.headers['content-type'] ?? '')) return end(res, 415, cors)
     const request = addRequestFrom(await readJson(req))
     if (!request) return end(res, 400, cors)
     noteExtension()
     return add(request, res, cors)
+  }
+  if (req.method === 'POST' && path === '/confirm') {
+    const body = await readJson(req)
+    const token =
+      typeof body === 'object' && body !== null ? (body as Record<string, unknown>).token : null
+    const offer = typeof token === 'string' ? handoffs.get(token) : undefined
+    if (!host || !offer || typeof token !== 'string') return end(res, 410, cors)
+    handoffs.delete(token)
+    host.offer(offer)
+    return json(res, 200, cors, {})
   }
   end(res, 404, cors)
 }
@@ -181,14 +198,16 @@ async function add(
   cors: Record<string, string>
 ): Promise<void> {
   if (!host) return end(res, 503, cors)
-  const keep = (reason: string): void => json(res, 422, cors, { taken: false, reason })
-  const taken = (): void => json(res, 200, cors, { taken: true })
+  const keep = (reason: string): void => json(res, 422, cors, { reason })
+  const hold = (offer: Offer): void => {
+    const token = randomUUID()
+    handoffs.set(token, offer)
+    setTimeout(() => handoffs.delete(token), HANDOFF_MS).unref()
+    json(res, 200, cors, { token } satisfies BridgeHandoff)
+  }
 
   // A magnet link has nothing to check here: New download looks it up.
-  if (/^magnet:/i.test(request.url)) {
-    host.offer({ url: request.url })
-    return taken()
-  }
+  if (/^magnet:/i.test(request.url)) return hold({ url: request.url })
 
   const gone = new Promise<void>((resolve) =>
     res.once('close', () => !res.writableFinished && resolve())
@@ -206,7 +225,7 @@ async function add(
   ) {
     return keep('smaller than the minimum size')
   }
-  host.offer({
+  hold({
     url: request.url,
     probe,
     browser: request.browser,
@@ -214,7 +233,6 @@ async function add(
     signedInTo: signedInTo(request, probe),
     resumes: probe.kind === 'http' ? host.manager.failedMatch(probe) : undefined
   })
-  taken()
 }
 
 /** The page's site rather than the file's, which is often a CDN's: drive.google.com, not

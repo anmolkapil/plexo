@@ -1,3 +1,4 @@
+import { api } from './api'
 export interface Settings {
   capture: boolean
   sites: string[]
@@ -13,11 +14,11 @@ const DEFAULTS: Settings = {
 }
 
 export async function loadSettings(): Promise<Settings> {
-  return { ...DEFAULTS, ...(await chrome.storage.local.get(DEFAULTS)) } as Settings
+  return { ...DEFAULTS, ...(await api.storage.local.get(DEFAULTS)) } as Settings
 }
 
 export function saveSettings(patch: Partial<Settings>): Promise<void> {
-  return chrome.storage.local.set(patch)
+  return api.storage.local.set(patch)
 }
 
 /** The site rule typed or pasted ("https://Drive.Google.com/x", "*.example.com"), or null. */

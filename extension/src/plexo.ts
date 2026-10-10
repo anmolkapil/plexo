@@ -1,8 +1,10 @@
+import { api } from './api'
 import {
   BRIDGE_API,
   BRIDGE_DEADLINE_MS,
   BRIDGE_PORTS,
   type BridgeAddRequest,
+  type BridgeHandoff,
   type BridgePing
 } from '../../src/shared/browserBridge'
 import type { BrowserContext, BrowserCookie } from '../../src/shared/types'
@@ -36,25 +38,45 @@ export async function reach(): Promise<Reach> {
   return at >= 0 ? 'ok' : answers.includes('update') ? 'update' : 'closed'
 }
 
-/** taken: the browser drops its copy. kept: Plexo said no, or took too long. */
-type Sent = 'taken' | 'kept' | 'closed'
+/** Plexo will take the download once confirmed (see BridgeHandoff). */
+export interface Handoff {
+  port: number
+  token: string
+}
 
-export async function send(request: BridgeAddRequest): Promise<Sent> {
+/** kept: Plexo said no, or took too long. */
+export async function send(request: BridgeAddRequest): Promise<Handoff | 'kept' | 'closed'> {
   // Asked first every time, so the sign-in only ever goes to a port that has just answered as
   // Plexo, never to another app that has since taken it.
   if ((await reach()) !== 'ok' || found === null) return 'closed'
+  const port = found
   try {
-    const response = await fetch(`http://127.0.0.1:${found}/add`, {
+    const response = await fetch(`http://127.0.0.1:${port}/add`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(request),
-      // Past Plexo's own deadline: Plexo adds nothing once this has given up, so a download can
-      // never end up in both.
+      // Past Plexo's own deadline: Plexo answers nothing once this has given up.
       signal: AbortSignal.timeout(BRIDGE_DEADLINE_MS + 2000)
     })
-    return response.ok ? 'taken' : 'kept'
+    if (!response.ok) return 'kept'
+    const { token } = (await response.json()) as BridgeHandoff
+    return { port, token }
   } catch (error) {
     return error instanceof DOMException && error.name === 'TimeoutError' ? 'kept' : 'closed'
+  }
+}
+
+export async function confirm({ port, token }: Handoff): Promise<boolean> {
+  try {
+    const response = await fetch(`http://127.0.0.1:${port}/confirm`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token }),
+      signal: AbortSignal.timeout(3000)
+    })
+    return response.ok
+  } catch {
+    return false
   }
 }
 
@@ -76,7 +98,7 @@ export async function browserContext(
   const cookies = new Map<string, BrowserCookie>()
   for (const url of new Set(urls)) {
     if (!url || !/^https?:/i.test(url)) continue
-    const found = await chrome.cookies.getAll({ url, storeId }).catch(() => [])
+    const found = await api.cookies.getAll({ url, storeId }).catch(() => [])
     for (const { name, value, domain, hostOnly, path, secure } of found) {
       cookies.set(`${domain}\n${path}\n${name}`, { name, value, domain, hostOnly, path, secure })
     }
@@ -101,12 +123,12 @@ function browserName(): string {
 
 /** Only ever on a click: the browser asks the user whether to open the app. */
 export async function wake(): Promise<boolean> {
-  const tab = await chrome.tabs.create({ url: 'plexo://open' })
+  const tab = await api.tabs.create({ url: 'plexo://open' })
   let reached = false
   for (let tries = 0; tries < 20 && !reached; tries++) {
     await new Promise((resolve) => setTimeout(resolve, 500))
     reached = (await reach()) === 'ok'
   }
-  if (reached && tab.id !== undefined) await chrome.tabs.remove(tab.id).catch(() => {})
+  if (reached && tab.id !== undefined) await api.tabs.remove(tab.id).catch(() => {})
   return reached
 }

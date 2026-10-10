@@ -35,7 +35,8 @@ const base = JSON.parse(await readFile(join(root, 'manifest.json'), 'utf-8'))
 const manifests = {
   chrome: {
     ...base,
-    minimum_chrome_version: '116',
+    // The first Chrome where every API this calls returns a promise (contextMenus.removeAll).
+    minimum_chrome_version: '123',
     background: { service_worker: 'background.js' }
   },
   firefox: {

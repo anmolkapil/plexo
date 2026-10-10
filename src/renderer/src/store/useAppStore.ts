@@ -60,8 +60,9 @@ interface AppStore {
   draftUrl: string
   /** Handed-over links stacked in New download, oldest first. */
   links: PendingLink[]
-  /** -1 while New download shows a link typed or pasted there instead. */
-  linkIndex: number
+  /** Null while New download shows a link typed or pasted there instead. Links are named by
+   * id, never by position: the list changes while a start is under way. */
+  shownId: string | null
   /** Bumped to remount New download's form for another link. */
   formKey: number
   /** The link last started: still on the clipboard afterwards, so not offered again. */
@@ -87,10 +88,11 @@ interface AppStore {
   openNewDownload: (link?: string) => void
   closeNewDownload: () => void
   receiveLinks: () => Promise<void>
-  showLink: (index: number) => void
-  finishLink: (started: boolean) => void
-  /** Another link was typed over the shown one: the field keeps what was typed. */
-  letShownLinkGo: () => void
+  showLink: (id: string) => void
+  /** If it was the one shown, the newest left is shown, or New download closes. */
+  finishLink: (id: string, started: boolean) => void
+  /** Leaves what New download shows alone, the typed link included. */
+  dropLink: (id: string, started: boolean) => void
   setDownloadsAtOnce: (count: number) => void
   /** Each one applies at once, to every download (see main/network/limits.ts). */
   setSpeedLimit: (bytesPerSec: number | undefined) => void
@@ -136,7 +138,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
 
   draftUrl: '',
   links: [],
-  linkIndex: -1,
+  shownId: null,
   formKey: 0,
   startedUrl: '',
   destinationDir: initial.destinationDir ?? initial.downloadsDir,
@@ -219,9 +221,9 @@ export const useAppStore = create<AppStore>((set, get) => ({
     set(link === undefined ? { newDownloadOpen: true } : { newDownloadOpen: true, draftUrl: link }),
 
   closeNewDownload: () => {
-    const { links, linkIndex } = get()
-    if (linkIndex >= 0) return get().finishLink(false)
-    if (links.length > 0) return get().showLink(links.length - 1)
+    const { links, shownId } = get()
+    if (shownId) return get().finishLink(shownId, false)
+    if (links.length > 0) return get().showLink(links[links.length - 1].id)
     set({ newDownloadOpen: false })
   },
 
@@ -231,34 +233,34 @@ export const useAppStore = create<AppStore>((set, get) => ({
     const known = new Set(get().links.map((link) => link.id))
     const arrived = pending.filter((link) => !known.has(link.id))
     if (arrived.length === 0) return
-    const links = [...get().links, ...arrived]
-    set({ links, newDownloadOpen: true })
-    get().showLink(links.length - 1)
+    set({ links: [...get().links, ...arrived], newDownloadOpen: true })
+    get().showLink(arrived[arrived.length - 1].id)
   },
 
-  showLink: (index) => {
-    const link = get().links[index]
-    if (link) set({ linkIndex: index, draftUrl: link.url, formKey: get().formKey + 1 })
+  showLink: (id) => {
+    const link = get().links.find((candidate) => candidate.id === id)
+    if (link) set({ shownId: id, draftUrl: link.url, formKey: get().formKey + 1 })
   },
 
-  finishLink: (started) => {
-    const { links, linkIndex } = get()
-    const link = links[linkIndex]
-    if (!link) return
-    // Started, main has already forgotten its sign-in.
-    if (!started) void window.plexo.dismissLink(link.id).catch(() => {})
-    const left = links.filter((_, index) => index !== linkIndex)
-    set({ links: left, linkIndex: -1, draftUrl: '' })
-    if (left.length > 0) get().showLink(left.length - 1)
+  finishLink: (id, started) => {
+    const wasShown = get().shownId === id
+    get().dropLink(id, started)
+    if (!wasShown) return
+    const left = get().links
+    set({ draftUrl: '' })
+    if (left.length > 0) get().showLink(left[left.length - 1].id)
     else set({ newDownloadOpen: false })
   },
 
-  letShownLinkGo: () => {
-    const { links, linkIndex } = get()
-    const link = links[linkIndex]
-    if (!link) return
-    void window.plexo.dismissLink(link.id).catch(() => {})
-    set({ links: links.filter((_, index) => index !== linkIndex), linkIndex: -1 })
+  dropLink: (id, started) => {
+    const { links, shownId } = get()
+    if (!links.some((link) => link.id === id)) return
+    // Started, main has already forgotten its sign-in.
+    if (!started) void window.plexo.dismissLink(id).catch(() => {})
+    set({
+      links: links.filter((link) => link.id !== id),
+      ...(shownId === id && { shownId: null })
+    })
   },
 
   setDownloadsAtOnce: (downloadsAtOnce) => {

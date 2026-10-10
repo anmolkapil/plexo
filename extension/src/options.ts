@@ -1,3 +1,4 @@
+import { api } from './api'
 import { plexoPort, reach } from './plexo'
 import { loadSettings, saveSettings, siteOf } from './settings'
 
@@ -70,12 +71,10 @@ element<HTMLFormElement>('add-site').addEventListener('submit', async (event) =>
 })
 
 element('open-plexo').addEventListener('click', () => {
-  void chrome.runtime
-    .sendMessage({ wakePlexo: true })
-    .then(() => setTimeout(renderConnection, 4000))
+  void api.runtime.sendMessage({ wakePlexo: true }).then(() => setTimeout(renderConnection, 4000))
 })
 
-element('version').textContent = `Extension ${chrome.runtime.getManifest().version}`
-chrome.storage.onChanged.addListener(() => void render())
+element('version').textContent = `Extension ${api.runtime.getManifest().version}`
+api.storage.onChanged.addListener(() => void render())
 void render()
 void renderConnection()

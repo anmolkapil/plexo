@@ -62,11 +62,12 @@ function NewDownloadForm({ onDone }: { onDone: () => void }): React.JSX.Element 
   const url = useAppStore((store) => store.draftUrl)
   const setUrl = useAppStore((store) => store.setDraftUrl)
   const links = useAppStore((store) => store.links)
-  const linkIndex = useAppStore((store) => store.linkIndex)
+  const shownId = useAppStore((store) => store.shownId)
   const showLink = useAppStore((store) => store.showLink)
   const finishLink = useAppStore((store) => store.finishLink)
-  const letShownLinkGo = useAppStore((store) => store.letShownLinkGo)
-  const shownLink = linkIndex >= 0 ? links[linkIndex] : undefined
+  const dropLink = useAppStore((store) => store.dropLink)
+  const shownLink = links.find((link) => link.id === shownId)
+  const position = shownLink ? links.indexOf(shownLink) : -1
   const destinationDir = useAppStore((store) => store.destinationDir)
   const setDestinationDir = useAppStore((store) => store.setDestinationDir)
   const full = useAppStore(
@@ -123,9 +124,9 @@ function NewDownloadForm({ onDone }: { onDone: () => void }): React.JSX.Element 
     }
 
     // Checking here would go without the browser's sign-in, and could spend a single-use link.
-    const { links: stacked, linkIndex: shown } = useAppStore.getState()
-    const given = stacked[shown]
-    if (given && given.url !== trimmed) letShownLinkGo()
+    const { links: stacked, shownId: shown } = useAppStore.getState()
+    const given = stacked.find((link) => link.id === shown)
+    if (given && given.url !== trimmed) dropLink(given.id, false)
     setFileNameOverride(null)
     setSkippedFiles([])
     if (given?.url === trimmed && given.probe) {
@@ -152,7 +153,7 @@ function NewDownloadForm({ onDone }: { onDone: () => void }): React.JSX.Element 
       stale = true
       clearTimeout(timer)
     }
-  }, [url, letShownLinkGo])
+  }, [url, dropLink])
 
   const ready = probe.status === 'ready' ? probe.result : null
   const torrent = ready?.kind === 'torrent' ? ready.torrent : null
@@ -248,14 +249,15 @@ function NewDownloadForm({ onDone }: { onDone: () => void }): React.JSX.Element 
   }
 
   const handleResume = async (): Promise<void> => {
-    const resumes = shownLink?.resumes
-    if (!shownLink || !resumes) return
+    const link = shownLink
+    const resumes = link?.resumes
+    if (!link || !resumes) return
     setStarting(true)
     setStartError(null)
     try {
-      await window.plexo.resumeFromLink(shownLink.id, resumes.id)
+      await window.plexo.resumeFromLink(link.id, resumes.id)
       useAppStore.setState({ view: { name: 'download', id: resumes.id } })
-      finishLink(true)
+      finishLink(link.id, true)
     } catch (error) {
       setStartError(describeError(error))
       setStarting(false)
@@ -264,6 +266,8 @@ function NewDownloadForm({ onDone }: { onDone: () => void }): React.JSX.Element 
 
   const handleStart = async (): Promise<void> => {
     if (probe.status !== 'ready' || !canStart) return
+    // Captured now: links can arrive and change what's shown while this starts.
+    const linkId = shownLink?.id
     setStarting(true)
     setStartError(null)
     try {
@@ -290,7 +294,7 @@ function NewDownloadForm({ onDone }: { onDone: () => void }): React.JSX.Element 
               kind: 'http',
               streamsPerNetwork: streamsChoice === 'auto' ? undefined : streamsChoice
             },
-        shownLink?.id
+        linkId
       )
       // Remembered for the next download, like the folder. Not a single-stream pick: that's one
       // network because the file allows no more, not because the others were unwanted.
@@ -308,8 +312,8 @@ function NewDownloadForm({ onDone }: { onDone: () => void }): React.JSX.Element 
         startedUrl: url.trim(),
         ...(full ? {} : { view: { name: 'download', id } as const })
       })
-      if (shownLink) {
-        finishLink(true)
+      if (linkId) {
+        finishLink(linkId, true)
       } else {
         useAppStore.setState({ draftUrl: '' })
         onDone()
@@ -339,21 +343,21 @@ function NewDownloadForm({ onDone }: { onDone: () => void }): React.JSX.Element 
               variant="ghost"
               size="icon-sm"
               aria-label="Previous download"
-              disabled={linkIndex === 0}
-              onClick={() => showLink(linkIndex - 1)}
+              disabled={position === 0}
+              onClick={() => showLink(links[position - 1].id)}
             >
               <ChevronLeft />
             </Button>
             <span className="min-w-12 text-center font-mono text-[11.5px] text-muted-foreground tabular-nums">
-              {linkIndex + 1} of {links.length}
+              {position + 1} of {links.length}
             </span>
             <Button
               type="button"
               variant="ghost"
               size="icon-sm"
               aria-label="Next download"
-              disabled={linkIndex === links.length - 1}
-              onClick={() => showLink(linkIndex + 1)}
+              disabled={position === links.length - 1}
+              onClick={() => showLink(links[position + 1].id)}
             >
               <ChevronRight />
             </Button>

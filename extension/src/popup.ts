@@ -1,3 +1,4 @@
+import { api } from './api'
 import { reach } from './plexo'
 import { excluded, loadSettings, saveSettings } from './settings'
 
@@ -5,7 +6,7 @@ const element = <T extends HTMLElement>(id: string): T => document.getElementByI
 const ALL_SITES = { origins: ['<all_urls>'] }
 
 async function activeHost(): Promise<string | null> {
-  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true })
+  const [tab] = await api.tabs.query({ active: true, currentWindow: true })
   return tab?.url && /^https?:/i.test(tab.url) ? new URL(tab.url).hostname : null
 }
 
@@ -15,7 +16,7 @@ async function render(): Promise<void> {
     activeHost(),
     reach(),
     // Firefox lets the user withhold site access, which reading a site's cookies needs.
-    chrome.permissions.contains(ALL_SITES)
+    api.permissions.contains(ALL_SITES)
   ])
   const [tone, text] =
     reached === 'closed'
@@ -68,14 +69,14 @@ element<HTMLInputElement>('site').addEventListener('change', async (event) => {
 })
 
 element('grant').addEventListener('click', () => {
-  void chrome.permissions.request(ALL_SITES).then(render)
+  void api.permissions.request(ALL_SITES).then(render)
 })
 element('open-plexo').addEventListener('click', () => {
-  void chrome.runtime.sendMessage({ wakePlexo: true })
+  void api.runtime.sendMessage({ wakePlexo: true })
 })
-element('options').addEventListener('click', () => void chrome.runtime.openOptionsPage())
+element('options').addEventListener('click', () => void api.runtime.openOptionsPage())
 
-chrome.storage.onChanged.addListener(() => void render())
+api.storage.onChanged.addListener(() => void render())
 void render()
 // So the toolbar icon agrees with the popup now, not at its next check.
-void chrome.runtime.sendMessage({ checkPlexo: true }).catch(() => {})
+void api.runtime.sendMessage({ checkPlexo: true }).catch(() => {})

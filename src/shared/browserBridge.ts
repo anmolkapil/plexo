@@ -19,11 +19,18 @@ export interface BridgePing {
   api: number
 }
 
-/** 200: New download has it and the browser drops its copy. 422: the browser keeps it. Never held
- * past the deadline: Chrome stops an extension's service worker when a fetch takes over 30 s. */
+/** 200 with a BridgeHandoff: Plexo will take it. 422: the browser keeps it. Never held past the
+ * deadline: Chrome stops an extension's service worker when a fetch takes over 30 s. */
 export interface BridgeAddRequest {
   url: string
   browser?: BrowserContext
   pageUrl?: string
   minBytes?: number
+}
+
+/** Plexo shows the download only once POST /confirm brings this back: the extension confirms
+ * after the browser's copy is really gone, since it can finish before it's cancelled. Unconfirmed,
+ * it expires and Plexo shows nothing, so a download never ends up in both. */
+export interface BridgeHandoff {
+  token: string
 }
