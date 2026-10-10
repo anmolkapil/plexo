@@ -306,7 +306,11 @@ export class PlexoApp {
         ? { ...entry, blocks: [], streams: [] }
         : { ...entry, pieces: [], peers: [] }
     })
-    return [...running, ...finished].sort((a, b) => a.startedAt - b.startedAt)
+    // One that finished between the two calls is in both: history has its final state.
+    const done = new Set(finished.map((state) => state.id))
+    return [...running.filter((state) => !done.has(state.id)), ...finished].sort(
+      (a, b) => a.startedAt - b.startedAt
+    )
   }
 
   /** The download started last. */
