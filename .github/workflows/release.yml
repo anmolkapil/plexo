@@ -80,7 +80,8 @@ jobs:
           if [ -n "$signed" ]; then
             for app in dist/mac/Plexo.app dist/mac-arm64/Plexo.app; do
               codesign --verify --deep --strict "$app"
-              codesign -dv "$app" 2>&1 | grep "^Authority=Developer ID Application" > /dev/null
+              # -dvv: plain -dv leaves the Authority lines out.
+              codesign -dvv "$app" 2>&1 | grep "^Authority=Developer ID Application" > /dev/null
             done
           fi
 
