@@ -112,7 +112,8 @@ jobs:
             echo "::warning::No Microsoft Store package: appx.identityName and the rest of Partner Center's Product identity aren't in electron-builder.yml yet."
             exit 0
           fi
-          npx electron-builder --win appx --publish never
+          # Both architectures by name: a target given here drops the config's arch list.
+          npx electron-builder --win appx --x64 --arm64 --publish never
 
       - uses: actions/upload-artifact@v4
         if: runner.os == 'Windows' && hashFiles('dist/*.appx') != ''
