@@ -2,9 +2,13 @@ name: Release
 
 # Pushing a version tag (git tag v1.0.0-rc.15 && git push origin v1.0.0-rc.15) builds every OS
 # and leaves a draft GitHub Release. Apps only see it once the draft is published.
+#
+# Run by hand (gh workflow run release.yml --ref <branch>) it's a dry run: the same builds, signed
+# the same way, and no release.
 on:
   push:
     tags: ['v*']
+  workflow_dispatch:
 
 permissions:
   contents: write
@@ -33,6 +37,7 @@ jobs:
       # The tag names the version the build gets; a mismatch would ship one version as another. The
       # changelog entry becomes the release notes. Both are checked before the long build.
       - name: Check the tag matches package.json and has a changelog entry
+        if: github.event_name == 'push'
         shell: bash
         run: |
           test "v$(node -p "require('./package.json').version")" = "$GITHUB_REF_NAME"
@@ -46,8 +51,10 @@ jobs:
         run: npm ci
 
       # Without the certificate secrets the Mac build is unsigned, and can't update itself; without
-      # the API key ones it's signed but not notarized. Exported on the Mac only: electron-builder
-      # would otherwise sign Windows with CSC_LINK too.
+      # the API key ones it's signed but not notarized. electron-builder's own CSC_LINK import, as
+      # documented; it needs 26.16.1+, before which it unlocked its keychain with the wrong password
+      # (electron-userland/electron-builder#10101). Exported on the Mac only: Windows would
+      # otherwise try to sign with CSC_LINK too.
       - name: Build
         shell: bash
         env:
@@ -57,7 +64,9 @@ jobs:
           APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
           APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
         run: |
+          signed=
           if [ "$RUNNER_OS" = macOS ] && [ -n "$MAC_CERTIFICATE_P12_BASE64" ]; then
+            signed=1
             export CSC_LINK="$MAC_CERTIFICATE_P12_BASE64" CSC_KEY_PASSWORD="$MAC_CERTIFICATE_PASSWORD"
           fi
           if [ "$RUNNER_OS" = macOS ] && [ -n "$APPLE_API_KEY_P8" ]; then
@@ -66,6 +75,14 @@ jobs:
           fi
           npm run build
           npx electron-builder ${{ matrix.target }} --publish never
+          # electron-builder builds unsigned, quietly, when it finds no identity; such a build could
+          # never install an update over a signed one.
+          if [ -n "$signed" ]; then
+            for app in dist/mac/Plexo.app dist/mac-arm64/Plexo.app; do
+              codesign --verify --deep --strict "$app"
+              codesign -dv "$app" 2>&1 | grep "^Authority=Developer ID Application" > /dev/null
+            done
+          fi
 
       - uses: actions/upload-artifact@v4
         with:
@@ -82,6 +99,7 @@ jobs:
           if-no-files-found: error
 
   release:
+    if: github.event_name == 'push'
     needs: build
     runs-on: ubuntu-latest
     steps:
