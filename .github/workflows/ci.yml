@@ -60,6 +60,11 @@ jobs:
       - name: Run smoke tests
         run: xvfb-run --auto-servernum --server-args="-screen 0 1280x1024x24 -noreset" npm run test:e2e:smoke
 
+      # Packages the build the tests just made: electron-builder checks all of electron-builder.yml
+      # (every OS's settings) first, so a bad option fails here instead of on a release tag.
+      - name: Package
+        run: npx electron-builder --linux dir --publish never
+
       - name: Upload report
         if: failure()
         uses: actions/upload-artifact@v4

@@ -40,6 +40,8 @@ nsis:
   uninstallDisplayName: ${productName}
   createDesktopShortcut: always
 mac:
+  # Only the zips go by this name: the dmg has its own (dmg.artifactName).
+  artifactName: ${name}-${version}-${arch}-mac.${ext}
   target:
     - target: dmg
       arch: [x64, arm64]
@@ -80,8 +82,6 @@ linux:
   category: Utility
   # Offered for magnet links and .torrent files ("Open with"), not made their default.
   mimeTypes: [x-scheme-handler/magnet, application/x-bittorrent, x-scheme-handler/plexo]
-zip:
-  artifactName: ${name}-${version}-${arch}-mac.${ext}
 appImage:
   artifactName: ${name}-${version}-${arch}.${ext}
 npmRebuild: false

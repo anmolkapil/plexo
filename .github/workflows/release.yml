@@ -30,10 +30,13 @@ jobs:
           node-version: 22
           cache: npm
 
-      # The tag names the version the build gets; a mismatch would ship one version as another.
-      - name: Check the tag matches package.json
+      # The tag names the version the build gets; a mismatch would ship one version as another. The
+      # changelog entry becomes the release notes. Both are checked before the long build.
+      - name: Check the tag matches package.json and has a changelog entry
         shell: bash
-        run: test "v$(node -p "require('./package.json').version")" = "$GITHUB_REF_NAME"
+        run: |
+          test "v$(node -p "require('./package.json').version")" = "$GITHUB_REF_NAME"
+          node scripts/release-notes.mjs "$GITHUB_REF_NAME" --changelog > /dev/null
 
       - name: Install rpmbuild
         if: runner.os == 'Linux'
