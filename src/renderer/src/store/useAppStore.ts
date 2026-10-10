@@ -113,6 +113,9 @@ function persist(patch: AppSettings): void {
   window.plexo.updateSettings(patch).catch(() => {})
 }
 
+/** Links let go here: a listing main sent before it heard so would bring them back. */
+const letGo = new Set<string>()
+
 export const useAppStore = create<AppStore>((set, get) => ({
   interfaces: [],
   interfacesStatus: 'idle',
@@ -231,7 +234,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
     // main lists every link still waiting, so a window that was closed or reloaded gets them back.
     const pending = await window.plexo.pendingLinks().catch(() => [])
     const known = new Set(get().links.map((link) => link.id))
-    const arrived = pending.filter((link) => !known.has(link.id))
+    const arrived = pending.filter((link) => !known.has(link.id) && !letGo.has(link.id))
     if (arrived.length === 0) return
     set({ links: [...get().links, ...arrived], newDownloadOpen: true })
     get().showLink(arrived[arrived.length - 1].id)
@@ -255,6 +258,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
   dropLink: (id, started) => {
     const { links, shownId } = get()
     if (!links.some((link) => link.id === id)) return
+    letGo.add(id)
     // Started, main has already forgotten its sign-in.
     if (!started) void window.plexo.dismissLink(id).catch(() => {})
     set({
