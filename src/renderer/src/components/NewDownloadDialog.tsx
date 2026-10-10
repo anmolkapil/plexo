@@ -268,6 +268,7 @@ function NewDownloadForm({ onDone }: { onDone: () => void }): React.JSX.Element 
     if (probe.status !== 'ready' || !canStart) return
     // Captured now: links can arrive and change what's shown while this starts.
     const linkId = shownLink?.id
+    const form = useAppStore.getState().formKey
     setStarting(true)
     setStartError(null)
     try {
@@ -314,7 +315,8 @@ function NewDownloadForm({ onDone }: { onDone: () => void }): React.JSX.Element 
       })
       if (linkId) {
         finishLink(linkId, true)
-      } else {
+      } else if (useAppStore.getState().formKey === form) {
+        // Only while this form is still the one shown: closing would dismiss a link that arrived.
         useAppStore.setState({ draftUrl: '' })
         onDone()
       }
