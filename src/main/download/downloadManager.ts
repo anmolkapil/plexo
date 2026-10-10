@@ -139,7 +139,12 @@ function sealBrowser(browser: BrowserContext): string | undefined {
   if (process.platform === 'linux' && safeStorage.getSelectedStorageBackend() === 'basic_text') {
     return undefined
   }
-  return safeStorage.encryptString(JSON.stringify(browser)).toString('base64')
+  // The keychain can refuse; the download is still saved, it just won't keep the sign-in.
+  try {
+    return safeStorage.encryptString(JSON.stringify(browser)).toString('base64')
+  } catch {
+    return undefined
+  }
 }
 
 function unsealBrowser(sealed: string): BrowserContext | undefined {

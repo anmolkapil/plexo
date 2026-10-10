@@ -88,6 +88,16 @@ export function storeOf(source: {
   return source.cookieStoreId ?? (source.incognito ? '1' : undefined)
 }
 
+type IsolatedCookie = chrome.cookies.Cookie & { firstPartyDomain?: string }
+
+function hostOf(url: string | undefined): string[] {
+  try {
+    return url ? [new URL(url).hostname] : []
+  } catch {
+    return []
+  }
+}
+
 /** Cookies for where the download starts and where its redirects end; Plexo sends each request
  * only the ones that match it. */
 export async function browserContext(
@@ -96,9 +106,25 @@ export async function browserContext(
   referer: string | undefined
 ): Promise<BrowserContext> {
   const cookies = new Map<string, BrowserCookie>()
+  const hosts = [...urls, referer].flatMap(hostOf)
   for (const url of new Set(urls)) {
     if (!url || !/^https?:/i.test(url)) continue
-    const found = await api.cookies.getAll({ url, storeId }).catch(() => [])
+    const found = await api.cookies
+      .getAll({ url, storeId })
+      // Firefox with first-party isolation on refuses without firstPartyDomain. null reads every
+      // site's copy, so only those kept for the download's own site or its page's are used.
+      // Chrome refuses the key, so it's only tried second.
+      .catch(async () => {
+        const all = (await api.cookies.getAll({
+          url,
+          storeId,
+          firstPartyDomain: null
+        } as chrome.cookies.GetAllDetails)) as IsolatedCookie[]
+        return all.filter(({ firstPartyDomain: site }) => {
+          return !site || hosts.some((host) => host === site || host.endsWith(`.${site}`))
+        })
+      })
+      .catch(() => [])
     for (const { name, value, domain, hostOnly, path, secure } of found) {
       cookies.set(`${domain}\n${path}\n${name}`, { name, value, domain, hostOnly, path, secure })
     }
