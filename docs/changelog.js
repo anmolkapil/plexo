@@ -18,6 +18,11 @@
           text: 'New versions download in the background and install when you restart. The update button in the bottom bar shows how far along it is. Turn automatic updates off there, or in the Plexo menu on a Mac.'
         },
         {
+          kind: 'improved',
+          title: 'A signed Mac app',
+          text: 'The Mac app is now signed with an Apple Developer ID, provided by [Dhananjay Bhosale](https://github.com/DhananjayBhosale). macOS no longer calls it damaged: allow it once with **Open Anyway** in System Settings → Privacy & Security.'
+        },
+        {
           kind: 'new',
           title: 'Scheduled downloads',
           text: 'Let downloads run only at set times, like overnight, under Networks → Speed & data limits. Outside those times they wait in the queue. Plexo needs to be running for them to start.'
