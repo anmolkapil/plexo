@@ -10,7 +10,9 @@ import { MoreActionsMenu } from '../components/MoreActionsMenu'
 import { DownloadFilterMenu } from '../components/DownloadFilterMenu'
 import { CombineDiagram } from '../components/CombineDiagram'
 import { LimitsDialog } from '../components/LimitsDialog'
+import { ScheduleIndicator } from '../components/ScheduleIndicator'
 import { networkStatusText } from '../components/NetworkRow'
+import { scheduleMessage, scheduleWindow } from '@shared/downloadSchedule'
 import { NetworksMenu } from '../components/NetworksMenu'
 import { TorrentBadge } from '../components/TorrentBadge'
 import { Button } from '../components/ui/button'
@@ -95,6 +97,7 @@ export function DownloadsScreen(): React.JSX.Element {
   const { perform, askClearFinished } = useDownloadActions()
   const { busy } = useDownloadActionsState()
   const [limitsOpen, setLimitsOpen] = useState(false)
+  const [showSchedule, setShowSchedule] = useState(false)
   const [limitsPage, setLimitsPage] = useState<string | null>(null)
   const [now, setNow] = useState(() => Date.now())
 
@@ -173,6 +176,12 @@ export function DownloadsScreen(): React.JSX.Element {
   // the rest of what the menu does for the selection behind More, so six never need more room.
   const { buttons: toolbarButtons, more: moreActions } = splitToolbar(availableActions(chosen))
 
+  const openSchedule = (): void => {
+    setLimitsPage(null)
+    setShowSchedule(true)
+    setLimitsOpen(true)
+  }
+
   return (
     <div className="flex h-full flex-col bg-background">
       {chosen.length === 0 ? (
@@ -192,8 +201,10 @@ export function DownloadsScreen(): React.JSX.Element {
             </div>
           )}
           <div className="flex-1" />
+          <ScheduleIndicator onClick={openSchedule} />
           <NetworksMenu
             onOpenLimits={(page) => {
+              setShowSchedule(false)
               setLimitsPage(page)
               setLimitsOpen(true)
             }}
@@ -255,6 +266,7 @@ export function DownloadsScreen(): React.JSX.Element {
             ))}
             <MoreActionsMenu groups={moreActions} disabled={busy} />
           </div>
+          <ScheduleIndicator onClick={openSchedule} />
         </div>
       )}
 
@@ -335,6 +347,7 @@ export function DownloadsScreen(): React.JSX.Element {
 
       <LimitsDialog
         open={limitsOpen}
+        showSchedule={showSchedule}
         onOpenChange={setLimitsOpen}
         page={limitsPage}
         onPageChange={setLimitsPage}
@@ -429,6 +442,7 @@ const DownloadRow = memo(function DownloadRow({
   onPerform: (id: ActionId, targets: Item[]) => Promise<boolean>
 }): React.JSX.Element {
   const formatSpeed = useFormatSpeed()
+  const schedule = useAppStore((store) => store.downloadSchedule)
   const [working, setWorking] = useState(false)
   const finished = isFinished(item) || item.status === 'completed'
   const badge = isFolder(item) ? 'DIR' : fileExtensionBadge(item.fileName)
@@ -465,7 +479,7 @@ const DownloadRow = memo(function DownloadRow({
           .join(' · ')
         break
       case 'queued':
-        detail = `Waiting for a turn · ${sizes}`
+        detail = `${schedule?.enabled && !scheduleWindow(schedule, now).allowed ? (scheduleMessage(schedule, now) ?? 'Waiting for a turn') : 'Waiting for a turn'} · ${sizes}`
         break
       case 'paused':
         detail = wanted > 0 ? `Paused at ${percent}% · ${sizes}` : `Paused · ${sizes}`

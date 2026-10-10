@@ -105,7 +105,7 @@ export function registerIpcHandlers(getWindow: () => BrowserWindow | null): Down
     }
     await saveSettings(patch)
     // Read back rather than taken from the patch: what was saved is what passed the checks.
-    manager.applySettings(await loadSettings())
+    await manager.applySettings(await loadSettings())
   })
 
   // Answered via sendSync from the preload, which blocks the page until returnValue is set — so a
@@ -126,6 +126,7 @@ export function registerIpcHandlers(getWindow: () => BrowserWindow | null): Down
           new Promise<boolean>((resolve) => setTimeout(resolve, DESTINATION_CHECK_MS, false))
         ]))
       event.returnValue = {
+        downloadSchedule: settings.downloadSchedule,
         homeDir: getHomeDir(),
         downloadsDir: getDefaultDownloadsDir(),
         themeSource: currentThemeSource(),

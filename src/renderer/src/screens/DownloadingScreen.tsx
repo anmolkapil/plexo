@@ -15,6 +15,7 @@ import { TruncatedText } from '../components/TruncatedText'
 import { Button } from '../components/ui/button'
 import { Tooltip, TooltipContent, TooltipTrigger } from '../components/ui/tooltip'
 import { useNetworkVisuals } from '../hooks/useNetworkVisuals'
+import { useDownloadSchedule } from '../hooks/useDownloadSchedule'
 import { useAppStore } from '../store/useAppStore'
 import { KIND_PALETTE, NETWORK_ROW_GRID_COLUMNS } from '../theme'
 import {
@@ -115,6 +116,7 @@ export const DownloadingScreen = memo(function DownloadingScreen({
   const speedHistory = download.speedHistory ?? {}
   const peakSpeedBytesPerSec = download.peakSpeedBytesPerSec
   const networkVisual = useNetworkVisuals()
+  const { window: scheduleWindow, message: scheduleMessage } = useDownloadSchedule()
   const isQueued = download.status === 'queued'
   // Waiting in the queue looks like a pause: nothing moves.
   const isPaused = download.status === 'paused' || isQueued
@@ -208,6 +210,11 @@ export const DownloadingScreen = memo(function DownloadingScreen({
   return (
     <div className="flex h-full flex-col bg-background">
       <DetailHeader download={download} />
+      {isQueued && !scheduleWindow.allowed && (
+        <div className="border-b-[0.5px] border-border px-5 py-3 text-[12.5px] text-muted-foreground">
+          {scheduleMessage}
+        </div>
+      )}
       {/* Hero band — always visible under the header */}
       <HeroBand>
         {/* At their designed size: a wider window opens a gap between the speed and the chart
