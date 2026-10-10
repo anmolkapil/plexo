@@ -37,7 +37,7 @@ import { loadSettings } from '../settings'
 import { addToHistory, findInHistory, removeFromHistory } from './history'
 import { testKnobs } from '../testKnobs'
 import { DownloadFile } from './downloadFile'
-import { compareSamples, HttpTransfer, splittable } from './httpTransfer'
+import { compareSamples, HttpTransfer, pickedStreams, splittable } from './httpTransfer'
 import { normalizeEtag } from './fileVersion'
 import { ensureDirectory, pathExists, reserveDestinationPath } from './paths'
 import { planBlocks, planDownload, planPieces } from './plan'
@@ -397,6 +397,26 @@ export class DownloadManager {
     }
   }
 
+  /** Running downloads on Auto with `networkId` on: how many share its streams (see
+   * concurrency.ts). One that can't split runs a single stream, and a picked count is kept, so
+   * neither takes a share. */
+  private httpDownloadsOn(networkId: string): number {
+    let count = 0
+    for (const runtime of this.runtimes.values()) {
+      if (
+        runtime.kind === 'http' &&
+        runtime.state.status === 'downloading' &&
+        splittable(runtime.requestPayload) &&
+        pickedStreams(runtime.requestPayload) === undefined &&
+        runtime.state.networks.some(
+          (network) => network.id === networkId && network.status === 'on'
+        )
+      )
+        count++
+    }
+    return count
+  }
+
   private runningCount(): number {
     let running = 0
     for (const runtime of this.runtimes.values()) {
@@ -479,6 +499,7 @@ export class DownloadManager {
     const host: TransferHost = {
       networks: this.networks,
       limits: this.limits,
+      downloadsOn: (networkId) => this.httpDownloadsOn(networkId),
       reconcile: () => this.reconcile(runtime),
       failDownload: (message, discard) => this.failDownload(runtime, message, discard),
       failNetwork: (network, message) => this.failNetwork(runtime, network, message),
@@ -510,6 +531,7 @@ export class DownloadManager {
     const host: TransferHost = {
       networks: this.networks,
       limits: this.limits,
+      downloadsOn: (networkId) => this.httpDownloadsOn(networkId),
       reconcile: () => this.reconcile(runtime),
       failDownload: (message, discard) => this.failDownload(runtime, message, discard),
       failNetwork: (network, message) => this.failNetwork(runtime, network, message),

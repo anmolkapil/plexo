@@ -165,12 +165,17 @@ export function splittable(request: StartHttpDownloadRequest): boolean {
 }
 
 /** How many streams a download runs is only for it to work out when there can be more than one,
- * and unless a test fixes it. */
-function concurrencyFor(request: StartHttpDownloadRequest): ConcurrencyController | null {
+ * and unless a test fixes it. On Auto, it shares each network with the others running on it. */
+function concurrencyFor(
+  request: StartHttpDownloadRequest,
+  host: TransferHost
+): ConcurrencyController | null {
   if (!splittable(request) || testStreamsPerNetwork() !== null) return null
   const picked = pickedStreams(request)
   return picked === undefined
-    ? new ConcurrencyController(MAX_STREAMS_PER_NETWORK)
+    ? new ConcurrencyController(MAX_STREAMS_PER_NETWORK, true, (networkId) =>
+        Math.floor(MAX_STREAMS_PER_NETWORK / Math.max(1, host.downloadsOn(networkId)))
+      )
     : new ConcurrencyController(picked, false)
 }
 
@@ -311,7 +316,7 @@ export class HttpTransfer implements Transfer {
     private readonly host: TransferHost
   ) {
     this.acceptedVersions = [requestedVersion(runtime.requestPayload)]
-    this.concurrency = concurrencyFor(runtime.requestPayload)
+    this.concurrency = concurrencyFor(runtime.requestPayload, host)
   }
 
   /**
