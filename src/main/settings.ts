@@ -70,12 +70,9 @@ function sanitizeSettings(parsed: unknown): AppSettings {
   if (typeof destinationDir === 'string' && isAbsolute(destinationDir)) {
     settings.destinationDir = destinationDir
   }
-  if (
-    Number.isInteger(downloadsAtOnce) &&
-    (downloadsAtOnce as number) >= DOWNLOADS_AT_ONCE.min &&
-    (downloadsAtOnce as number) <= DOWNLOADS_AT_ONCE.max
-  ) {
-    settings.downloadsAtOnce = downloadsAtOnce as number
+  // Clamped rather than dropped: a count saved under an older, higher limit keeps the most allowed.
+  if (Number.isInteger(downloadsAtOnce) && (downloadsAtOnce as number) >= DOWNLOADS_AT_ONCE.min) {
+    settings.downloadsAtOnce = Math.min(downloadsAtOnce as number, DOWNLOADS_AT_ONCE.max)
   }
   if (parsed.networkPreferences !== undefined) {
     settings.networkPreferences = sanitizeNetworkPreferences(parsed.networkPreferences)

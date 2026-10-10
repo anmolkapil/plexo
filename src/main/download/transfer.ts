@@ -72,6 +72,9 @@ export interface TransferHost {
   networks: NetworkMonitor
   /** Every byte received goes through it (see Limits.take). */
   limits: Limits
+  /** Running downloads on Auto that have `networkId` on, this one included: how many share its
+   * streams (see concurrency.ts). */
+  downloadsOn(networkId: string): number
   /** The manager's reconcile: networks first, then the transfer's own. */
   reconcile(): void
   failDownload(message: string, discard?: boolean): void

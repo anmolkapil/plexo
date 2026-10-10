@@ -21,7 +21,7 @@ Plexo splits each download across every network you select, so a second connecti
 
 ### Direct downloads
 
-- **Several networks, many streams each**: a file is split into blocks of up to 8 MB that streams on every network fetch in parallel. Each network starts with 8 streams and doubles to 16 and 32 once they're all receiving. You can also pick a fixed 4, 8, 16, or 32 in the **New download** dialog.
+- **Several networks, many streams each**: a file is split into blocks of up to 8 MB that streams on every network fetch in parallel. Each network starts with 8 streams and doubles to 16 and 32 once they're all receiving. Downloads running at once share those 32. You can also pick a fixed 4, 8, 16, or 32 in the **New download** dialog.
 - **Faster networks do more of the work**: a stream takes the next block as soon as it's free, so a fast network fetches more blocks than a slow one.
 - **No slow finish**: near the end, a free stream races a slow block from where it got to, and the first to finish wins
 - **Pause and resume**: progress is saved as you go. Before resuming, Plexo checks the file on the server hasn't changed, and refuses rather than mixing two versions.
