@@ -311,9 +311,10 @@ export interface NetworkPreference {
 export type NetworkPreferences = Record<string, NetworkPreference>
 
 /** Where the app's own update is (see main/updater.ts). `version` is the update's, once one is
- * found; `percent` only means something while downloading. */
+ * found; `percent` only means something while downloading. `store`: a Microsoft Store install,
+ * which the Store updates. */
 export interface UpdateState {
-  status: 'idle' | 'checking' | 'available' | 'downloading' | 'ready' | 'error'
+  status: 'idle' | 'checking' | 'available' | 'downloading' | 'ready' | 'error' | 'store'
   autoUpdate: boolean
   version?: string
   percent?: number

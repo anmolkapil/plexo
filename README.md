@@ -218,6 +218,10 @@ Plexo is developed by [Anmol Kapil](https://github.com/anmolkapil).
 
 macOS code signing is provided by [Dhananjay Bhosale](https://github.com/DhananjayBhosale): the Mac app is signed with his Apple Developer ID, so macOS shows his name as its developer.
 
+## Privacy
+
+Plexo collects nothing about you: no accounts, analytics or telemetry. See [PRIVACY.md](PRIVACY.md) for what it connects to and what it keeps.
+
 ## License
 
 MIT. See [LICENSE](LICENSE).

@@ -23,13 +23,26 @@ files:
 asarUnpack:
   - resources/**
 win:
-  # No protocols or fileAssociations: the NSIS installer would register Plexo as *the* handler for
-  # magnet links and .torrent files, taking them from a torrent client the user already has.
-  # A .torrent can still be opened with Plexo through "Open with".
+  # No magnet: or .torrent handlers: they would make Plexo *the* handler, taking them from a
+  # torrent client the user already has. A .torrent can still be opened with Plexo through
+  # "Open with". plexo:// is Plexo's own; only the Store package (appx) reads this, since a Store
+  # app can't register it at runtime. The NSIS install registers it when Plexo runs (main/index.ts).
+  protocols:
+    - name: Plexo
+      schemes: [plexo]
   executableName: plexo
   target:
     - target: nsis
       arch: [x64, arm64]
+# The Microsoft Store package (electron-builder --win appx), built by the release workflow for
+# stable versions only: the Store reads 1.0.0 and 1.0.0-rc.15 alike as 1.0.0.0. Logos are in
+# build/appx. identityName, publisher and publisherDisplayName must match Partner Center's
+# Product identity exactly (CONTRIBUTING.md, Microsoft Store).
+appx:
+  applicationId: Plexo
+  displayName: Plexo
+  backgroundColor: transparent
+  artifactName: ${name}-${version}-${arch}.${ext}
 nsis:
   # No ${arch} on purpose: one installer holds both x64 and ARM64, and docs/downloads.js reads an
   # installer with no architecture in its name as exactly that. Add one here and update it there.

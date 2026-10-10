@@ -99,6 +99,28 @@ jobs:
             dist/*.blockmap
           if-no-files-found: error
 
+      # The Microsoft Store package (electron-builder.yml, appx), for stable versions only: the
+      # Store reads every rc of a version as that version. Partner Center takes it by hand
+      # (CONTRIBUTING.md, Microsoft Store), so it's a workflow artifact, never a release file. A dry
+      # run builds it with a placeholder identity, to try out; a stable tag without the real one
+      # skips it rather than hold up the GitHub release.
+      - name: Build the Microsoft Store package
+        if: runner.os == 'Windows' && (github.event_name == 'workflow_dispatch' || !contains(github.ref_name, '-'))
+        shell: bash
+        run: |
+          if [ "$GITHUB_EVENT_NAME" = push ] && ! grep -q '^  identityName:' electron-builder.yml; then
+            echo "::warning::No Microsoft Store package: appx.identityName and the rest of Partner Center's Product identity aren't in electron-builder.yml yet."
+            exit 0
+          fi
+          # Both architectures by name: a target given here drops the config's arch list.
+          npx electron-builder --win appx --x64 --arm64 --publish never
+
+      - uses: actions/upload-artifact@v4
+        if: runner.os == 'Windows' && hashFiles('dist/*.appx') != ''
+        with:
+          name: microsoft-store
+          path: dist/*.appx
+
   release:
     if: github.event_name == 'push'
     needs: build

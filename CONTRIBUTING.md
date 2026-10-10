@@ -75,6 +75,28 @@ Besides the downloads, a release carries what the app's updater reads (`src/main
 
 macOS only installs signed updates. The release workflow signs and notarizes the Mac build when these repository secrets are set: `MAC_CERTIFICATE_P12_BASE64` and `MAC_CERTIFICATE_PASSWORD` (a Developer ID Application certificate), and `APPLE_API_KEY_P8`, `APPLE_API_KEY_ID` and `APPLE_API_ISSUER` (an App Store Connect API key). Without them a Mac that finds an update sends you to the website for it.
 
+## Microsoft Store
+
+Windows users can also get Plexo from the Microsoft Store. The Store signs the package with Microsoft's certificate, so it installs with no SmartScreen warning, and it hosts and updates it: a Store install's own updater stays off (`process.windowsStore`).
+
+The Store only takes **stable** versions. It reads a version as `x.y.z.0`, so every rc of 1.0.0 would be `1.0.0.0`, and a device only ever moves to a higher version. On a stable tag, the release workflow builds `plexo-<version>-x64.appx` and `-arm64.appx` into the run's **microsoft-store** artifact, separate from the GitHub release.
+
+**Once:**
+
+1. Register as an individual developer in [Partner Center](https://partner.microsoft.com/dashboard). It's free and needs an ID check.
+2. Reserve the name: **Apps and games → New product → MSIX or PWA app → Plexo**.
+3. Under **Product management → Product identity**, copy three values into `electron-builder.yml`'s `appx`, exactly as shown, including case: `Package/Identity/Name` as `identityName`, `Package/Identity/Publisher` as `publisher`, and `Package/Properties/PublisherDisplayName` as `publisherDisplayName`. Until they're there, a stable release skips the Store package with a warning.
+4. In the first submission, fill in:
+   - **Store listing:** description and screenshots (1366×768 or larger, from Windows).
+   - **Privacy policy URL:** `https://github.com/anmolkapil/plexo/blob/main/PRIVACY.md`.
+   - **Properties:** category **Utilities & tools**.
+   - **Age ratings:** the questionnaire.
+   - **Submission options:** the reason for `runFullTrust`, which every desktop app built with electron-builder declares. For example: _"Plexo is a desktop download manager. It needs full trust to send each download over the network adapters the user picks, save files to folders the user chooses, receive downloads from its browser extension over 127.0.0.1, and open plexo:// links."_
+
+**Each stable release:** download the run's **microsoft-store** artifact, and in Partner Center start a new submission and upload both `.appx` files under **Packages**. Certification takes from a few hours to a few days, and then Store installs update on their own.
+
+To try a package before submitting, run the workflow by hand (`gh workflow run release.yml --ref <branch>`). It builds one with a placeholder identity. Install it on a Windows PC in Developer Mode: unzip the `.appx`, then `Add-AppxPackage -Register .\AppxManifest.xml`. Then run the [Windows App Certification Kit](https://learn.microsoft.com/windows/uwp/debug-test-perf/windows-app-certification-kit) on it, as the Store will.
+
 ## Reporting bugs
 
 Open a GitHub issue with:
