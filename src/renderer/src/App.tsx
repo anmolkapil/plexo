@@ -1,11 +1,9 @@
 import type { DownloadState, FinishedDownload } from '@shared/types'
-import { useEffect } from 'react'
 import { DownloadActionsProvider } from './components/DownloadActionsProvider'
 import { NetworkBindingDialog } from './components/NetworkBindingDialog'
 import { NewDownloadDialog } from './components/NewDownloadDialog'
 import { StatusBar } from './components/StatusBar'
 import { TitleBar } from './components/TitleBar'
-import { UpdateDialog } from './components/UpdateDialog'
 import { TooltipProvider } from './components/ui/tooltip'
 import { useDownloadEvents } from './hooks/useDownloadEvents'
 import { useNetworkEvents } from './hooks/useNetworks'
@@ -49,12 +47,6 @@ function App(): React.JSX.Element {
   const downloads = useAppStore((store) => store.downloads)
   const history = useAppStore((store) => store.history)
   const view = useAppStore((store) => store.view)
-  const checkForUpdate = useAppStore((store) => store.checkForUpdate)
-
-  useEffect(() => {
-    checkForUpdate()
-  }, [checkForUpdate])
-
   // A download that's gone (removed, deleted) leaves the list showing.
   const shown =
     view.name === 'download'
@@ -72,7 +64,6 @@ function App(): React.JSX.Element {
           </div>
           <StatusBar />
           <NewDownloadDialog />
-          <UpdateDialog />
           <NetworkBindingDialog />
         </div>
       </DownloadActionsProvider>

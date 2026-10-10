@@ -1,6 +1,5 @@
 import { stat, statfs } from 'node:fs/promises'
 import {
-  app,
   clipboard,
   dialog,
   ipcMain,
@@ -26,8 +25,7 @@ import { deviceBindingSupported } from '../network/deviceBinding'
 import { pendingLink, pendingLinks, releaseLink } from '../openLinks'
 import { NetworkMonitor } from '../network/interfaces'
 import { loadSettings, saveSettings } from '../settings'
-import { testKnobs } from '../testKnobs'
-import { checkForUpdate, UPDATE_PAGE_URL } from '../updateCheck'
+import { showUpdateMenu, updateState } from '../updater'
 
 async function openNetworkSettings(): Promise<void> {
   if (process.platform === 'win32') {
@@ -246,23 +244,8 @@ export function registerIpcHandlers(getWindow: () => BrowserWindow | null): Down
     manager.remove(id, options?.trashFile === true)
   )
 
-  // Kicked off once at startup, not per-call — later renderer calls (e.g. a remount) just await
-  // the same in-flight/settled check instead of re-hitting the GitHub API.
-  const updateCheckPromise = (async () => {
-    const info = testKnobs.forceUpdateVersion
-      ? { version: testKnobs.forceUpdateVersion, url: UPDATE_PAGE_URL }
-      : await checkForUpdate(app.getVersion())
-    return info
-  })()
-
-  // Dismissal is read per call, not cached with the check — a reload after "Not now" must not
-  // bring the dialog back.
-  handle('checkForUpdate', async () => {
-    const info = await updateCheckPromise
-    if (!info) return null
-    const { dismissedUpdateVersion } = await loadSettings()
-    return { ...info, dismissed: info.version === dismissedUpdateVersion }
-  })
+  handle('updateState', () => updateState())
+  handle('showUpdateMenu', () => showUpdateMenu())
 
   return manager
 }

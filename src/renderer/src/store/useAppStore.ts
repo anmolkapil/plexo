@@ -10,8 +10,7 @@ import type {
   NetworkPreferences,
   PendingLink,
   SpeedUnit,
-  ThemeSource,
-  UpdateInfo
+  ThemeSource
 } from '@shared/types'
 import { create } from 'zustand'
 
@@ -31,10 +30,6 @@ interface AppStore {
 
   /** Persisted in the main process alongside nativeTheme.themeSource. */
   themeSource: ThemeSource
-
-  /** Null until the one-time startup check resolves, or if it found nothing worth showing
-   * (already up to date, already dismissed, or the check failed). */
-  availableUpdate: UpdateInfo | null
 
   homeDir: string
   downloadsDir: string
@@ -77,8 +72,6 @@ interface AppStore {
   receiveInterfaces: (interfaces: NetworkInterfaceInfo[]) => void
   setNetworkPreference: (id: string, patch: NetworkPreference) => void
   setThemeSource: (source: ThemeSource) => void
-  checkForUpdate: () => Promise<void>
-  dismissUpdate: () => void
   /** A snapshot or an update of a download, from the main process. */
   receiveDownloadUpdate: (update: DownloadUpdate) => void
   /** Finished downloads as main lists them; any that finished leave `downloads`. */
@@ -124,7 +117,6 @@ export const useAppStore = create<AppStore>((set, get) => ({
   interfacesError: null,
   networkPreferences: initial.networkPreferences,
   themeSource: initial.themeSource,
-  availableUpdate: null,
 
   homeDir: initial.homeDir,
   downloadsDir: initial.downloadsDir,
@@ -179,23 +171,6 @@ export const useAppStore = create<AppStore>((set, get) => ({
   setThemeSource: (themeSource) => {
     set({ themeSource })
     persist({ themeSource })
-  },
-
-  checkForUpdate: async () => {
-    try {
-      const availableUpdate = await window.plexo.checkForUpdate()
-      set({ availableUpdate })
-    } catch {
-      // Best-effort — a failed check just leaves the banner hidden.
-    }
-  },
-
-  dismissUpdate: () => {
-    const update = get().availableUpdate
-    if (!update) return
-    // Keeps the update visible as a quiet titlebar icon rather than clearing it outright.
-    set({ availableUpdate: { ...update, dismissed: true } })
-    persist({ dismissedUpdateVersion: update.version })
   },
 
   receiveDownloadUpdate: (update) => {

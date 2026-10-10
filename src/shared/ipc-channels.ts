@@ -32,5 +32,7 @@ export const IpcChannels = {
   pendingLinks: 'app:pending-links',
   resumeFromLink: 'app:resume-from-link',
   dismissLink: 'app:dismiss-link',
-  checkForUpdate: 'update:check'
+  updateState: 'update:state',
+  updateStateChanged: 'update:state-changed',
+  showUpdateMenu: 'update:show-menu'
 } as const

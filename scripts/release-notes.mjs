@@ -46,7 +46,35 @@ if (files.length === 0) {
 }
 
 if (arg === '--files') {
-  console.log(files.map((file) => file.path).join('\n'))
+  // What the app's updater reads (src/main/updater.ts): each OS's latest*.yml (a GitHub-published
+  // build never writes an rc*.yml), the zips macOS installs from, and blockmaps, which let an
+  // update download only what changed.
+  // Named after the build they belong to, so read its version the same way (1.0.0 must not take
+  // 1.0.0-rc.15's).
+  const buildOf = (name) => name.replace(/\.blockmap$/, '').replace(/-mac\.zip$/, '.zip')
+  const updateFiles = readdirSync(dist).filter(
+    (name) =>
+      /^latest(-[a-z0-9-]+)?\.yml$/.test(name) ||
+      ((name.endsWith('-mac.zip') || name.endsWith('.blockmap')) &&
+        buildOf(name).match(artifactName)?.[1] === version)
+  )
+  // Without them the release is invisible to every installed app.
+  const channelFiles = updateFiles.filter((name) => name.endsWith('.yml'))
+  if (channelFiles.length === 0) {
+    console.error('No latest*.yml in dist/ — the app could never update to this release.')
+    process.exit(1)
+  }
+  // Channel files carry no version in their name, so one left over from an older build would
+  // point every app at that build.
+  for (const name of channelFiles) {
+    if (!readFileSync(join(dist, name), 'utf-8').includes(`version: ${version}\n`)) {
+      console.error(`dist/${name} isn't for ${version} — rebuild that platform.`)
+      process.exit(1)
+    }
+  }
+  console.log(
+    [...files.map((file) => file.path), ...updateFiles.map((name) => join(dist, name))].join('\n')
+  )
 } else {
   const notes = arg ? readFileSync(arg, 'utf-8').trim() + '\n\n' : ''
   console.log(notes + downloads.markdown(files, SITE))

@@ -1,0 +1,102 @@
+name: Release
+
+# Pushing a version tag (git tag v1.0.0-rc.15 && git push origin v1.0.0-rc.15) builds every OS
+# and leaves a draft GitHub Release. Apps only see it once the draft is published.
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build (${{ matrix.os }})
+    strategy:
+      matrix:
+        include:
+          - os: macos-latest
+            target: --mac
+          - os: windows-latest
+            target: --win
+          - os: ubuntu-latest
+            target: --linux
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      # The tag names the version the build gets; a mismatch would ship one version as another.
+      - name: Check the tag matches package.json
+        shell: bash
+        run: test "v$(node -p "require('./package.json').version")" = "$GITHUB_REF_NAME"
+
+      - name: Install rpmbuild
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y rpm
+
+      - name: Install dependencies
+        run: npm ci
+
+      # Without the certificate secrets the Mac build is unsigned, and can't update itself; without
+      # the API key ones it's signed but not notarized. Exported on the Mac only: electron-builder
+      # would otherwise sign Windows with CSC_LINK too.
+      - name: Build
+        shell: bash
+        env:
+          MAC_CERTIFICATE_P12_BASE64: ${{ secrets.MAC_CERTIFICATE_P12_BASE64 }}
+          MAC_CERTIFICATE_PASSWORD: ${{ secrets.MAC_CERTIFICATE_PASSWORD }}
+          APPLE_API_KEY_P8: ${{ secrets.APPLE_API_KEY_P8 }}
+          APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+        run: |
+          if [ "$RUNNER_OS" = macOS ] && [ -n "$MAC_CERTIFICATE_P12_BASE64" ]; then
+            export CSC_LINK="$MAC_CERTIFICATE_P12_BASE64" CSC_KEY_PASSWORD="$MAC_CERTIFICATE_PASSWORD"
+          fi
+          if [ "$RUNNER_OS" = macOS ] && [ -n "$APPLE_API_KEY_P8" ]; then
+            echo "$APPLE_API_KEY_P8" > "$RUNNER_TEMP/apple-api-key.p8"
+            export APPLE_API_KEY="$RUNNER_TEMP/apple-api-key.p8"
+          fi
+          npm run build
+          npx electron-builder ${{ matrix.target }} --publish never
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist-${{ runner.os }}
+          path: |
+            dist/*.dmg
+            dist/*.zip
+            dist/*.exe
+            dist/*.AppImage
+            dist/*.deb
+            dist/*.rpm
+            dist/*.yml
+            dist/*.blockmap
+          if-no-files-found: error
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Create a draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          node scripts/release-notes.mjs "$TAG" > "$RUNNER_TEMP/notes.md"
+          node scripts/release-notes.mjs "$TAG" --files > "$RUNNER_TEMP/files.txt"
+          # Not --prerelease, even for an rc: the app updates to the release GitHub marks Latest,
+          # and a pre-release never is (see src/main/updater.ts).
+          xargs -d '\n' gh release create "$TAG" --draft --title "$TAG" \
+            --notes-file "$RUNNER_TEMP/notes.md" < "$RUNNER_TEMP/files.txt"

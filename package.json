@@ -1,6 +1,6 @@
 {
   "name": "plexo",
-  "version": "1.0.0-rc.14",
+  "version": "1.0.0-rc.15",
   "description": "Speed up downloads by combining multiple network connections in parallel",
   "main": "./out/main/index.js",
   "author": "Anmol Kapil",
@@ -36,6 +36,7 @@
     "class-variance-authority": "^0.7.1",
     "cn": "^0.3.0",
     "date-fns": "^4.4.0",
+    "electron-updater": "^6.8.9",
     "fs-chunk-store": "5.0.1",
     "koffi": "^2.16.3",
     "lucide-react": "^1.47.0",

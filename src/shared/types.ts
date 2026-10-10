@@ -310,13 +310,13 @@ export interface NetworkPreference {
 
 export type NetworkPreferences = Record<string, NetworkPreference>
 
-export interface UpdateInfo {
-  version: string
-  /** Where clicking the notification should take the user — the landing page's downloads. */
-  url: string
-  /** True once the user has dismissed the banner for this exact version (persisted, so it stays
-   * dismissed across relaunches) — the app then falls back to a quiet titlebar icon instead. */
-  dismissed: boolean
+/** Where the app's own update is (see main/updater.ts). `version` is the update's, once one is
+ * found; `percent` only means something while downloading. */
+export interface UpdateState {
+  status: 'idle' | 'checking' | 'available' | 'downloading' | 'ready' | 'error'
+  autoUpdate: boolean
+  version?: string
+  percent?: number
 }
 
 /** A repeating window for all transfers, interpreted in the computer's local timezone. */
@@ -336,7 +336,8 @@ export interface DownloadSchedule {
 export interface AppSettings {
   downloadSchedule?: DownloadSchedule
   themeSource?: ThemeSource
-  dismissedUpdateVersion?: string
+  /** Only ever saved as false: updates download on their own unless turned off. */
+  autoUpdate?: boolean
   /** The last destination folder picked. */
   destinationDir?: string
   /** User customizations (name/color) per network interface id. */

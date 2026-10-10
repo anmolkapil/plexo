@@ -60,16 +60,19 @@ Tests build the app first; set `PLEXO_E2E_SKIP_BUILD=1` when `out/` is already f
 
 A release ships seven files: `Plexo` for macOS (Apple silicon and Intel `.dmg`), Windows (one installer for x64 and ARM64) and Linux (`AppImage` and `.deb`, x86_64 and ARM64). The download page (`docs/`, served by GitHub Pages) reads them from the latest GitHub Release and labels each one from its file name (`docs/downloads.js`), so keep the naming in `electron-builder.yml` intact.
 
-```bash
-npm version <version> --no-git-tag-version     # e.g. 1.0.0-rc.8
-npm run build:mac && npm run build:win && npm run build:linux
+A version tag releases it: `.github/workflows/release.yml` builds every OS and leaves a draft GitHub Release with the downloads table.
 
-node scripts/release-notes.mjs v<version> notes.md > body.md   # your notes + the downloads table
-gh release create v<version> --prerelease --title v<version> --notes-file body.md \
-  $(node scripts/release-notes.mjs v<version> --files)
+```bash
+npm version <version> --no-git-tag-version     # e.g. 1.0.0-rc.15
+git commit -am "Release v<version>" && git push
+git tag v<version> && git push origin v<version>
 ```
 
-The script only picks up files the download page knows how to describe, so the update metadata and blockmaps electron-builder leaves in `dist/` are never uploaded.
+Then add your notes to the draft and publish it. Publishing is what ships it: it becomes the Latest release, and within a few hours every running Plexo downloads it in the background and offers a restart. Leave rc releases unmarked as pre-release: the app only updates to Latest, which a pre-release never is. Mark one pre-release (a beta after 1.0, say) to keep it from everyone's automatic updates. A build to throw away? Delete the draft and the tag.
+
+Besides the downloads, a release carries what the app's updater reads (`src/main/updater.ts`): the `latest*.yml` channel files, the macOS `.zip`s and the blockmaps. `scripts/release-notes.mjs --files` lists them; the download page ignores them.
+
+macOS only installs signed updates. The release workflow signs and notarizes the Mac build when these repository secrets are set: `MAC_CERTIFICATE_P12_BASE64` and `MAC_CERTIFICATE_PASSWORD` (a Developer ID Application certificate), and `APPLE_API_KEY_P8`, `APPLE_API_KEY_ID` and `APPLE_API_ISSUER` (an App Store Connect API key). Without them a Mac that finds an update sends you to the website for it.
 
 ## Reporting bugs
 
