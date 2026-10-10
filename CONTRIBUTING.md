@@ -68,9 +68,9 @@ git commit -am "Release v<version>" && git push
 git tag v<version> && git push origin v<version>
 ```
 
-Then add your notes to the draft and publish it. Publishing is what ships it: within a few hours every running Plexo (rc builds take rc releases, stable builds only stable ones) downloads it in the background and offers a restart. A build to throw away? Delete the draft and the tag.
+Then add your notes to the draft and publish it. Publishing is what ships it: it becomes the Latest release, and within a few hours every running Plexo downloads it in the background and offers a restart. Leave rc releases unmarked as pre-release: the app only updates to Latest, which a pre-release never is. Mark one pre-release (a beta after 1.0, say) to keep it from everyone's automatic updates. A build to throw away? Delete the draft and the tag.
 
-Besides the downloads, a release carries what the app's updater reads (`src/main/updater.ts`): the `rc*.yml` / `latest*.yml` channel files, the macOS `.zip`s and the blockmaps. `scripts/release-notes.mjs --files` lists them; the download page ignores them.
+Besides the downloads, a release carries what the app's updater reads (`src/main/updater.ts`): the `latest*.yml` channel files, the macOS `.zip`s and the blockmaps. `scripts/release-notes.mjs --files` lists them; the download page ignores them.
 
 macOS only installs signed updates. The release workflow signs and notarizes the Mac build when these repository secrets are set: `MAC_CERTIFICATE_P12_BASE64` and `MAC_CERTIFICATE_PASSWORD` (a Developer ID Application certificate), and `APPLE_API_KEY_P8`, `APPLE_API_KEY_ID` and `APPLE_API_ISSUER` (an App Store Connect API key). Without them a Mac that finds an update sends you to the website for it.
 

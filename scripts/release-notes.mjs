@@ -46,19 +46,23 @@ if (files.length === 0) {
 }
 
 if (arg === '--files') {
-  // What the app's updater reads (src/main/updater.ts): each OS's channel file (rc-mac.yml, … for
-  // an rc; latest-mac.yml, … for a stable release), the zips macOS installs from, and blockmaps,
-  // which let an update download only what changed.
-  const channel = version.match(/-([a-z]+)/)?.[1] ?? 'latest'
-  const channelFile = new RegExp(`^${channel}(-[a-z0-9-]+)?\\.yml$`)
+  // What the app's updater reads (src/main/updater.ts): each OS's latest*.yml (a GitHub-published
+  // build never writes an rc*.yml), the zips macOS installs from, and blockmaps, which let an
+  // update download only what changed.
   const updateFiles = readdirSync(dist).filter(
     (name) =>
-      channelFile.test(name) ||
+      /^latest(-[a-z0-9-]+)?\.yml$/.test(name) ||
       (name.includes(version) && (name.endsWith('-mac.zip') || name.endsWith('.blockmap')))
   )
+  // Without them the release is invisible to every installed app.
+  const channelFiles = updateFiles.filter((name) => name.endsWith('.yml'))
+  if (channelFiles.length === 0) {
+    console.error('No latest*.yml in dist/ — the app could never update to this release.')
+    process.exit(1)
+  }
   // Channel files carry no version in their name, so one left over from an older build would
   // point every app at that build.
-  for (const name of updateFiles.filter((name) => name.endsWith('.yml'))) {
+  for (const name of channelFiles) {
     if (!readFileSync(join(dist, name), 'utf-8').includes(`version: ${version}\n`)) {
       console.error(`dist/${name} isn't for ${version} — rebuild that platform.`)
       process.exit(1)

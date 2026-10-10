@@ -96,6 +96,7 @@ jobs:
         run: |
           node scripts/release-notes.mjs "$TAG" > "$RUNNER_TEMP/notes.md"
           node scripts/release-notes.mjs "$TAG" --files > "$RUNNER_TEMP/files.txt"
-          prerelease=$([[ "$TAG" == *-* ]] && echo --prerelease || true)
-          xargs -d '\n' gh release create "$TAG" --draft $prerelease --title "$TAG" \
+          # Not --prerelease, even for an rc: the app updates to the release GitHub marks Latest,
+          # and a pre-release never is (see src/main/updater.ts).
+          xargs -d '\n' gh release create "$TAG" --draft --title "$TAG" \
             --notes-file "$RUNNER_TEMP/notes.md" < "$RUNNER_TEMP/files.txt"

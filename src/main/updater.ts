@@ -134,13 +134,17 @@ function setAppMenu(): void {
   )
 }
 
-/** Checks GitHub Releases now and every few hours (see electron-builder.yml's publish). An rc
- * build takes rc releases too; a stable one only stable ones. A downloaded update installs on
- * restart, or on the next quit if there isn't one. */
+/** Checks GitHub Releases now and every few hours (see electron-builder.yml's publish), for the
+ * release GitHub marks Latest. A downloaded update installs on restart, or on the next quit if
+ * there isn't one. */
 export function startUpdater(window: () => BrowserWindow | null, autoUpdate: boolean): void {
   getWindow = window
   state = { ...state, autoUpdate }
   autoUpdater.autoDownload = autoUpdate
+  // On by default for an rc build, and then it only ever looks for newer rc tags: 1.0.0 would
+  // never reach it. Off, every build follows Latest, whatever its version. A release marked
+  // pre-release on GitHub is never Latest, so it reaches nobody.
+  autoUpdater.allowPrerelease = false
 
   autoUpdater.on('checking-for-update', () => set({ status: 'checking' }))
   autoUpdater.on('update-not-available', () => {

@@ -86,7 +86,7 @@ appImage:
   artifactName: ${name}-${version}-${arch}.${ext}
 npmRebuild: false
 # Where the app looks for updates. Builds never publish themselves (--publish never): the release
-# workflow uploads them, with the rc*.yml / latest*.yml files the updater reads.
+# workflow uploads them, with the latest*.yml files the updater reads.
 publish:
   provider: github
   owner: anmolkapil
