@@ -24,6 +24,27 @@ async function stubNativeUi(
   }, destination)
 }
 
+test('Show in Finder on a download in progress shows its staging file', async ({
+  plexo,
+  serve,
+  dirs
+}) => {
+  const origin = await serve({ size: SIZE })
+  await stubNativeUi(plexo, dirs.dest)
+  const reached = origin.hold(6 * BLOCK)
+  const id = await plexo.start(origin.url(), origin.sha256)
+  await reached
+  const { destinationPath } = (await plexo.api.listDownloads()).find(
+    (entry) => entry.state.id === id
+  )!.state
+  // The final file isn't there yet: what's on disk is `<name>.plexo`.
+  expect(await plexo.api.revealDownload(id)).toBe(true)
+  expect(
+    await plexo.evaluateMain(() => (globalThis as Record<string, unknown>).__revealed, null)
+  ).toEqual([`${destinationPath}.plexo`])
+  origin.release()
+})
+
 test.describe('a torrent through the UI', () => {
   // This journey inspects a peer row, not network reassignment. Keep one network stable;
   // routing across networks and globally unique peer IDs are checked by torrent specs/invariants.
