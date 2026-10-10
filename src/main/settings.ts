@@ -9,6 +9,7 @@ import {
   type ThemeSource
 } from '../shared/types'
 import { readJson, updateJson } from './jsonFile'
+import { DEFAULT_DOWNLOAD_SCHEDULE, validSchedule } from '../shared/downloadSchedule'
 
 function settingsPath(): string {
   return join(app.getPath('userData'), 'app-settings.json')
@@ -62,6 +63,11 @@ function sanitizeSettings(parsed: unknown): AppSettings {
 
   const { themeSource, destinationDir, downloadsAtOnce } = parsed
   const settings: AppSettings = {}
+  if (parsed.downloadSchedule !== undefined) {
+    settings.downloadSchedule = validSchedule(parsed.downloadSchedule)
+      ? parsed.downloadSchedule
+      : { ...DEFAULT_DOWNLOAD_SCHEDULE, enabled: true, days: [] }
+  }
   // 'system' was once an option — dropping it falls back to the OS appearance (loadThemeSource).
   if (themeSource === 'light' || themeSource === 'dark') settings.themeSource = themeSource
   if (parsed.autoUpdate === false) settings.autoUpdate = false
@@ -98,6 +104,13 @@ export async function loadSettings(): Promise<AppSettings> {
 
 /** Merges `patch` over what's saved. */
 export function saveSettings(patch: unknown): Promise<void> {
+  if (
+    isRecord(patch) &&
+    patch.downloadSchedule !== undefined &&
+    !validSchedule(patch.downloadSchedule)
+  ) {
+    return Promise.reject(new Error('Choose different start and stop times and at least one day.'))
+  }
   return updateJson(settingsPath(), (current) =>
     sanitizeSettings({ ...sanitizeSettings(current), ...(isRecord(patch) ? patch : {}) })
   )

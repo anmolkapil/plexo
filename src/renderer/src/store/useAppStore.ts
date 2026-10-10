@@ -1,6 +1,7 @@
 import { applyDownloadUpdate } from '@shared/downloadUpdate'
 import type {
   AppSettings,
+  DownloadSchedule,
   DownloadState,
   DownloadUpdate,
   FinishedDownload,
@@ -40,6 +41,7 @@ interface AppStore {
   view: View
   downloadFilter: DownloadFilter
   setDownloadFilter: (filter: DownloadFilter) => void
+  downloadSchedule: DownloadSchedule | undefined
   /** The New download dialog, over whatever the window shows. */
   newDownloadOpen: boolean
   /** Persisted — how many downloads run at once; the rest wait in the queue. */
@@ -124,6 +126,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
   view: { name: 'list' },
   downloadFilter: 'all',
   setDownloadFilter: (downloadFilter) => set({ downloadFilter }),
+  downloadSchedule: initial.downloadSchedule,
   newDownloadOpen: false,
   downloadsAtOnce: initial.downloadsAtOnce,
   speedLimit: initial.speedLimit,
