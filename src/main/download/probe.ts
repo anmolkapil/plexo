@@ -5,6 +5,7 @@ import { URL } from 'node:url'
 import type { BrowserContext, ProbeResult } from '../../shared/types'
 import { testKnobs } from '../testKnobs'
 import { requestHeaders } from './browserContext'
+import { parseContentDispositionFilename } from './contentDisposition'
 import {
   describeTorrent,
   downloadTorrentFile,
@@ -64,49 +65,6 @@ function requestOneByte(
     })
     req.end()
   })
-}
-
-function parseContentDispositionFilename(disposition: string): string | null {
-  // RFC 6266 / RFC 5987: filename* takes precedence over filename
-  // format: filename*=charset'language'encoded-value
-  const extMatch = /\bfilename\*=([a-zA-Z0-9_-]+)'[^']*'([^;\s]+)/i.exec(disposition)
-  if (extMatch?.[2]) {
-    // RFC 5987 requires both UTF-8 and ISO-8859-1. decodeURIComponent only reads UTF-8, so a
-    // Latin-1 byte like %A3 (£) would throw and leave the raw escapes as the name.
-    if (/^iso-8859-1$/i.test(extMatch[1])) {
-      return extMatch[2].replace(/%([0-9a-f]{2})/gi, (_, hex: string) =>
-        String.fromCharCode(parseInt(hex, 16))
-      )
-    }
-    try {
-      return decodeURIComponent(extMatch[2])
-    } catch {
-      return extMatch[2]
-    }
-  }
-
-  // Quoted string: preserves semicolons inside quotes, e.g. filename="report; final.pdf"
-  const quotedMatch = /\bfilename="((?:[^"\\]|\\.)*)"/i.exec(disposition)
-  if (quotedMatch?.[1]) {
-    const unescaped = quotedMatch[1].replace(/\\(.)/g, '$1')
-    try {
-      return decodeURIComponent(unescaped)
-    } catch {
-      return unescaped
-    }
-  }
-
-  // Unquoted token fallback
-  const tokenMatch = /\bfilename=([^;\s]+)/i.exec(disposition)
-  if (tokenMatch?.[1]) {
-    try {
-      return decodeURIComponent(tokenMatch[1])
-    } catch {
-      return tokenMatch[1]
-    }
-  }
-
-  return null
 }
 
 function fileNameFromHeaders(headers: Headers, url: URL): string {
