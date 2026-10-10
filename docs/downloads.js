@@ -13,18 +13,18 @@
   var OS_ORDER = ['mac', 'win', 'linux']
   var OS_LABEL = { mac: 'macOS', win: 'Windows', linux: 'Linux' }
 
-  // What an unsigned build makes the OS say on first launch, and the way past it: under the
+  // What a build that isn't notarized (macOS) or signed (Windows) makes the OS say on first
+  // launch, and the way past it: under the
   // download button for the visitor's own OS, and with every other OS's downloads.
   // `code` in backticks, **button names** in stars.
   var MAC_COMMAND = 'xattr -dr com.apple.quarantine /Applications/Plexo.app'
   var FIRST_LAUNCH = {
     mac: {
       system: 'macOS',
-      warning: 'Plexo is damaged and can’t be opened',
-      fix: 'It isn’t damaged, just not signed by Apple yet. Drag Plexo into **Applications**, then run this once in **Terminal** and open it again:',
+      warning: 'Apple cannot check “Plexo” for malicious software',
+      fix: 'Plexo is signed, just not notarized by Apple yet. Click **Done**, choose **Open Anyway** in System Settings → Privacy & Security, and open it again. Or drag Plexo into **Applications**, then run this once in **Terminal**:',
       command: MAC_COMMAND,
-      aside:
-        'Says it can’t verify Plexo instead? Choose **Open Anyway** in System Settings → Privacy & Security.'
+      aside: null
     },
     win: {
       system: 'Windows',
@@ -303,8 +303,9 @@
       out.push('')
     })
     out.push(
-      '**macOS says Plexo is damaged?** It isn’t: Plexo isn’t signed yet. Move it to Applications, ' +
-        'run `' +
+      '**macOS says Apple cannot check Plexo?** Plexo is signed, just not notarized by Apple yet. ' +
+        'Click Done, choose Open Anyway in System Settings → Privacy & Security, and open it again. ' +
+        'Or move it to Applications, run `' +
         MAC_COMMAND +
         '` in Terminal, and open it again.',
       '',

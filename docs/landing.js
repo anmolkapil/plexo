@@ -78,14 +78,14 @@
   const installGuides = {
     mac: {
       title: 'Opening Plexo for the first time on macOS',
-      why: 'Plexo isn’t signed with an Apple Developer ID yet, so macOS blocks it the first time you open it. You only need to allow it once.',
+      why: 'Plexo is signed with an Apple Developer ID but not notarized by Apple yet, so macOS asks you to allow it the first time you open it. You only need to do this once.',
       steps: [
         ['Open the .dmg and drag **Plexo** into your **Applications** folder.'],
         ['Open Plexo. When macOS says it can’t verify the app, click **Done**.'],
         ['Open **System Settings → Privacy & Security**, then click **Open Anyway**.']
       ],
       fix: [
-        'Seeing “Plexo is damaged and can’t be opened”? Run this in Terminal, then open Plexo again:',
+        'Still won’t open? Run this in Terminal, then open Plexo again:',
         'xattr -cr /Applications/Plexo.app'
       ]
     },
