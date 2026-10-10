@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "Plexo",
   "version": "1.0.0",
-  "description": "Sends your downloads to Plexo, which downloads each file over every network you have at once.",
+  "description": "Download files with the Plexo app.",
   "homepage_url": "https://getplexo.app",
   "icons": {
     "16": "icons/icon-16.png",
