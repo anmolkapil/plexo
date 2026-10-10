@@ -23,7 +23,7 @@ import { getDefaultDownloadsDir, getHomeDir } from '../download/paths'
 import { listHistory } from '../download/history'
 import { probeUrl } from '../download/probe'
 import { deviceBindingSupported } from '../network/deviceBinding'
-import { takePendingLink } from '../openLinks'
+import { pendingLink, pendingLinks, releaseLink } from '../openLinks'
 import { NetworkMonitor } from '../network/interfaces'
 import { loadSettings, saveSettings } from '../settings'
 import { testKnobs } from '../testKnobs'
@@ -181,13 +181,31 @@ export function registerIpcHandlers(getWindow: () => BrowserWindow | null): Down
     return result.filePaths[0]
   })
 
-  handle('takePendingLink', async () => takePendingLink())
+  handle('pendingLinks', async () => pendingLinks())
+  handle('resumeFromLink', async (_event, linkId, downloadId) => {
+    const link = pendingLink(linkId)
+    if (link?.probe?.kind !== 'http') throw new Error('That download is no longer waiting.')
+    await manager.relink(downloadId, link.probe.finalUrl, {
+      probe: link.probe,
+      browser: link.browser
+    })
+    releaseLink(linkId)
+  })
+  handle('dismissLink', async (_event, id) => releaseLink(id))
 
   handle('readClipboardText', async () => clipboard.readText())
 
   handle('revealDownload', async (_event, id) => manager.reveal(id))
 
-  handle('startDownload', async (_event, request) => manager.start(request))
+  // The browser's sign-in is attached here, so it never passes through the window.
+  handle('startDownload', async (_event, request, linkId) => {
+    const browser = linkId === undefined ? undefined : pendingLink(linkId)?.browser
+    const id = await manager.start(
+      browser && request.kind === 'http' ? { ...request, browser } : request
+    )
+    if (linkId !== undefined) releaseLink(linkId)
+    return id
+  })
 
   handle('listDownloads', async () => manager.listDownloads())
 

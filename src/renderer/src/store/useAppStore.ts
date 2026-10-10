@@ -7,6 +7,7 @@ import type {
   NetworkInterfaceInfo,
   NetworkPreference,
   NetworkPreferences,
+  PendingLink,
   SpeedUnit,
   ThemeSource,
   UpdateInfo
@@ -57,6 +58,13 @@ interface AppStore {
 
   /** Lifted out of the Idle screen so it survives a swap to/from the No-connections screen. */
   draftUrl: string
+  /** Handed-over links stacked in New download, oldest first. */
+  links: PendingLink[]
+  /** Null while New download shows a link typed or pasted there instead. Links are named by
+   * id, never by position: the list changes while a start is under way. */
+  shownId: string | null
+  /** Bumped to remount New download's form for another link. */
+  formKey: number
   /** The link last started: still on the clipboard afterwards, so not offered again. */
   startedUrl: string
   /** Persisted — the last folder picked, falling back to downloadsDir. */
@@ -79,6 +87,12 @@ interface AppStore {
   /** Opens New download, with `link` in its link field when one is given. */
   openNewDownload: (link?: string) => void
   closeNewDownload: () => void
+  receiveLinks: () => Promise<void>
+  showLink: (id: string) => void
+  /** If it was the one shown, the newest left is shown, or New download closes. */
+  finishLink: (id: string, started: boolean) => void
+  /** Leaves what New download shows alone, the typed link included. */
+  dropLink: (id: string, started: boolean) => void
   setDownloadsAtOnce: (count: number) => void
   /** Each one applies at once, to every download (see main/network/limits.ts). */
   setSpeedLimit: (bytesPerSec: number | undefined) => void
@@ -98,6 +112,9 @@ const initial = window.plexo.initialState
 function persist(patch: AppSettings): void {
   window.plexo.updateSettings(patch).catch(() => {})
 }
+
+/** Links let go here: a listing main sent before it heard so would bring them back. */
+const letGo = new Set<string>()
 
 export const useAppStore = create<AppStore>((set, get) => ({
   interfaces: [],
@@ -123,6 +140,9 @@ export const useAppStore = create<AppStore>((set, get) => ({
   speedUnit: initial.speedUnit,
 
   draftUrl: '',
+  links: [],
+  shownId: null,
+  formKey: 0,
   startedUrl: '',
   destinationDir: initial.destinationDir ?? initial.downloadsDir,
 
@@ -203,7 +223,49 @@ export const useAppStore = create<AppStore>((set, get) => ({
   openNewDownload: (link) =>
     set(link === undefined ? { newDownloadOpen: true } : { newDownloadOpen: true, draftUrl: link }),
 
-  closeNewDownload: () => set({ newDownloadOpen: false }),
+  closeNewDownload: () => {
+    const { links, shownId } = get()
+    if (shownId) return get().finishLink(shownId, false)
+    if (links.length > 0) return get().showLink(links[links.length - 1].id)
+    set({ newDownloadOpen: false })
+  },
+
+  receiveLinks: async () => {
+    // main lists every link still waiting, so a window that was closed or reloaded gets them back.
+    const pending = await window.plexo.pendingLinks().catch(() => [])
+    const known = new Set(get().links.map((link) => link.id))
+    const arrived = pending.filter((link) => !known.has(link.id) && !letGo.has(link.id))
+    if (arrived.length === 0) return
+    set({ links: [...get().links, ...arrived], newDownloadOpen: true })
+    get().showLink(arrived[arrived.length - 1].id)
+  },
+
+  showLink: (id) => {
+    const link = get().links.find((candidate) => candidate.id === id)
+    if (link) set({ shownId: id, draftUrl: link.url, formKey: get().formKey + 1 })
+  },
+
+  finishLink: (id, started) => {
+    const wasShown = get().shownId === id
+    get().dropLink(id, started)
+    if (!wasShown) return
+    const left = get().links
+    set({ draftUrl: '' })
+    if (left.length > 0) get().showLink(left[left.length - 1].id)
+    else set({ newDownloadOpen: false })
+  },
+
+  dropLink: (id, started) => {
+    const { links, shownId } = get()
+    if (!links.some((link) => link.id === id)) return
+    letGo.add(id)
+    // Started, main has already forgotten its sign-in.
+    if (!started) void window.plexo.dismissLink(id).catch(() => {})
+    set({
+      links: links.filter((link) => link.id !== id),
+      ...(shownId === id && { shownId: null })
+    })
+  },
 
   setDownloadsAtOnce: (downloadsAtOnce) => {
     set({ downloadsAtOnce })

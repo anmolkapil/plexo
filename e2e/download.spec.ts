@@ -194,6 +194,10 @@ test.describe('edge cases', () => {
 
     const other = await serve({ size: 8 * BLOCK, seed: 8 })
     await expect(plexo.api.relinkDownload(id, other.url())).rejects.toThrow(/different file/)
+    // Same size and the same ETag (every test origin's "v1"), other bytes: labels alone would let
+    // it through and mix two files.
+    const lookalike = await serve({ size: 16 * BLOCK, seed: 9 })
+    await expect(plexo.api.relinkDownload(id, lookalike.url())).rejects.toThrow(/different file/)
 
     const fresh = await serve({ size: 16 * BLOCK, seed: 7 })
     await plexo.api.relinkDownload(id, fresh.url())

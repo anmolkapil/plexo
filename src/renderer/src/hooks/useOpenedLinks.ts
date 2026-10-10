@@ -2,25 +2,16 @@ import { useEffect } from 'react'
 import { useAppStore } from '../store/useAppStore'
 import { acceptedLink } from '../utils/format'
 
-/** Opens New download with a link the OS handed Plexo — a magnet link clicked, a .torrent opened
- * — for the user to look at and start (see main/openLinks.ts). */
+/** Opens New download with links handed to Plexo, for the user to look at and start. */
 export function useOpenedLinks(): void {
-  const openNewDownload = useAppStore((store) => store.openNewDownload)
+  const receiveLinks = useAppStore((store) => store.receiveLinks)
 
   useEffect(() => {
-    const take = (): void => {
-      void window.plexo
-        .takePendingLink()
-        .then((link) => {
-          if (link) openNewDownload(link)
-        })
-        .catch(() => {})
-    }
-    const unsubscribe = window.plexo.onLinkReceived(take)
-    // One handed over before the window was ready to hear of it.
-    take()
+    const unsubscribe = window.plexo.onLinkReceived(() => void receiveLinks())
+    // Some may have arrived before the window was listening.
+    void receiveLinks()
     return unsubscribe
-  }, [openNewDownload])
+  }, [receiveLinks])
 }
 
 const isMac = window.plexo.platform === 'darwin'

@@ -2,8 +2,9 @@ import { request as httpRequest } from 'node:http'
 import { request as httpsRequest } from 'node:https'
 import { isAbsolute } from 'node:path'
 import { URL } from 'node:url'
-import type { ProbeResult } from '../../shared/types'
+import type { BrowserContext, ProbeResult } from '../../shared/types'
 import { testKnobs } from '../testKnobs'
+import { requestHeaders } from './browserContext'
 import { parseContentDispositionFilename } from './contentDisposition'
 import {
   describeTorrent,
@@ -13,7 +14,6 @@ import {
 } from './torrent/metadata'
 
 const MAX_REDIRECTS = 5
-const USER_AGENT = 'Plexo/1.0'
 // A server that accepts the connection and never answers would otherwise hang the probe — and
 // the link field's "Checking…" — forever. Same budget as a stalled chunk, for the whole probe:
 // redirects included, so a chain of slow hops can't stretch it.
@@ -34,7 +34,11 @@ interface ProbeResponse {
 
 /** GET with a 1-byte range: cheaper than fetching the body, and unlike HEAD it
  * also tells us (via the 206 status) whether range requests actually work. */
-function requestOneByte(url: URL, deadline: number): Promise<ProbeResponse> {
+function requestOneByte(
+  url: URL,
+  deadline: number,
+  browser: BrowserContext | undefined
+): Promise<ProbeResponse> {
   return new Promise((resolve, reject) => {
     const requester = url.protocol === 'https:' ? httpsRequest : httpRequest
     const req = requester(
@@ -43,7 +47,7 @@ function requestOneByte(url: URL, deadline: number): Promise<ProbeResponse> {
         hostname: url.hostname.replace(/^\[|\]$/g, ''),
         port: url.port || undefined,
         path: `${url.pathname}${url.search}`,
-        headers: { 'User-Agent': USER_AGENT, Range: 'bytes=0-0' }
+        headers: { ...requestHeaders(url, browser), Range: 'bytes=0-0' }
       },
       (res) => {
         clearTimeout(timer)
@@ -80,14 +84,15 @@ function fileNameFromHeaders(headers: Headers, url: URL): string {
 }
 
 async function requestFollowingRedirects(
-  rawUrl: string
+  rawUrl: string,
+  browser: BrowserContext | undefined
 ): Promise<{ current: URL; response: ProbeResponse | null }> {
   let current = new URL(rawUrl)
   let response: ProbeResponse | null = null
   const deadline = Date.now() + PROBE_TIMEOUT_MS
 
   for (let redirect = 0; redirect <= MAX_REDIRECTS; redirect += 1) {
-    response = await requestOneByte(current, deadline)
+    response = await requestOneByte(current, deadline, browser)
     if (response.statusCode >= 300 && response.statusCode < 400) {
       const location = headerValue(response.headers, 'location')
       if (!location) break
@@ -107,14 +112,15 @@ function isTorrentLink(headers: Headers, url: URL): boolean {
 }
 
 /** What a link would download: a file over HTTP(S), or a torrent — a magnet link, a link to a
- * .torrent, or the path of a .torrent on this computer (opened or dropped on the window). */
-export async function probeUrl(rawUrl: string): Promise<ProbeResult> {
+ * .torrent, or the path of a .torrent on this computer (opened or dropped on the window).
+ * `browser`: what the browser it came from sends with it (see BrowserContext). */
+export async function probeUrl(rawUrl: string, browser?: BrowserContext): Promise<ProbeResult> {
   if (/^magnet:/i.test(rawUrl)) return describeTorrent(await fetchMagnetMetadata(rawUrl), rawUrl)
   if (isAbsolute(rawUrl) && /\.torrent$/i.test(rawUrl)) {
     return describeTorrent(await readTorrentFile(rawUrl), rawUrl)
   }
 
-  const { current, response } = await requestFollowingRedirects(rawUrl)
+  const { current, response } = await requestFollowingRedirects(rawUrl, browser)
 
   // An empty file can't satisfy a request for its first byte: the server answers 416 and gives
   // the size as `bytes */0`. That's a valid, empty download, not an error.
@@ -141,7 +147,12 @@ export async function probeUrl(rawUrl: string): Promise<ProbeResult> {
 
   if (isTorrentLink(response.headers, current)) {
     const finalUrl = current.toString()
-    return describeTorrent(await downloadTorrentFile(finalUrl, PROBE_TIMEOUT_MS), finalUrl)
+    const torrentFile = await downloadTorrentFile(
+      finalUrl,
+      PROBE_TIMEOUT_MS,
+      requestHeaders(current, browser)
+    )
+    return describeTorrent(torrentFile, finalUrl)
   }
 
   const contentRange = headerValue(response.headers, 'content-range')

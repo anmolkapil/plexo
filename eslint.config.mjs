@@ -38,7 +38,7 @@ export default defineConfig(
     // Plain JavaScript that runs as-is — the download page's script, and the CommonJS and ES module
     // scripts that Electron and node load directly — so TypeScript's conventions (return types,
     // import syntax) don't apply.
-    files: ['docs/**/*.js', 'e2e/page-host/*.cjs', 'scripts/**/*.mjs'],
+    files: ['docs/**/*.js', 'e2e/page-host/*.cjs', 'scripts/**/*.mjs', 'extension/build.mjs'],
     rules: {
       '@typescript-eslint/explicit-function-return-type': 'off',
       '@typescript-eslint/no-require-imports': 'off'

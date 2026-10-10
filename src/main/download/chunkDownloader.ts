@@ -2,11 +2,14 @@ import type { Writable } from 'node:stream'
 import type { ClientRequest, IncomingMessage } from 'node:http'
 import { URL } from 'node:url'
 import { asConnectionError, type StreamConnection } from '../network/routes'
+import type { BrowserContext } from '../../shared/types'
 import { testKnobs } from '../testKnobs'
+import { requestHeaders } from './browserContext'
 import { compareVersion, type FileVersion, type VersionCheck } from './fileVersion'
 
 export interface ChunkDownloadOptions {
   url: string
+  browser?: BrowserContext
   rangeStart: number
   /** null = open-ended range, download to end of file. */
   rangeEnd: number | null
@@ -125,6 +128,7 @@ function versionOf(res: IncomingMessage, served: ServedRange | null): FileVersio
 export function downloadChunk(options: ChunkDownloadOptions): Promise<void> {
   const {
     url,
+    browser,
     rangeStart,
     rangeEnd,
     connection,
@@ -201,15 +205,14 @@ export function downloadChunk(options: ChunkDownloadOptions): Promise<void> {
 
     // The whole file from the start needs no Range at all — and an empty file would answer
     // `bytes=0-` with 416, since it has no byte 0 to start from.
-    const headers: Record<string, string> = { 'User-Agent': 'Plexo/1.0' }
-    if (rangeStart > 0 || rangeEnd !== null) {
-      headers['Range'] =
-        rangeEnd === null ? `bytes=${rangeStart}-` : `bytes=${rangeStart}-${rangeEnd}`
-    }
+    const range: Record<string, string> =
+      rangeStart > 0 || rangeEnd !== null
+        ? { Range: rangeEnd === null ? `bytes=${rangeStart}-` : `bytes=${rangeStart}-${rangeEnd}` }
+        : {}
 
     const attempt = (targetUrl: URL, redirectsLeft: number): void => {
       void connection
-        .request(targetUrl, headers, signal)
+        .request(targetUrl, { ...requestHeaders(targetUrl, browser), ...range }, signal)
         .then(({ req, res, sentAt }) => {
           if (settled) {
             req.destroy()
@@ -387,12 +390,13 @@ export function fetchRange(
   url: string,
   start: number,
   end: number,
-  connection: StreamConnection
+  connection: StreamConnection,
+  browser?: BrowserContext
 ): Promise<{ body: Buffer; version: FileVersion }> {
   return new Promise((resolve, reject) => {
     const attempt = (target: URL, redirectsLeft: number): void => {
       void connection
-        .request(target, { 'User-Agent': 'Plexo/1.0', Range: `bytes=${start}-${end}` })
+        .request(target, { ...requestHeaders(target, browser), Range: `bytes=${start}-${end}` })
         .then(({ req, res }) => {
           req.on('error', reject)
           const status = res.statusCode ?? 0
