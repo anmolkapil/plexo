@@ -42,8 +42,9 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      # Without the Mac secrets the Mac build is unsigned, and can't update itself. Exported on the
-      # Mac only: electron-builder would otherwise sign Windows with CSC_LINK too.
+      # Without the certificate secrets the Mac build is unsigned, and can't update itself; without
+      # the API key ones it's signed but not notarized. Exported on the Mac only: electron-builder
+      # would otherwise sign Windows with CSC_LINK too.
       - name: Build
         shell: bash
         env:
@@ -55,6 +56,8 @@ jobs:
         run: |
           if [ "$RUNNER_OS" = macOS ] && [ -n "$MAC_CERTIFICATE_P12_BASE64" ]; then
             export CSC_LINK="$MAC_CERTIFICATE_P12_BASE64" CSC_KEY_PASSWORD="$MAC_CERTIFICATE_PASSWORD"
+          fi
+          if [ "$RUNNER_OS" = macOS ] && [ -n "$APPLE_API_KEY_P8" ]; then
             echo "$APPLE_API_KEY_P8" > "$RUNNER_TEMP/apple-api-key.p8"
             export APPLE_API_KEY="$RUNNER_TEMP/apple-api-key.p8"
           fi
