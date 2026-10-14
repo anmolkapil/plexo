@@ -1,4 +1,9 @@
-import type { DownloadUnitState, HttpBlockState, TorrentPieceState } from '../../shared/types'
+import type {
+  DownloadUnitState,
+  HttpBlockState,
+  NzbSegmentState,
+  TorrentPieceState
+} from '../../shared/types'
 import { planBlocks, planPieces } from './plan'
 
 /** How a download's HTTP blocks or torrent pieces are checkpointed. Their ranges follow from the
@@ -94,4 +99,51 @@ export function restorePieces(
     if (saved.complete === true || piece.bytesDownloaded === length) piece.status = 'completed'
   }
   return pieces
+}
+
+/**
+ * An NZB download's articles as planned from its NZB (`planned`), with the progress saved for
+ * them. An article only ever counts whole: one that was coming in when the download stopped
+ * starts over. `missing`: the articles the server didn't have, by index. Undefined when the NZB
+ * doesn't match the download saved.
+ */
+export function restoreSegments(
+  planned: NzbSegmentState[],
+  state: { totalBytes: number; totalBlocks: number },
+  saved: SavedBlocks,
+  missing: unknown
+): NzbSegmentState[] | undefined {
+  const length = (segment: NzbSegmentState): number => segment.rangeEnd! - segment.rangeStart + 1
+  const total = planned.reduce((sum, segment) => sum + length(segment), 0)
+  if (planned.length !== state.totalBlocks || total !== state.totalBytes) return undefined
+
+  const columns =
+    typeof saved.progress === 'object' && saved.progress !== null
+      ? Object.entries(saved.progress)
+      : []
+  for (const [networkId, column] of columns) {
+    if (!Array.isArray(column) || column.length !== planned.length || !column.every(isCount)) {
+      continue
+    }
+    column.forEach((bytes, index) => {
+      if (bytes === 0) return
+      planned[index].bytesByInterface[networkId] = bytes
+      planned[index].bytesDownloaded += bytes
+    })
+  }
+  for (const segment of planned) {
+    if (segment.bytesDownloaded === length(segment)) {
+      segment.status = 'completed'
+    } else {
+      segment.bytesDownloaded = 0
+      segment.bytesByInterface = {}
+    }
+  }
+  if (Array.isArray(missing)) {
+    for (const index of missing) {
+      const segment = isCount(index) ? planned[index] : undefined
+      if (segment?.status === 'pending') segment.status = 'missing'
+    }
+  }
+  return planned
 }

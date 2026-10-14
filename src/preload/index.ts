@@ -6,7 +6,8 @@ import type {
   DownloadUpdate,
   InitialState,
   NetworkInterfaceInfo,
-  UpdateState
+  UpdateState,
+  UsenetServerInput
 } from '../shared/types'
 
 /** Typed wrapper around ipcRenderer.invoke — the channel name picks its args/result shape out of
@@ -30,7 +31,7 @@ const plexoApi = {
   updateSettings: (patch: AppSettings) => invoke('updateSettings', patch),
   probeUrl: (url: string) => invoke('probeUrl', url),
   chooseDestinationFolder: (defaultPath: string) => invoke('chooseDestinationFolder', defaultPath),
-  chooseTorrentFile: () => invoke('chooseTorrentFile'),
+  chooseDownloadFile: () => invoke('chooseDownloadFile'),
   /** Where a file dropped on the window is on disk ('' for one that isn't a file). */
   pathForFile: (file: File) => webUtils.getPathForFile(file),
   readClipboardText: () => invoke('readClipboardText'),
@@ -61,6 +62,9 @@ const plexoApi = {
   resumeFromLink: (linkId: string, downloadId: string) =>
     invoke('resumeFromLink', linkId, downloadId),
   dismissLink: (id: string) => invoke('dismissLink', id),
+  usenetServer: () => invoke('usenetServer'),
+  saveUsenetServer: (server: UsenetServerInput) => invoke('saveUsenetServer', server),
+  testUsenetServer: (server: UsenetServerInput) => invoke('testUsenetServer', server),
 
   /** pendingLinks() has the new link. */
   onLinkReceived: (callback: () => void): (() => void) => {

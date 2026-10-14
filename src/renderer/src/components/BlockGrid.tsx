@@ -1,4 +1,4 @@
-import type { DownloadUnitState, TorrentPieceStatus } from '@shared/types'
+import type { DownloadUnitState } from '@shared/types'
 import { cn } from 'cn'
 import { ArrowDown, ArrowUp } from 'lucide-react'
 import { useCallback, useRef, useState } from 'react'
@@ -48,7 +48,7 @@ interface CellSegment {
 }
 
 interface DisplayCell {
-  status: TorrentPieceStatus
+  status: DownloadUnitState['status']
   /** The network that delivered the most bytes here — what the cell reads out as, and what
    * colors it when its share is drawn as a single block. */
   interfaceId?: string
@@ -162,6 +162,8 @@ interface BlockGridProps {
   isPaused?: boolean
   /** A torrent's grid: its blocks are the torrent's pieces. */
   pieces?: boolean
+  /** An NZB's grid: its blocks are Usenet articles, of varying size. */
+  articles?: boolean
 }
 
 export function BlockGrid({
@@ -171,9 +173,10 @@ export function BlockGrid({
   knownSize,
   remainingBytes,
   isPaused = false,
-  pieces = false
+  pieces = false,
+  articles = false
 }: BlockGridProps): React.JSX.Element {
-  const unit = pieces ? 'Piece' : 'Chunk'
+  const unit = pieces ? 'Piece' : articles ? 'Article' : 'Chunk'
   const [gridWidth, setGridWidth] = useState(0)
   const [hoveredIndex, setHoveredIndex] = useState<number | null>(null)
   const observerRef = useRef<ResizeObserver | null>(null)
@@ -207,8 +210,14 @@ export function BlockGrid({
     })
 
     const orderedInterfaceIds = groups.map((g) => g.id)
+    const lastEnd = blocks.at(-1)?.rangeEnd ?? null
+    // An NZB's articles differ in size (each file's last is shorter): what one is on average.
     const chunkBytes =
-      blocks[0].rangeEnd !== null ? blocks[0].rangeEnd - blocks[0].rangeStart + 1 : 0
+      articles && lastEnd !== null
+        ? Math.round((lastEnd + 1) / blocks.length)
+        : blocks[0].rangeEnd !== null
+          ? blocks[0].rangeEnd - blocks[0].rangeStart + 1
+          : 0
     const rows = Math.ceil(blocks.length / cols)
     const visibleRows = Math.min(rows, MAX_VISIBLE_ROWS)
     // Only the rows in view (and a few either side) are drawn: a big torrent has hundreds of
@@ -268,14 +277,16 @@ export function BlockGrid({
           ? 'queued'
           : hoveredCell.status === 'skipped'
             ? 'skipped: in no file chosen'
-            : '—')
+            : hoveredCell.status === 'missing'
+              ? 'missing on the server: needs a par2 repair'
+              : '—')
       const provisional =
         hoveredCell.provisionalBytes > 0
           ? ` · ${formatBytes(hoveredCell.provisionalBytes)} received, awaiting verification`
           : ''
       readout = `${unit} #${hoveredCell.chunkNumber} · ${formatBytes(hoveredCell.bytesDownloaded)} verified${provisional} / ${formatBytes(hoveredCell.totalBytes)} · ${where}`
     } else {
-      readout = `${blocks.length} ${unit.toLowerCase()}s · ${formatBytes(chunkBytes)} each`
+      readout = `${blocks.length} ${unit.toLowerCase()}s · ${articles ? 'about ' : ''}${formatBytes(chunkBytes)} each`
     }
 
     return (
@@ -382,6 +393,10 @@ export function BlockGrid({
                   // None of the files chosen needs it: there, but not this download's.
                   border = '0.5px dashed var(--border-strong)'
                   opacity = 0.3
+                } else if (cell.status === 'missing') {
+                  // The server didn't have it: a hole in its file, for a par2 repair to fill.
+                  background = 'color-mix(in srgb, var(--color-danger) 22%, transparent)'
+                  border = '1px dashed var(--color-danger)'
                 }
 
                 const rawFillPercent = Math.min(1, Math.max(0, cell.fillRatio)) * 100

@@ -2,7 +2,7 @@
 
 [![Sponsor](https://img.shields.io/badge/Sponsor-GitHub-ea4aaa?logo=githubsponsors)](https://github.com/sponsors/anmolkapil)
 
-Plexo is a download manager for Windows, macOS, and Linux that downloads one file over several internet connections at the same time. If your computer has Wi-Fi and a phone tethered over USB, Plexo uses both for the same download. It handles direct links, magnet links, and `.torrent` files, with a queue, a downloads list, and speed and data limits for each network.
+Plexo is a download manager for Windows, macOS, and Linux that downloads one file over several internet connections at the same time. If your computer has Wi-Fi and a phone tethered over USB, Plexo uses both for the same download. It handles direct links, magnet links, `.torrent` files and Usenet NZBs, with a queue, a downloads list, and speed and data limits for each network.
 
 https://github.com/user-attachments/assets/e57728f4-fb63-441f-839c-174eef954b17
 
@@ -34,6 +34,13 @@ Plexo splits each download across every network you select, so a second connecti
 - **Choose files**: pick which files to download before it starts, and change your choice while it runs
 - **Peers spread across networks**: each new peer connects through the network with the fewest. Switching a network off moves its peers to the others.
 - **Uploads on every network**: peers get pieces back over each network, USB-tethered ones included, so they keep sending to you
+
+### Usenet
+
+- **NZB links and files**: paste an indexer's NZB link, or open or drop an `.nzb` file. Plexo downloads its files into a folder of the release's name.
+- **Your news server**: set its address, account and how many connections it allows once, and test it before saving. The password is kept in the system keychain.
+- **Connections spread across networks**: the account's connections are shared out evenly over the networks in use. A server that turns one away (too many) gets one fewer.
+- **Missing articles are marked, not fatal**: an article the server no longer has is left as a gap and shown in red. Plexo doesn't repair or unpack downloads: use the release's `.par2` files and your unpacker.
 
 ### Queue and downloads list
 
@@ -139,6 +146,10 @@ Each block is written straight to its place in `<filename>.plexo`, a staging fil
 ### Torrents pin each peer to a network
 
 Plexo runs torrents with [WebTorrent](https://github.com/webtorrent/webtorrent) and opens every peer connection from one network's address. To keep every peer on a network Plexo chose, it turns off the parts that would connect on their own: uTP, WebRTC, web seeds, UPnP and NAT-PMP port mapping, and local peer discovery. Peers are found through HTTP/UDP trackers and the DHT. Torrents that are v2-only aren't supported yet.
+
+### Usenet articles are decoded straight into their files
+
+An NZB lists a release's articles. Each connection signs in to the news server once (NNTP, TLS on by default) and takes article after article, decodes it (yEnc), checks it against its CRC-32, and writes it to its file at the offset the article itself gives, so files fill in as articles land in any order. Only the articles say how big each file really is: publishing cuts every file to that size. An article sent damaged is fetched once more, then counted as missing.
 
 ### Resuming checks the file hasn't changed
 

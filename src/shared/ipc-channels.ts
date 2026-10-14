@@ -6,7 +6,7 @@ export const IpcChannels = {
   getInitialState: 'app:get-initial-state',
   updateSettings: 'app:update-settings',
   chooseDestinationFolder: 'dialog:choose-destination-folder',
-  chooseTorrentFile: 'dialog:choose-torrent-file',
+  chooseDownloadFile: 'dialog:choose-download-file',
   readClipboardText: 'clipboard:read-text',
   revealDownload: 'shell:reveal-download',
   openDownload: 'shell:open-download',
@@ -34,5 +34,8 @@ export const IpcChannels = {
   dismissLink: 'app:dismiss-link',
   updateState: 'update:state',
   updateStateChanged: 'update:state-changed',
-  showUpdateMenu: 'update:show-menu'
+  showUpdateMenu: 'update:show-menu',
+  usenetServer: 'usenet:server',
+  saveUsenetServer: 'usenet:save-server',
+  testUsenetServer: 'usenet:test-server'
 } as const

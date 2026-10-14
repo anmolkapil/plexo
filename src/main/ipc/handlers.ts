@@ -21,6 +21,13 @@ import { DownloadManager } from '../download/downloadManager'
 import { getDefaultDownloadsDir, getHomeDir } from '../download/paths'
 import { listHistory } from '../download/history'
 import { probeUrl } from '../download/probe'
+import { testUsenetServer } from '../download/nzb/nntp'
+import {
+  loadUsenetServer,
+  saveUsenetServer,
+  serverFromInput,
+  viewOf
+} from '../download/nzb/usenetServer'
 import { deviceBindingSupported } from '../network/deviceBinding'
 import { pendingLink, pendingLinks, releaseLink } from '../openLinks'
 import { NetworkMonitor } from '../network/interfaces'
@@ -169,12 +176,16 @@ export function registerIpcHandlers(getWindow: () => BrowserWindow | null): Down
     return result.filePaths[0]
   })
 
-  handle('chooseTorrentFile', async () => {
+  handle('chooseDownloadFile', async () => {
     const window = getWindow()
     if (!window) return null
     const result = await dialog.showOpenDialog(window, {
       properties: ['openFile'],
-      filters: [{ name: 'Torrent', extensions: ['torrent'] }]
+      filters: [
+        { name: 'Torrent or NZB', extensions: ['torrent', 'nzb'] },
+        { name: 'Torrent', extensions: ['torrent'] },
+        { name: 'NZB', extensions: ['nzb'] }
+      ]
     })
     if (result.canceled || result.filePaths.length === 0) return null
     return result.filePaths[0]
@@ -242,6 +253,15 @@ export function registerIpcHandlers(getWindow: () => BrowserWindow | null): Down
 
   handle('removeDownload', async (_event, id, options) =>
     manager.remove(id, options?.trashFile === true)
+  )
+
+  handle('usenetServer', async () => {
+    const server = await loadUsenetServer()
+    return server && viewOf(server)
+  })
+  handle('saveUsenetServer', async (_event, input) => saveUsenetServer(input))
+  handle('testUsenetServer', async (_event, input) =>
+    testUsenetServer(await serverFromInput(input))
   )
 
   handle('updateState', () => updateState())

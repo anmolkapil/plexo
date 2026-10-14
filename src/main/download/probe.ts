@@ -1,11 +1,12 @@
 import { request as httpRequest } from 'node:http'
 import { request as httpsRequest } from 'node:https'
-import { isAbsolute } from 'node:path'
+import { basename, isAbsolute } from 'node:path'
 import { URL } from 'node:url'
 import type { BrowserContext, ProbeResult } from '../../shared/types'
 import { testKnobs } from '../testKnobs'
 import { requestHeaders } from './browserContext'
 import { parseContentDispositionFilename } from './contentDisposition'
+import { describeNzb, downloadNzbFile, indexerError, readNzbFile, sniffXml } from './nzb/nzbFile'
 import {
   describeTorrent,
   downloadTorrentFile,
@@ -112,13 +113,28 @@ function isTorrentLink(headers: Headers, url: URL): boolean {
   return /^application\/x-bittorrent\b/i.test(contentType) || /\.torrent$/i.test(url.pathname)
 }
 
-/** What a link would download: a file over HTTP(S), or a torrent — a magnet link, a link to a
- * .torrent, or the path of a .torrent on this computer (opened or dropped on the window).
- * `browser`: what the browser it came from sends with it (see BrowserContext). */
+/** A link the server says is an NZB, or that is named like one. Indexers serve them from API
+ * links that say nothing in their path, so the type is what usually tells. */
+function isNzbLink(headers: Headers, url: URL, fileName: string): boolean {
+  const contentType = headerValue(headers, 'content-type') ?? ''
+  return (
+    /^application\/x-nzb\b/i.test(contentType) ||
+    /\.nzb$/i.test(url.pathname) ||
+    /\.nzb$/i.test(fileName)
+  )
+}
+
+/** What a link would download: a file over HTTP(S), a torrent — a magnet link, a link to a
+ * .torrent, or the path of a .torrent on this computer (opened or dropped on the window) — or an
+ * NZB, by link or path, the same way. `browser`: what the browser it came from sends with it (see
+ * BrowserContext). */
 export async function probeUrl(rawUrl: string, browser?: BrowserContext): Promise<ProbeResult> {
   if (/^magnet:/i.test(rawUrl)) return describeTorrent(await fetchMagnetMetadata(rawUrl), rawUrl)
   if (isAbsolute(rawUrl) && /\.torrent$/i.test(rawUrl)) {
     return describeTorrent(await readTorrentFile(rawUrl), rawUrl)
+  }
+  if (isAbsolute(rawUrl) && /\.nzb$/i.test(rawUrl)) {
+    return describeNzb(await readNzbFile(rawUrl), rawUrl, basename(rawUrl))
   }
 
   const { current, response } = await requestFollowingRedirects(rawUrl, browser)
@@ -156,6 +172,30 @@ export async function probeUrl(rawUrl: string, browser?: BrowserContext): Promis
     return describeTorrent(torrentFile, finalUrl)
   }
 
+  const suggestedFileName = fileNameFromHeaders(response.headers, current)
+  if (isNzbLink(response.headers, current, suggestedFileName)) {
+    const finalUrl = current.toString()
+    const nzbFile = await downloadNzbFile(
+      finalUrl,
+      PROBE_TIMEOUT_MS,
+      requestHeaders(current, browser)
+    )
+    return describeNzb(nzbFile, finalUrl, suggestedFileName)
+  }
+  // An indexer's API answers in XML either way: an NZB it doesn't label as one, or an error (a
+  // wrong API key, its daily limit reached) where the NZB would be. Its start tells which.
+  if (/xml/i.test(headerValue(response.headers, 'content-type') ?? '')) {
+    const finalUrl = current.toString()
+    const headers = requestHeaders(current, browser)
+    const start = await sniffXml(finalUrl, PROBE_TIMEOUT_MS, headers)
+    const refusal = indexerError(start)
+    if (refusal) throw new Error(refusal)
+    if (/<(?:[\w-]+:)?nzb\b/i.test(start)) {
+      const nzbFile = await downloadNzbFile(finalUrl, PROBE_TIMEOUT_MS, headers)
+      return describeNzb(nzbFile, finalUrl, suggestedFileName)
+    }
+  }
+
   const contentRange = headerValue(response.headers, 'content-range')
   // A server that supports range requests must answer our range GET with 206 Partial Content.
   // If it returned 200 OK, it ignored the Range header and sent the whole file — even if its headers
@@ -180,7 +220,7 @@ export async function probeUrl(rawUrl: string, browser?: BrowserContext): Promis
     finalUrl: current.toString(),
     supportsRanges,
     totalBytes,
-    suggestedFileName: fileNameFromHeaders(response.headers, current),
+    suggestedFileName,
     contentType: headerValue(response.headers, 'content-type') ?? null,
     etag: headerValue(response.headers, 'etag') ?? null,
     lastModified: headerValue(response.headers, 'last-modified') ?? null

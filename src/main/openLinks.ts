@@ -5,8 +5,8 @@ import { app, type BrowserWindow } from 'electron'
 import { IpcChannels } from '../shared/ipc-channels'
 import type { BrowserContext, PendingLink } from '../shared/types'
 
-// Links the OS hands Plexo (a magnet link clicked in a browser, a .torrent opened from the file
-// manager) or the browser extension does. They're never started on their own: the user still sees
+// Links the OS hands Plexo (a magnet link clicked in a browser, a .torrent or .nzb opened from the
+// file manager) or the browser extension does. They're never started on their own: the user still sees
 // what the link is and presses Start.
 
 /** The browser's sign-in stays in main: the window never sees it. */
@@ -18,10 +18,11 @@ export interface Offer extends Omit<PendingLink, 'id'> {
 // already dropped its copy, and the window's own list is lost when the window closes or reloads.
 const links = new Map<string, Offer>()
 
-/** A magnet link, or the path of a .torrent file that exists; anything else isn't taken. */
+/** A magnet link, or the path of a .torrent or .nzb file that exists; anything else isn't
+ * taken. */
 export function acceptedLink(candidate: string): string | null {
   if (/^magnet:\?/i.test(candidate)) return candidate
-  if (!isAbsolute(candidate) || !/\.torrent$/i.test(candidate)) return null
+  if (!isAbsolute(candidate) || !/\.(torrent|nzb)$/i.test(candidate)) return null
   try {
     return statSync(candidate).isFile() ? candidate : null
   } catch {

@@ -3,6 +3,7 @@ import { Folder } from 'lucide-react'
 import { useState } from 'react'
 import { DetailHeader } from '../components/DetailHeader'
 import { TruncatedText } from '../components/TruncatedText'
+import { UsenetServerButton } from '../components/UsenetServerDialog'
 import {
   describeError,
   fileExtensionBadge,
@@ -101,6 +102,14 @@ export function ErrorScreen({ download }: { download: DownloadState }): React.JS
               {description}
             </div>
           </div>
+
+          {/* What an NZB download most often fails on is the server's settings: they open here. */}
+          {download.kind === 'nzb' && !cancelled && (
+            <div className="flex items-center gap-2 font-sans text-[12px] text-[var(--text-secondary)]">
+              Usenet server
+              <UsenetServerButton host={download.server} />
+            </div>
+          )}
 
           {/* File capsule */}
           <div className="flex w-full items-center gap-[11px] rounded-[9px] border-[0.5px] border-border bg-background p-[10px_12px] text-left">

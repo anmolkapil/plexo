@@ -17,7 +17,8 @@ export function useOpenedLinks(): void {
 const isMac = window.plexo.platform === 'darwin'
 
 /** The ways into New download from anywhere in the window, as download managers have them:
- * pasting a link (outside a text field), ⌘N / Ctrl+N, and dropping a link or a .torrent. */
+ * pasting a link (outside a text field), ⌘N / Ctrl+N, and dropping a link, a .torrent or an
+ * .nzb. */
 export function useNewDownloadShortcuts(): void {
   const openNewDownload = useAppStore((store) => store.openNewDownload)
 
@@ -44,7 +45,7 @@ export function useNewDownloadShortcuts(): void {
       event.preventDefault()
       const file = event.dataTransfer?.files[0]
       const link = file
-        ? /\.torrent$/i.test(file.name)
+        ? /\.(torrent|nzb)$/i.test(file.name)
           ? window.plexo.pathForFile(file)
           : null
         : acceptedLink(event.dataTransfer?.getData('text') ?? '')
