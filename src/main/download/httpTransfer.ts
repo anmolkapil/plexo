@@ -20,7 +20,13 @@ import {
 import { downloadChunk, fetchRange, HttpStatusError, RemoteChangedError } from './chunkDownloader'
 import { compareVersion, type FileVersion } from './fileVersion'
 import { interleave, MAX_STREAMS_PER_NETWORK, startingStreams } from './plan'
-import { pickWork, type SchedulerPolicy, type Work } from './scheduler'
+import {
+  pickWork,
+  type NetworkLoad,
+  type SchedulerPolicy,
+  type Segment,
+  type Work
+} from './scheduler'
 import {
   delay,
   recomputeAggregates,
@@ -49,6 +55,8 @@ interface Attempt {
   networkId: string
   /** Where the request begins, as an offset into the block. Null until it is known. */
   startOffset: number | null
+  /** For a split (see scheduler.ts): where in the block it was told to start. */
+  splitAt?: number
   /** Bytes the destination writer has accepted; safe to resume from this prefix. */
   received: number
   /** Bytes the network has delivered, independently of disk backpressure. */
@@ -155,7 +163,29 @@ const MAX_REFRESHES_PER_BLOCK = 2
 const SCHEDULER_POLICY: SchedulerPolicy = {
   hedgeAfterMs: testKnobs.hedgeAfterMs,
   maxHedgesPerBlock: 2,
-  startupMs: 1000
+  startupMs: 1000,
+  minSplitBytes: 256 * 1024
+}
+
+// Whether a network has room to spare, before the scheduler splits a block (see hasSpare there):
+// what it received over about the last second against its peak. The peak is the best its speed (a
+// few seconds' average, so a burst doesn't count) has read, sliding back by half over a minute so
+// a network that got slower for good isn't held to what it once did. The last second rather than
+// the speed's few: when streams free up on a network that is full, the others take up their share
+// at once and a second shows it; on one that isn't, a second shows the drop, a few seconds sooner.
+const LOAD_WINDOW_MS = 1000
+const PEAK_HALF_LIFE_MS = 60_000
+
+/** How a network is doing, for splitting (see LOAD_WINDOW_MS). */
+interface NetworkPace {
+  peakBytesPerSec: number
+  /** What it had received in all at each tick, over the last LOAD_WINDOW_MS and a little. */
+  readings: { time: number; received: number }[]
+}
+
+/** Bytes a split fetched ahead of where its block has got to, and the network they came from. */
+interface AheadSegment extends Segment {
+  networkId: string
 }
 
 /** Whether the file can be fetched in parts. Otherwise one request has to carry all of it: one
@@ -299,9 +329,16 @@ export class HttpTransfer implements Transfer {
   private attempts = new Map<number, Attempt[]>()
   /** Hedges started per block index, capped at SCHEDULER_POLICY.maxHedgesPerBlock. */
   private hedgesByBlock = new Map<number, number>()
+  /** By block index, what splits have written ahead of the block's frontier. Counted only once
+   * the frontier reaches them, so they are never saved as progress: a pause or a crash only means
+   * fetching them again. Forgotten on reset. */
+  private aheadByBlock = new Map<number, AheadSegment[]>()
   /** By network id: everything its streams have received, and when it last showed it was alive —
    * received something, or came into use. */
   private traffic = new Map<string, { received: number; aliveAt: number }>()
+  /** By network id: how it is doing, for splitting (see samplePaces). Forgotten on reset: a new
+   * run measures afresh. */
+  private paces = new Map<string, NetworkPace>()
   /** By network id: until when the server asked (Retry-After) not to be sent new requests over
    * it. */
   private holdUntil = new Map<string, number>()
@@ -380,6 +417,7 @@ export class HttpTransfer implements Transfer {
   }
 
   tick(now: number): void {
+    this.samplePaces(now)
     this.refreshStuckConnections(now)
     this.host.reconcile()
     // Taken with or without Auto: it also judges the disk, which the user is told about either way.
@@ -390,6 +428,35 @@ export class HttpTransfer implements Transfer {
       self.refused = false
       self.served = false
     }
+  }
+
+  /** Notes what each network has received as of this tick, and brings its peak up to its speed
+   * after letting it slide. */
+  private samplePaces(now: number): void {
+    for (const network of this.runtime.state.networks) {
+      const pace = this.paces.get(network.id) ?? { peakBytesPerSec: 0, readings: [] }
+      const { readings } = pace
+      const last = readings.at(-1)
+      const slid = last ? 0.5 ** ((now - last.time) / PEAK_HALF_LIFE_MS) : 0
+      pace.peakBytesPerSec = Math.max(pace.peakBytesPerSec * slid, network.speedBytesPerSec)
+      readings.push({ time: now, received: this.trafficOf(network.id).received })
+      while (readings.length > 2 && readings[1].time <= now - LOAD_WINDOW_MS) readings.shift()
+      this.paces.set(network.id, pace)
+    }
+  }
+
+  /** Each network's rate over about the last second, and its peak, for the scheduler. */
+  private networkLoads(): Map<string, NetworkLoad> {
+    const loads = new Map<string, NetworkLoad>()
+    for (const [id, { peakBytesPerSec, readings }] of this.paces) {
+      const first = readings[0]
+      const last = readings.at(-1)!
+      // Under a full window, it hasn't been watched long enough to tell.
+      if (last.time - first.time < LOAD_WINDOW_MS) continue
+      const speedBytesPerSec = ((last.received - first.received) / (last.time - first.time)) * 1000
+      loads.set(id, { speedBytesPerSec, peakBytesPerSec })
+    }
+    return loads
   }
 
   /** Looks at whether the disk is what holds the download back, and tells the user: as soon as
@@ -418,6 +485,8 @@ export class HttpTransfer implements Transfer {
 
   reset(): void {
     this.avoidNetworkByBlock.clear()
+    this.aheadByBlock.clear()
+    this.paces.clear()
     this.reconciled.clear()
     this.disk.reset()
   }
@@ -655,8 +724,10 @@ export class HttpTransfer implements Transfer {
       block.status = 'downloading'
       block.interfaceId = chunk.interfaceId
       this.avoidNetworkByBlock.delete(block.index)
-    } else {
+    } else if (work.startOffset === undefined) {
       this.hedgesByBlock.set(block.index, (this.hedgesByBlock.get(block.index) ?? 0) + 1)
+    } else {
+      attempt.splitAt = work.startOffset
     }
     const inFlight = this.attempts.get(block.index)
     if (inFlight) inFlight.push(attempt)
@@ -700,7 +771,7 @@ export class HttpTransfer implements Transfer {
           recomputeAggregates(this.runtime.state, this.runtime.blocks)
         }
       } else {
-        attempt.startOffset = block.bytesDownloaded
+        attempt.startOffset = Math.max(attempt.splitAt ?? 0, block.bytesDownloaded)
       }
 
       const length = block.rangeEnd === null ? null : block.rangeEnd - block.rangeStart + 1
@@ -771,6 +842,8 @@ export class HttpTransfer implements Transfer {
   }
 
   private onAttemptProgress(chunk: HttpStreamState, attempt: Attempt): void {
+    // A split's bytes count once the block's frontier reaches where it started.
+    if ((attempt.startOffset ?? 0) > attempt.block.bytesDownloaded) return
     // Only what gets the block further than it already was counts as progress: a racing attempt
     // re-fetches bytes the other already has.
     const gained = advanceBlock(attempt.block, attempt.networkId, this.attemptPosition(attempt))
@@ -782,7 +855,53 @@ export class HttpTransfer implements Transfer {
     // callers of recomputeAggregates are rare enough to afford the full pass, and each one
     // re-derives the true total, so any drift here cannot accumulate.
     this.runtime.state.bytesDownloaded += gained
+    if (
+      gained > 0 &&
+      (this.aheadByBlock.has(attempt.block.index) || this.hasSplit(attempt.block))
+    ) {
+      this.joinAhead(attempt.block)
+    }
     this.host.scheduleUpdate()
+  }
+
+  private hasSplit(block: HttpBlockState): boolean {
+    return (this.attempts.get(block.index) ?? []).some((other) => other.splitAt !== undefined)
+  }
+
+  /** Moves the block's frontier over whatever splits have fetched from where it now is, and
+   * finishes the block if that takes it to the end: whoever is still fetching has lost. */
+  private joinAhead(block: HttpBlockState): void {
+    let joined = false
+    for (let moved = true; moved;) {
+      moved = false
+      for (const other of this.attempts.get(block.index) ?? []) {
+        if (other.startOffset === null || other.startOffset > block.bytesDownloaded) continue
+        if (advanceBlock(block, other.networkId, this.attemptPosition(other)) > 0) moved = true
+      }
+      for (const segment of this.aheadByBlock.get(block.index) ?? []) {
+        if (segment.start > block.bytesDownloaded) continue
+        if (advanceBlock(block, segment.networkId, segment.end) > 0) moved = true
+      }
+      joined ||= moved
+    }
+    if (!joined) return
+    recomputeAggregates(this.runtime.state, this.runtime.blocks)
+    const length = block.rangeEnd === null ? Infinity : block.rangeEnd - block.rangeStart + 1
+    if (block.bytesDownloaded < length || block.status === 'completed') return
+    block.status = 'completed'
+    this.aheadByBlock.delete(block.index)
+    this.loseRivals(block)
+  }
+
+  /** Remembers what a split wrote ahead of its block's frontier, up to `end`. */
+  private keepAhead(attempt: Attempt, end: number): void {
+    const { block } = attempt
+    const start = attempt.startOffset
+    if (start === null || start <= block.bytesDownloaded || end <= start) return
+    if (block.status === 'completed') return
+    const segments = this.aheadByBlock.get(block.index) ?? []
+    segments.push({ start, end, networkId: attempt.networkId })
+    this.aheadByBlock.set(block.index, segments)
   }
 
   /** Stops every attempt still fetching a block that is done. Their streams show as free at
@@ -839,6 +958,18 @@ export class HttpTransfer implements Transfer {
       this.letGo(chunk, self, attempt, false)
       return 'continue'
     }
+    // A split that reached the end of the block before the block's frontier reached it: its part
+    // waits there to be joined (see joinAhead), and the stream is free for more.
+    if (block.rangeEnd !== null && (attempt.startOffset ?? 0) > block.bytesDownloaded) {
+      this.keepAhead(attempt, block.rangeEnd - block.rangeStart + 1)
+      self.lastBlockSpeed =
+        (attempt.networkReceived /
+          Math.max(1, (attempt.lastNetworkAt || Date.now()) - attempt.startedAt)) *
+        1000
+      this.endAttempt(self, attempt)
+      this.goIdle(chunk)
+      return 'continue'
+    }
 
     this.endAttempt(self, attempt)
     block.status = 'completed'
@@ -855,6 +986,7 @@ export class HttpTransfer implements Transfer {
     }
     self.failures = 0
     self.strikes = 0
+    this.aheadByBlock.delete(block.index)
     // Whoever is still racing for the block has lost.
     this.loseRivals(block)
     recomputeAggregates(this.runtime.state, this.runtime.blocks)
@@ -1023,6 +1155,8 @@ export class HttpTransfer implements Transfer {
   ): void {
     this.endAttempt(self, attempt)
     const { block } = attempt
+    // What a split got before it stopped stays usable.
+    this.keepAhead(attempt, this.attemptPosition(attempt))
     // A block another attempt has finished stays finished.
     if (attempt.kind === 'primary' && block.status === 'downloading') block.status = 'pending'
     if (deliveredNothing) this.avoidNetworkByBlock.set(block.index, attempt.networkId)
@@ -1153,6 +1287,8 @@ export class HttpTransfer implements Transfer {
             attempts: this.attempts,
             avoid: this.avoidNetworkByBlock,
             hedgesUsed: this.hedgesByBlock,
+            segments: this.aheadByBlock,
+            networks: this.networkLoads(),
             diskBehind: this.disk.reading === 'behind'
           },
           {
