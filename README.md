@@ -39,7 +39,7 @@
   <a href="https://trendshift.io/repositories/240800?utm_source=trendshift-badge&amp;utm_medium=badge&amp;utm_campaign=badge-trendshift-240800" target="_blank" rel="noopener noreferrer"><img src="https://trendshift.io/api/badge/trendshift/repositories/240800/weekly?language=TypeScript" alt="anmolkapil%2Fplexo | Trendshift" width="250" height="55"/></a>
 </p>
 
-https://github.com/user-attachments/assets/e57728f4-fb63-441f-839c-174eef954b17
+<https://github.com/user-attachments/assets/e57728f4-fb63-441f-839c-174eef954b17>
 
 ## Features
 
@@ -60,6 +60,11 @@ https://github.com/user-attachments/assets/e57728f4-fb63-441f-839c-174eef954b17
 - Download files using your browser’s authenticated session
 - Exclude websites and skip small files
 
+- **Speed limits**: a total limit for all downloads, a per-network limit, and **Slow mode**, a one-click lower limit (2 MB/s by default) for when you're on a call
+- **Data limits**: a daily, weekly, or monthly allowance per network. Plexo stops using a network once its allowance is used up.
+- **Speed comparison**: benchmark individual connections side-by-side with combined multi-interface downloads to measure real-world throughput gains and verify multi-network aggregation
+- **Named networks**: Plexo shows adapters by their real names (Wi-Fi, Ethernet, iPhone) instead of `en0`. You can rename and recolor them.
+- **Live view**: throughput charts, time left, per-stream stats, and a grid of every block colored by the network that fetched it
 ### Download management
 
 - Download direct links, magnet links and `.torrent` files
@@ -77,6 +82,25 @@ https://github.com/user-attachments/assets/e57728f4-fb63-441f-839c-174eef954b17
 - Set daily, weekly or monthly data allowances
 - Schedule downloads by time and day
 
+- **Windows turns Wi-Fi off when Ethernet or tethering is plugged in**:
+  - **Windows Pro & Enterprise**: open the Group Policy Editor (`gpedit.msc`), go to _Computer Configuration_ › _Administrative Templates_ › _Network_ › _Windows Connection Manager_, and set **Minimize the number of simultaneous connections to the Internet or a Windows domain** to **Disabled**.
+  - **Windows Home** (which does not have `gpedit.msc`): open an elevated Command Prompt or PowerShell (Run as Administrator) and run:
+
+    ```cmd
+    reg add "HKLM\SOFTWARE\Policies\Microsoft\Windows\WcmSvc\GroupPolicy" /v fMinimizeConnections /t REG_DWORD /d 0 /f
+    ```
+
+    Restart your computer or reconnect your network adapters for the change to take effect.
+
+  - You can check your system's configuration at any time with Plexo's built-in **Network Doctor**, opened from the Networks menu footer on Windows.
+- **Windows Network Doctor (Read-Only Diagnostics)**:
+  Plexo includes a built-in diagnostic tool on Windows to help troubleshoot common multi-network configuration issues. It is strictly read-only and never modifies system settings, adapter configurations, or registry values automatically. It inspects:
+  - **Connection policy (`fMinimizeConnections`)**: Checks whether Windows Connection Manager is configured to drop secondary connections when tethering is plugged in. On domain-joined or enterprise-managed devices, Network Doctor surfaces an informational notice since group policies may be centrally administered.
+  - **Default route ownership and metrics**: Evaluates combined route metrics (`RouteMetric + InterfaceMetric`) to determine which connection carries general unpinned internet traffic, highlighting when a phone tether takes precedence over Wi-Fi so users can manage cellular data consumption.
+  - **IPv4 subnet collisions**: Detects when multiple active network interfaces reside on identical IPv4 subnets (e.g., conflicting `192.168.1.0/24` ranges between a router and phone hotspot).
+  - **APIPA self-assigned IPs and missing gateways**: Flags unreachable `169.254.x.x` configurations or interfaces lacking default internet routes.
+  - **Virtual and VPN adapters**: Identifies Hyper-V, WSL, and VPN tunnel adapters that share physical hardware rather than providing independent internet uplinks.
+- **An Android phone over USB on macOS**: macOS has no driver for Android's USB tethering. Install TetherKit, as described in [Use an Android phone over USB on macOS](#use-an-android-phone-over-usb-on-macos).
 ## Troubleshooting
 
 If your problem isn't covered here, [open an issue](https://github.com/anmolkapil/plexo/issues).
@@ -105,6 +129,41 @@ VPN, virtual, and isolated adapters show up in Plexo too, so check each network'
 
 Plexo can use any connection your operating system shows as a network adapter.
 
+Two buttons manage a network's limits, and both ask you to confirm:
+
+- **Reset data usage…** sets the network's usage for the current period back to zero, so a network that hit its allowance can be used again
+- **Remove limits…** clears the network's speed and data limits and keeps its recorded usage
+
+## Schedule overnight downloads
+
+Open **Networks → Speed & data limits… → All downloads** and find **Download schedule**. Enable the schedule, choose start and stop times in your computer’s local time, pick repeat days, and optionally set an end date. For a free-data window from midnight to 7 AM, use **00:00** and **07:00**.
+
+Outside those hours, new downloads and downloads you resume wait in the queue. At the stop time, active downloads and torrent uploads stop, keeping progress for the next window. Downloads you pause yourself stay paused. Scheduled work survives restarting Plexo; when the end date passes, it stays waiting until you change or disable the schedule. Disabling the schedule lets the queue start immediately.
+
+For a window crossing midnight, repeat days and the end date refer to the day it starts. Keep Plexo running and the computer awake for the scheduled start; Plexo keeps the computer awake while downloading, but does not wake a sleeping computer. Checking links and fetching magnet metadata when adding downloads can still use data outside the scheduled hours. The schedule controls Plexo’s transfers, not other apps or Plexo’s update check.
+
+## Compare network download speeds
+
+Open **Compare speeds…** from the Networks menu footer to benchmark your connections.
+
+Plexo tests each selected network individually, then benchmarks them running together using an identical total stream count for a fair comparison:
+
+- **Warm-up phase**: ignores initial TCP slow-start and connection establishment overhead to capture accurate steady-state throughput.
+- **In-memory streaming**: fetches test data from reliable high-speed endpoints (e.g. Cloudflare speed test) directly into memory without writing temporary files to disk.
+- **Multiplier & breakdown**: shows aggregate speedup (e.g. `1.85×`), each network's measured individual throughput, and its percentage share when working together in combined mode.
+- **Diagnostics**: detects if combined performance matches, falls short of, or fails across interfaces, helping you verify that your adapters are routing through distinct uplinks.
+
+## How Plexo combines networks
+
+Your operating system sends all of a computer's traffic through one default connection and leaves the others idle. Plexo opens its own connections on each network you select, and downloads different parts of the file on each.
+
+```text
+                    ┌── Wi-Fi (192.168.1.40) ──────┐
+                    │                              │
+File ──→ Split ─────┼── Ethernet (10.0.0.12) ──────┼──→ Assembled file
+                    │                              │
+                    └── USB tether (172.20.10.3) ──┘
+```
 - **iPhone on macOS**: in **System Settings › Network**, open **iPhone USB** and turn off **Disable unless needed**
 - **Android on macOS**: install TetherKit, as described below
 - **Phone on Windows**: install your phone maker's driver if the phone doesn't appear in Network Settings

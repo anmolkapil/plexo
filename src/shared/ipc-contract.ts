@@ -7,7 +7,11 @@ import type {
   ProbeResult,
   StartDownloadRequest,
   TorrentFileEntry,
-  UpdateState
+  UpdateState,
+  NetworkDoctorReport,
+  NetworkDoctorFix,
+  NetworkDoctorApplyFixResult,
+  SpeedComparisonReport
 } from './types'
 
 /** The request/response half of the IPC surface (every IpcChannels entry except the
@@ -66,4 +70,12 @@ export interface IpcContract {
   resumeFromLink: { args: [linkId: string, downloadId: string]; result: void }
   /** Forgets the sign-in of a link that won't be started. */
   dismissLink: { args: [id: string]; result: void }
+  /** Windows Network Doctor diagnostic report. */
+  getNetworkDoctorReport: { args: [force?: boolean]; result: NetworkDoctorReport }
+  /** Apply automated fix for a detected Windows Network Doctor issue with consent. */
+  applyNetworkDoctorFix: { args: [fix: NetworkDoctorFix]; result: NetworkDoctorApplyFixResult }
+  /** Compare individual and combined network download speeds. */
+  startSpeedComparison: { args: [interfaceIds?: string[]]; result: SpeedComparisonReport }
+  /** Cancel an in-progress speed comparison. */
+  cancelSpeedComparison: { args: []; result: void }
 }

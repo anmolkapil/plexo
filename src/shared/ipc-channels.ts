@@ -34,5 +34,10 @@ export const IpcChannels = {
   dismissLink: 'app:dismiss-link',
   updateState: 'update:state',
   updateStateChanged: 'update:state-changed',
-  showUpdateMenu: 'update:show-menu'
+  showUpdateMenu: 'update:show-menu',
+  getNetworkDoctorReport: 'network:doctor-report',
+  applyNetworkDoctorFix: 'network:apply-doctor-fix',
+  startSpeedComparison: 'speed:start-comparison',
+  cancelSpeedComparison: 'speed:cancel-comparison',
+  speedComparisonProgress: 'speed:comparison-progress'
 } as const

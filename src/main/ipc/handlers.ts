@@ -24,6 +24,8 @@ import { probeUrl } from '../download/probe'
 import { deviceBindingSupported } from '../network/deviceBinding'
 import { pendingLink, pendingLinks, releaseLink } from '../openLinks'
 import { NetworkMonitor } from '../network/interfaces'
+import { applyWindowsDoctorFix, getWindowsDoctorReport } from '../network/windowsDoctor'
+import { SpeedComparisonManager } from '../network/speedComparison'
 import { loadSettings, saveSettings } from '../settings'
 import { showUpdateMenu, updateState } from '../updater'
 
@@ -134,7 +136,8 @@ export function registerIpcHandlers(getWindow: () => BrowserWindow | null): Down
         slowMode: settings.slowMode ?? false,
         slowModeSpeed: settings.slowModeSpeed ?? DEFAULT_SLOW_MODE_SPEED,
         speedUnit: settings.speedUnit ?? 'bytes',
-        destinationDir: destinationExists ? destinationDir : undefined
+        destinationDir: destinationExists ? destinationDir : undefined,
+        isWindows: process.platform === 'win32'
       } satisfies InitialState
     } catch (error) {
       console.error('[plexo] failed to read initial state', error)
@@ -147,7 +150,8 @@ export function registerIpcHandlers(getWindow: () => BrowserWindow | null): Down
         downloadsAtOnce: DOWNLOADS_AT_ONCE.default,
         slowMode: false,
         slowModeSpeed: DEFAULT_SLOW_MODE_SPEED,
-        speedUnit: 'bytes'
+        speedUnit: 'bytes',
+        isWindows: process.platform === 'win32'
       } satisfies InitialState
     }
   })
@@ -246,6 +250,27 @@ export function registerIpcHandlers(getWindow: () => BrowserWindow | null): Down
 
   handle('updateState', () => updateState())
   handle('showUpdateMenu', () => showUpdateMenu())
+
+  handle('getNetworkDoctorReport', async (_event, force) =>
+    getWindowsDoctorReport(networks.current ?? [], force)
+  )
+
+  handle('applyNetworkDoctorFix', async (_event, fix) => applyWindowsDoctorFix(fix))
+
+  const speedComparisonManager = new SpeedComparisonManager()
+
+  handle('startSpeedComparison', async (_event, interfaceIds) =>
+    speedComparisonManager.start(networks.current ?? [], interfaceIds, (progress) => {
+      const window = getWindow()
+      if (window && !window.isDestroyed()) {
+        window.webContents.send(IpcChannels.speedComparisonProgress, progress)
+      }
+    })
+  )
+
+  handle('cancelSpeedComparison', async () => {
+    speedComparisonManager.cancel()
+  })
 
   return manager
 }

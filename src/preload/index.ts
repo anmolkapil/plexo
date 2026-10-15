@@ -6,7 +6,9 @@ import type {
   DownloadUpdate,
   InitialState,
   NetworkInterfaceInfo,
-  UpdateState
+  UpdateState,
+  SpeedComparisonProgress,
+  NetworkDoctorFix
 } from '../shared/types'
 
 /** Typed wrapper around ipcRenderer.invoke — the channel name picks its args/result shape out of
@@ -61,6 +63,10 @@ const plexoApi = {
   resumeFromLink: (linkId: string, downloadId: string) =>
     invoke('resumeFromLink', linkId, downloadId),
   dismissLink: (id: string) => invoke('dismissLink', id),
+  getNetworkDoctorReport: (force?: boolean) => invoke('getNetworkDoctorReport', force),
+  applyNetworkDoctorFix: (fix: NetworkDoctorFix) => invoke('applyNetworkDoctorFix', fix),
+  startSpeedComparison: (interfaceIds?: string[]) => invoke('startSpeedComparison', interfaceIds),
+  cancelSpeedComparison: () => invoke('cancelSpeedComparison'),
 
   /** pendingLinks() has the new link. */
   onLinkReceived: (callback: () => void): (() => void) => {
@@ -93,6 +99,15 @@ const plexoApi = {
       callback(networks)
     ipcRenderer.on(IpcChannels.networksChanged, listener)
     return () => ipcRenderer.removeListener(IpcChannels.networksChanged, listener)
+  },
+
+  onSpeedComparisonProgress: (
+    callback: (progress: SpeedComparisonProgress) => void
+  ): (() => void) => {
+    const listener = (_event: IpcRendererEvent, progress: SpeedComparisonProgress): void =>
+      callback(progress)
+    ipcRenderer.on(IpcChannels.speedComparisonProgress, listener)
+    return () => ipcRenderer.removeListener(IpcChannels.speedComparisonProgress, listener)
   }
 }
 

@@ -2,7 +2,7 @@ import { expect, test } from '@playwright/test'
 import { createServer, type IncomingMessage } from 'node:http'
 import type { AddressInfo } from 'node:net'
 import type { NetworkInterfaceInfo } from '../src/shared/types'
-import { StreamConnection } from '../src/main/network/routes'
+import { StreamConnection, testRoutes } from '../src/main/network/routes'
 
 const iface: NetworkInterfaceInfo = {
   id: 'wifi',
@@ -141,6 +141,46 @@ test('a network that comes back with a new address is reached at that one @smoke
     const url = new URL(`http://127.0.0.1:${(server.address() as AddressInfo).port}/`)
     await expect(connection.request(url, {})).rejects.toThrow(/not connected/)
     current = loopback
+    const { res } = await connection.request(url, {})
+    expect(await body(res)).toBe('ok')
+  } finally {
+    connection.close()
+    await new Promise<void>((resolve) => server.close(() => resolve()))
+  }
+})
+
+test('a route that comes out of the wrong address is not used for the download', async () => {
+  // The download asks to send from the network's own address. On a platform that ignored that and
+  // answered out of the default route instead, the connection succeeds but the traffic goes out
+  // the network the user never picked. It must be refused, so the download never runs there.
+  // The swap is what the platform's routing table does; a test cannot arrange it on the host.
+  testRoutes.actualAddress(() => '192.0.2.9')
+  const server = createServer((_req, res) => res.end('ok'))
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve))
+  const connection = new StreamConnection(
+    () => ({ ...loopback, addresses: [{ address: '127.0.0.1', family: 4 }] }),
+    { timeoutMs: 3000 }
+  )
+  try {
+    const url = new URL(`http://127.0.0.1:${(server.address() as AddressInfo).port}/`)
+    const failed = await connection.request(url, {}).then(
+      (started) => (started.res.destroy(), null),
+      (error: unknown) => error
+    )
+    expect(failed).toBeInstanceOf(Error)
+  } finally {
+    connection.close()
+    testRoutes.reset()
+    await new Promise<void>((resolve) => server.close(() => resolve()))
+  }
+})
+
+test('a route that comes out of the address it was asked for is used', async () => {
+  const server = createServer((_req, res) => res.end('ok'))
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve))
+  const connection = new StreamConnection(() => loopback, { timeoutMs: 3000 })
+  try {
+    const url = new URL(`http://127.0.0.1:${(server.address() as AddressInfo).port}/`)
     const { res } = await connection.request(url, {})
     expect(await body(res)).toBe('ok')
   } finally {

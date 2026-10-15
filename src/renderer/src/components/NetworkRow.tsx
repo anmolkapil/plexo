@@ -153,8 +153,7 @@ function HttpStreamRows({
                         bg={visual.bg}
                         border={visual.border}
                         text={visual.text}
-                        tabIndex={0}
-                        className="h-[13px] rounded-[3px] px-[5px] py-px text-[9px] font-semibold tracking-[0.04em] outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
+                        className="h-[13px] rounded-[3px] px-[5px] py-px text-[9px] font-semibold tracking-[0.04em]"
                       >
                         BACKUP
                       </ColorBadge>

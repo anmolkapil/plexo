@@ -128,6 +128,52 @@ const ATTEMPT_DELAY_MS = 250
 const lastGoodRoute = new Map<string, string>()
 const routeKey = (route: NetworkRoute): string => `${route.localAddress} ${route.remoteAddress}`
 
+/**
+ * Windows routes a packet by its routing table, so asking to send from one interface's address
+ * (Node's `localAddress`) may still leave out the default route — the download then runs on the
+ * network that was never chosen. `IP_UNICAST_IF` would pin the interface, but some stacks refuse
+ * it and Node can't set socket options itself. So the misroute is checked instead: a connection
+ * that came out of another address is not what was asked for, and is given up on as if it had
+ * failed.
+ *
+ * Where a connection actually came out of, read from the socket itself. A real socket reports
+ * its own source, but the misroute is a property of the platform's routing table, which a test
+ * cannot arrange, so the suite can stand something else in its place.
+ */
+type ActualAddress = (tcp: Socket) => string | undefined
+const realAddress: ActualAddress = (tcp) => tcp.localAddress
+let actualAddress: ActualAddress = realAddress
+
+function routeMisrouted(route: NetworkRoute, tcp: Socket): boolean {
+  const actual = actualAddress(tcp)
+  if (!actual) return false
+  return actual.toLowerCase() !== route.localAddress.toLowerCase()
+}
+
+export const testRoutes = {
+  /** Makes a connection report a source address other than the one it was asked for. */
+  actualAddress(value: ActualAddress): void {
+    actualAddress = value
+  },
+  /** Back to reading the socket's own source. */
+  reset(): void {
+    actualAddress = realAddress
+  }
+}
+
+/**
+ * What a connection on this network is actually leaving from, for its remote host. Kept alive
+ * connections are pooled, so the check on a freshly opened socket is recorded here for the next
+ * request instead of being paid for again: it is read before it is set, which is what keeps a
+ * route that has never connected from being trusted.
+ */
+const sourceAddress = new Map<string, string>()
+const sourceKey = (ifaceId: string, remote: string): string => `${ifaceId} ${remote}`
+
+function recordSource(ifaceId: string, remote: string, address: string): void {
+  if (address) sourceAddress.set(sourceKey(ifaceId, remote), address)
+}
+
 /** The route that last worked first, then the rest alternating between address families, as
  * RFC 8305 §4 orders them. */
 function attemptOrder(routes: NetworkRoute[], preferred: string | undefined): NetworkRoute[] {
@@ -208,7 +254,22 @@ async function connectOnInterface(
       }
       const onConnected = (): void => {
         detach()
+        // It connected — but not, possibly, out of the interface it was asked for. Giving up on
+        // this route looks exactly like one that refused, so the next route gets its turn.
+        if (routeMisrouted(route, tcp)) {
+          socket.destroy()
+          tcp.destroy()
+          lastError = new Error(
+            `The network did not use its own address to reach ${route.remoteAddress}`
+          )
+          if (lastGoodRoute.get(memory) === routeKey(route)) lastGoodRoute.delete(memory)
+          sourceAddress.delete(sourceKey(iface.id, route.remoteAddress))
+          if (next < routes.length) launch()
+          else if (racing.size === 0) finish(lastError)
+          return
+        }
         lastGoodRoute.set(memory, routeKey(route))
+        recordSource(iface.id, route.remoteAddress, tcp.localAddress ?? '')
         finish(null, socket)
       }
       const onError = (error: Error): void => {
@@ -245,14 +306,20 @@ type Open = (
 
 type OnCreate = (err: Error | null, stream: Duplex) => void
 
-// Node's agents keep sockets alive and pool them; these only change how a new one is opened.
+/** What the request's agent needs to know about its own network. */
+interface RouteContext {
+  open: Open
+  /** The network this agent serves, by the id used to key the source address. */
+  interfaceId: () => string
+}
+
 class RoutedHttpAgent extends HttpAgent {
-  constructor(private readonly open: Open) {
+  constructor(private readonly context: RouteContext) {
     super({ keepAlive: true })
   }
 
   override createConnection(options: ConnectOptions, callback?: OnCreate): undefined {
-    this.open(options, null).then(
+    this.context.open(options, null).then(
       (socket) => callback?.(null, socket),
       (error: Error) => callback?.(error, undefined as never)
     )
@@ -261,7 +328,7 @@ class RoutedHttpAgent extends HttpAgent {
 }
 
 class RoutedHttpsAgent extends HttpsAgent {
-  constructor(private readonly open: Open) {
+  constructor(private readonly context: RouteContext) {
     super({ keepAlive: true })
   }
 
@@ -269,13 +336,15 @@ class RoutedHttpsAgent extends HttpsAgent {
     // The agent's own TLS setup, around our routed socket: it verifies the certificate against
     // the URL's host and caches the TLS session, so a reconnect resumes it instead of redoing
     // the full handshake.
-    this.open(
-      options,
-      (socket) => super.createConnection({ ...options, socket } as ClientRequestArgs) as Socket
-    ).then(
-      (socket) => callback?.(null, socket),
-      (error: Error) => callback?.(error, undefined as never)
-    )
+    this.context
+      .open(
+        options,
+        (socket) => super.createConnection({ ...options, socket } as ClientRequestArgs) as Socket
+      )
+      .then(
+        (socket) => callback?.(null, socket),
+        (error: Error) => callback?.(error, undefined as never)
+      )
     return undefined
   }
 }
@@ -306,7 +375,7 @@ export class StreamConnection {
 
   constructor(
     /** The network, or undefined while it isn't connected. */
-    network: () => NetworkInterfaceInfo | undefined,
+    private readonly network: () => NetworkInterfaceInfo | undefined,
     {
       timeoutMs,
       connectTimeoutMs = timeoutMs,
@@ -338,8 +407,9 @@ export class StreamConnection {
         resolveHost
       )
     }
-    this.http = new RoutedHttpAgent(open)
-    this.https = new RoutedHttpsAgent(open)
+    const context: RouteContext = { open, interfaceId: () => network()?.id ?? '' }
+    this.http = new RoutedHttpAgent(context)
+    this.https = new RoutedHttpsAgent(context)
   }
 
   request(
@@ -348,6 +418,11 @@ export class StreamConnection {
     signal?: AbortSignal
   ): Promise<ResponseStart> {
     return this.send(target, headers, signal, true)
+  }
+
+  /** The network this connection serves now, by the id used to key a source address. */
+  private interfaceId(): string {
+    return this.network()?.id ?? ''
   }
 
   /** Drops its sockets, in use or kept for reuse, so the next request opens a new one: they may
@@ -389,6 +464,17 @@ export class StreamConnection {
       const req = (secure ? httpsRequest : httpRequest)(options, (res) => {
         answered = true
         settle()
+        // A socket reused from the pool was opened before this request, so what it came out of
+        // was recorded then. If the network has since moved to another address, the download is
+        // on the wrong network and the request must not be answered on it.
+        const actual = req.socket?.localAddress
+        const remembered = sourceAddress.get(sourceKey(this.interfaceId(), targetHost(target)))
+        if (actual && remembered && actual.toLowerCase() !== remembered.toLowerCase()) {
+          settle()
+          res.destroy()
+          reject(new Error('The network did not use its own address to reach the server'))
+          return
+        }
         resolve({ req, res, sentAt })
       })
       const onAbort = (): void => void req.destroy(abortError())

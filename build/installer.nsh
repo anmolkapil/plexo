@@ -1,5 +1,16 @@
 # Custom NSIS hooks, picked up automatically by electron-builder from build/installer.nsh.
 
+# Configures Windows Connection Manager policy on install to allow multiple simultaneous connections
+# (fMinimizeConnections = 0), preventing Windows from dropping Wi-Fi when tethering or Ethernet is connected.
+!macro customInstall
+  ${if} ${RunningX64}
+  ${orIf} ${IsNativeARM64}
+    SetRegView 64
+  ${endif}
+  WriteRegDWORD HKLM "SOFTWARE\Policies\Microsoft\Windows\WcmSvc\GroupPolicy" "fMinimizeConnections" 0
+  SetRegView 32
+!macroend
+
 # Replaces electron-builder's default finish page (assistedInstaller.nsh) to add a
 # "Create a desktop shortcut" checkbox, checked by default. The install step has already created
 # the shortcut (createDesktopShortcut in electron-builder.yml), so the checkbox only decides whether

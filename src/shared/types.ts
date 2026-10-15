@@ -378,6 +378,98 @@ export interface InitialState {
   speedUnit: SpeedUnit
   /** The last folder picked, if it still exists — otherwise the renderer uses downloadsDir. */
   destinationDir?: string
+  isWindows?: boolean
+}
+
+export interface NetworkDoctorFix {
+  type: 'enableSimultaneousConnections' | 'setInterfaceMetric'
+  interfaceIndex?: number
+}
+
+export interface NetworkDoctorApplyFixResult {
+  success: boolean
+  error?: string
+}
+
+export interface NetworkDoctorIssue {
+  id:
+    | 'fMinimizeConnections'
+    | 'defaultRoute'
+    | 'subnetOverlap'
+    | 'apipa'
+    | 'noGateway'
+    | 'virtualAdapter'
+  severity: 'warning' | 'info'
+  title: string
+  detail: string
+  summary?: string
+  recommendation?: string
+  interfaceName?: string
+  interfaceIndex?: number
+  interfaceId?: string
+  fix?: {
+    action: 'system' | 'plexo'
+    type: 'enableSimultaneousConnections' | 'setInterfaceMetric' | 'disableInPlexo'
+    label: string
+    description: string
+    interfaceIndex?: number
+    interfaceId?: string
+  }
+}
+
+export interface NetworkDoctorReport {
+  timestamp: number
+  supported: boolean
+  partOfDomain?: boolean
+  defaultRouteOwner?: {
+    interfaceName: string
+    metric: number
+    nextHop?: string
+  }
+  issues: NetworkDoctorIssue[]
+}
+
+export interface InterfaceSpeedResult {
+  interfaceId: string
+  interfaceName: string
+  status: 'completed' | 'unreachable'
+  speedBytesPerSec: number
+  bytesUsed: number
+  error?: string
+}
+
+export interface CombinedSpeedResult {
+  speedBytesPerSec: number
+  bytesUsed: number
+  /** Contribution of each network during the combined measurement */
+  contributions: Record<string, { bytes: number; percent: number }>
+}
+
+export interface SpeedComparisonReport {
+  timestamp: number
+  individualResults: InterfaceSpeedResult[]
+  combinedResult?: CombinedSpeedResult
+  fastestIndividual?: {
+    interfaceId: string
+    interfaceName: string
+    speedBytesPerSec: number
+  }
+  speedupMultiplier?: number
+  speedupPercent?: number
+  totalBytesUsed: number
+  assessment: 'significant_gain' | 'moderate_gain' | 'single_network' | 'no_gain' | 'failed'
+  assessmentNote: string
+}
+
+export interface SpeedComparisonProgress {
+  stageIndex: number
+  totalStages: number
+  stageName: string
+  stageKind: 'individual' | 'combined'
+  phase: 'warming_up' | 'measuring'
+  percent: number
+  currentSpeedBytesPerSec: number
+  totalBytesUsedSoFar: number
 }
 
 interface StartDownloadRequestBase {

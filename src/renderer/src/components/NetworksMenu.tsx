@@ -6,6 +6,8 @@ import { useAppStore } from '../store/useAppStore'
 import { useFormatSpeed, useFormatSpeedLimit } from '../hooks/useFormatSpeed'
 import { formatDataUsage } from '../utils/format'
 import { NetworkEditPopover } from './NetworkEditPopover'
+import { NetworkDoctorDialog } from './NetworkDoctorDialog'
+import { SpeedComparisonDialog } from './SpeedComparisonDialog'
 import { Popover, PopoverContent, PopoverTrigger } from './ui/popover'
 import { Button } from './ui/button'
 import { TruncatedText } from './TruncatedText'
@@ -26,6 +28,8 @@ export function NetworksMenu({
   const downloads = useAppStore((store) => store.downloads)
   const networkVisual = useNetworkVisuals()
   const [open, setOpen] = useState(false)
+  const [doctorOpen, setDoctorOpen] = useState(false)
+  const [speedComparisonOpen, setSpeedComparisonOpen] = useState(false)
   const usage = useNetworkUsage(open)
 
   // Every running download's speed over each network, added up.
@@ -66,7 +70,7 @@ export function NetworksMenu({
         )}
         <ChevronDown className="size-3.5 text-muted-foreground" />
       </PopoverTrigger>
-      <PopoverContent align="end" className="w-[340px] gap-0 p-0">
+      <PopoverContent align="end" className="w-[390px] gap-0 p-0">
         <div className="border-b-[0.5px] border-border px-4 py-3 text-[14px] font-semibold">
           Networks
         </div>
@@ -154,17 +158,45 @@ export function NetworksMenu({
             </div>
           )
         })}
-        <button
-          type="button"
-          className="px-4 py-3 text-[13px] font-medium text-primary hover:underline"
-          onClick={() => {
-            setOpen(false)
-            onOpenLimits(null)
-          }}
-        >
-          Speed &amp; data limits
-        </button>
+        <div className="flex items-center justify-between gap-4 border-t border-border px-4 py-2.5">
+          <button
+            type="button"
+            className="text-[13px] font-medium text-primary hover:underline whitespace-nowrap shrink-0"
+            onClick={() => {
+              setOpen(false)
+              onOpenLimits(null)
+            }}
+          >
+            Speed &amp; data limits
+          </button>
+          <div className="flex items-center gap-3 shrink-0">
+            <button
+              type="button"
+              className="text-[13px] font-medium text-muted-foreground hover:text-foreground hover:underline whitespace-nowrap"
+              onClick={() => {
+                setOpen(false)
+                setSpeedComparisonOpen(true)
+              }}
+            >
+              Compare speeds
+            </button>
+            {window.plexo.initialState.isWindows && (
+              <button
+                type="button"
+                className="text-[13px] font-medium text-muted-foreground hover:text-foreground hover:underline whitespace-nowrap"
+                onClick={() => {
+                  setOpen(false)
+                  setDoctorOpen(true)
+                }}
+              >
+                Network Doctor
+              </button>
+            )}
+          </div>
+        </div>
       </PopoverContent>
+      <NetworkDoctorDialog open={doctorOpen} onOpenChange={setDoctorOpen} />
+      <SpeedComparisonDialog open={speedComparisonOpen} onOpenChange={setSpeedComparisonOpen} />
     </Popover>
   )
 }
