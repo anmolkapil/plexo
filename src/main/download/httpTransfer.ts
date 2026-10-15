@@ -785,6 +785,17 @@ export class HttpTransfer implements Transfer {
     this.host.scheduleUpdate()
   }
 
+  /** Stops every attempt still fetching a block that is done. Their streams show as free at
+   * once: their requests only end once the abort reaches them, and until then they would show
+   * holding a block that is no longer in flight. */
+  private loseRivals(block: HttpBlockState): void {
+    for (const rival of this.attempts.get(block.index) ?? []) {
+      this.abortAttempt(rival, 'lost')
+      const stream = this.runtime.state.streams.find((chunk) => chunk.id === rival.streamId)
+      if (stream) this.goIdle(stream)
+    }
+  }
+
   /** Applies what became of an attempt to the download. 'stop' ends the stream. */
   private async finishAttempt(
     chunk: HttpStreamState,
@@ -845,7 +856,7 @@ export class HttpTransfer implements Transfer {
     self.failures = 0
     self.strikes = 0
     // Whoever is still racing for the block has lost.
-    for (const rival of this.attempts.get(block.index) ?? []) this.abortAttempt(rival, 'lost')
+    this.loseRivals(block)
     recomputeAggregates(this.runtime.state, this.runtime.blocks)
     this.host.scheduleUpdate()
     return 'continue'
