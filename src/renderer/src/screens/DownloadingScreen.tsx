@@ -28,6 +28,7 @@ import {
   formatPercent,
   groupByNetwork,
   isFolder,
+  networkActive,
   networksInPlay,
   toDisplayPath,
   wantedBytes
@@ -224,7 +225,8 @@ export const DownloadingScreen = memo(function DownloadingScreen({
             networks={groups.map((group, index) => ({
               solid: visuals[index].solid,
               label: visuals[index].name,
-              speedBytesPerSec: isPaused ? 0 : group.speedBytesPerSec
+              speedBytesPerSec: isPaused ? 0 : group.speedBytesPerSec,
+              active: networkActive(group)
             }))}
             paused={isPaused}
           />

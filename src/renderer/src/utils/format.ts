@@ -244,6 +244,15 @@ export function networksInPlay<T extends DownloadNetwork>(networks: T[]): T[] {
   return networks.filter((network) => network.enabled || network.bytesDownloaded > 0)
 }
 
+/** Whether a network is carrying bytes right now: an HTTP stream fetching, or a torrent peer
+ * receiving. Read from connection status rather than speed, so every view of a download agrees
+ * on which networks are live even between speed samples. */
+export function networkActive(group: NetworkGroup): boolean {
+  return group.transfer === 'http'
+    ? group.streams.some((stream) => stream.status === 'downloading')
+    : group.peers.some((peer) => peer.status === 'receiving')
+}
+
 /** Shortens an absolute path under the user's home directory to a "~/..." form for display. */
 export function toDisplayPath(path: string, homeDir: string): string {
   const normalize = (value: string): string => {

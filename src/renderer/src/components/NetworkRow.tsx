@@ -2,7 +2,7 @@ import type { HttpBlockState, HttpStreamState, NetworkStatus, SpeedUnit } from '
 import { useState } from 'react'
 import { DANGER, type NetworkVisual } from '../theme'
 import type { HttpNetworkGroup, NetworkGroup, TorrentNetworkGroup } from '../utils/format'
-import { describeError, formatBytes, formatSpeedOfLimit } from '../utils/format'
+import { describeError, formatBytes, formatSpeedOfLimit, networkActive } from '../utils/format'
 import { useFormatSpeed } from '../hooks/useFormatSpeed'
 import { useAppStore } from '../store/useAppStore'
 import { ColorBadge } from './ColorBadge'
@@ -378,10 +378,7 @@ export function NetworkRow({
   const speedLimit = useAppStore((store) => store.networkPreferences[group.id]?.speedLimit)
   const [expanded, setExpanded] = useState(false)
   const connections = group.transfer === 'http' ? group.streams : group.peers
-  const isActive =
-    group.transfer === 'http'
-      ? group.streams.some((stream) => stream.status === 'downloading')
-      : group.peers.some((peer) => peer.status === 'receiving')
+  const isActive = networkActive(group)
   const hasError = group.status === 'failed'
   const rounded = Math.round(sharePercent)
   const shareLabel = group.bytesDownloaded === 0 ? '0%' : rounded === 0 ? '<1%' : `${rounded}%`
