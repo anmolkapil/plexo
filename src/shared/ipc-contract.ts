@@ -4,6 +4,7 @@ import type {
   FinishedDownload,
   NetworkInterfaceInfo,
   PendingLink,
+  ProbeOptions,
   ProbeResult,
   StartDownloadRequest,
   TorrentFileEntry,
@@ -20,7 +21,9 @@ export interface IpcContract {
   deviceBindingSupported: { args: []; result: boolean }
   openNetworkSettings: { args: []; result: void }
   updateSettings: { args: [patch: AppSettings]; result: void }
-  probeUrl: { args: [url: string]; result: ProbeResult }
+  /** `options`: how strictly to check it — a certificate the user accepted, say (see
+   * ProbeOptions). */
+  probeUrl: { args: [url: string, options?: ProbeOptions]; result: ProbeResult }
   chooseDestinationFolder: { args: [defaultPath: string]; result: string | null }
   chooseTorrentFile: { args: []; result: string | null }
   readClipboardText: { args: []; result: string }

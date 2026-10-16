@@ -1,8 +1,8 @@
-import { request as httpRequest } from 'node:http'
+import { request as httpRequest, type ClientRequestArgs, type IncomingMessage } from 'node:http'
 import { request as httpsRequest } from 'node:https'
 import { isAbsolute } from 'node:path'
 import { URL } from 'node:url'
-import type { BrowserContext, ProbeResult } from '../../shared/types'
+import type { BrowserContext, ProbeOptions, ProbeResult } from '../../shared/types'
 import { testKnobs } from '../testKnobs'
 import { requestHeaders } from './browserContext'
 import { parseContentDispositionFilename } from './contentDisposition'
@@ -32,34 +32,42 @@ interface ProbeResponse {
   headers: Headers
 }
 
+/** What a probe request passes Node's https: a request's own options plus the one thing that can
+ * waive the certificate check (see requestFirstBytes). */
+type ProbeRequestOptions = ClientRequestArgs & { rejectUnauthorized?: boolean }
+
 /** GET with a small range: cheaper than fetching the body, and unlike HEAD it also tells us (via
  * the 206 status) whether range requests actually work. Not 1 byte: some file hosts answer a range
  * that ends at byte 0 or 1 with the whole file, while serving every real chunk as asked (#101).
- * `ranged: false` sends a plain GET instead; the body is still dropped once the headers arrive. */
+ * `ranged: false` sends a plain GET instead; the body is still dropped once the headers arrive.
+ *
+ * `allowInvalidCertificate` (https only) skips certificate verification, for a link the user
+ * confirmed after Plexo told them it couldn't be checked (see ProbeOptions). */
 function requestFirstBytes(
   url: URL,
   deadline: number,
   browser: BrowserContext | undefined,
-  ranged: boolean
+  ranged: boolean,
+  allowInvalidCertificate: boolean
 ): Promise<ProbeResponse> {
   return new Promise((resolve, reject) => {
-    const requester = url.protocol === 'https:' ? httpsRequest : httpRequest
-    const req = requester(
-      {
-        method: 'GET',
-        hostname: url.hostname.replace(/^\[|\]$/g, ''),
-        port: url.port || undefined,
-        path: `${url.pathname}${url.search}`,
-        headers: ranged
-          ? { ...requestHeaders(url, browser), Range: 'bytes=0-1023' }
-          : requestHeaders(url, browser)
-      },
-      (res) => {
-        clearTimeout(timer)
-        res.destroy()
-        resolve({ statusCode: res.statusCode ?? 0, headers: res.headers as Headers })
-      }
-    )
+    const secure = url.protocol === 'https:'
+    const options: ProbeRequestOptions = {
+      method: 'GET',
+      hostname: url.hostname.replace(/^\[|\]$/g, ''),
+      port: url.port || undefined,
+      path: `${url.pathname}${url.search}`,
+      headers: ranged
+        ? { ...requestHeaders(url, browser), Range: 'bytes=0-1023' }
+        : requestHeaders(url, browser),
+      ...(secure && allowInvalidCertificate ? { rejectUnauthorized: false } : {})
+    }
+    const onResponse = (res: IncomingMessage): void => {
+      clearTimeout(timer)
+      res.destroy()
+      resolve({ statusCode: res.statusCode ?? 0, headers: res.headers as Headers })
+    }
+    const req = secure ? httpsRequest(options, onResponse) : httpRequest(options, onResponse)
     const timer = setTimeout(
       () => req.destroy(new Error(NO_RESPONSE)),
       Math.max(0, deadline - Date.now())
@@ -90,7 +98,8 @@ function fileNameFromHeaders(headers: Headers, url: URL): string {
 
 async function requestFollowingRedirects(
   rawUrl: string,
-  browser: BrowserContext | undefined
+  browser: BrowserContext | undefined,
+  allowInvalidCertificate: boolean
 ): Promise<{ current: URL; response: ProbeResponse | null }> {
   let current = new URL(rawUrl)
   let response: ProbeResponse | null = null
@@ -98,13 +107,19 @@ async function requestFollowingRedirects(
 
   let ranged = true
   for (let redirect = 0; redirect <= MAX_REDIRECTS; redirect += 1) {
-    response = await requestFirstBytes(current, deadline, browser, ranged)
+    response = await requestFirstBytes(current, deadline, browser, ranged, allowInvalidCertificate)
     // Some servers refuse any Range request with 403 while serving the same URL in full (#131).
     // Ask once more without one: if that works, the file downloads as one stream from byte zero,
     // which sends no Range either — the same as on a server without range support.
     if (response.statusCode === 403 && ranged) {
       ranged = false
-      response = await requestFirstBytes(current, deadline, browser, ranged)
+      response = await requestFirstBytes(
+        current,
+        deadline,
+        browser,
+        ranged,
+        allowInvalidCertificate
+      )
     }
     if (response.statusCode >= 300 && response.statusCode < 400) {
       const location = headerValue(response.headers, 'location')
@@ -126,14 +141,25 @@ function isTorrentLink(headers: Headers, url: URL): boolean {
 
 /** What a link would download: a file over HTTP(S), or a torrent — a magnet link, a link to a
  * .torrent, or the path of a .torrent on this computer (opened or dropped on the window).
- * `browser`: what the browser it came from sends with it (see BrowserContext). */
-export async function probeUrl(rawUrl: string, browser?: BrowserContext): Promise<ProbeResult> {
+ * `browser`: what the browser it came from sends with it (see BrowserContext).
+ * `options.allowInvalidCertificate`: check it without verifying the server's certificate, for a
+ * link the user has already accepted the warning for (see ProbeOptions). */
+export async function probeUrl(
+  rawUrl: string,
+  browser?: BrowserContext,
+  options?: ProbeOptions
+): Promise<ProbeResult> {
   if (/^magnet:/i.test(rawUrl)) return describeTorrent(await fetchMagnetMetadata(rawUrl), rawUrl)
   if (isAbsolute(rawUrl) && /\.torrent$/i.test(rawUrl)) {
     return describeTorrent(await readTorrentFile(rawUrl), rawUrl)
   }
 
-  const { current, response } = await requestFollowingRedirects(rawUrl, browser)
+  const allowInvalidCertificate = options?.allowInvalidCertificate === true
+  const { current, response } = await requestFollowingRedirects(
+    rawUrl,
+    browser,
+    allowInvalidCertificate
+  )
 
   // An empty file can't satisfy a request for its first bytes: the server answers 416 and gives
   // the size as `bytes */0`. That's a valid, empty download, not an error.
@@ -160,6 +186,8 @@ export async function probeUrl(rawUrl: string, browser?: BrowserContext): Promis
 
   if (isTorrentLink(response.headers, current)) {
     const finalUrl = current.toString()
+    // Fetched with the global fetch, which always verifies: a .torrent served over a certificate
+    // that can't be checked stays unfetchable, even for a link the user accepted.
     const torrentFile = await downloadTorrentFile(
       finalUrl,
       PROBE_TIMEOUT_MS,

@@ -1103,7 +1103,10 @@ export class HttpTransfer implements Transfer {
       nudge: new AbortController(),
       connection: new StreamConnection(() => this.host.networks.find(chunk.interfaceId), {
         timeoutMs: testKnobs.stallTimeoutMs,
-        connectTimeoutMs: testKnobs.connectTimeoutMs
+        connectTimeoutMs: testKnobs.connectTimeoutMs,
+        // The whole run is on the same link: what the user accepted there (or not) is what every
+        // one of its connections does.
+        allowInvalidCertificate: this.runtime.requestPayload.allowInvalidCertificate === true
       }),
       attempt: null,
       warmSince: Date.now(),

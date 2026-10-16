@@ -67,6 +67,7 @@ https://github.com/user-attachments/assets/e57728f4-fb63-441f-839c-174eef954b17
 - Pause and resume supported downloads across restarts
 - Automatically reconnect downloads after sleep
 - Replace expired links without losing progress
+- Download from a server whose certificate can’t be verified, once you accept the warning
 - Queue downloads and configure concurrent downloads
 - Pause, resume, retry or remove downloads in bulk
 
@@ -126,6 +127,14 @@ If both stay connected but one sits idle in Plexo, Windows may be sending its tr
 <br>
 
 Pause the download, then resume it.
+
+</details>
+
+<details>
+<summary><strong>Plexo says the server's certificate couldn't be verified</strong></summary>
+<br>
+
+Plexo verifies a download server's certificate the way your browser does, so a server with a self-signed, expired or otherwise unverifiable one is turned away. When that happens, **New download** offers **Download anyway**: Plexo then stops checking the certificate for that link. Only use it for a server you trust — nothing else then proves the file really comes from it, and someone in the middle could change it.
 
 </details>
 

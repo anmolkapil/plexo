@@ -13,6 +13,7 @@ import {
   describeFileCount,
   fileExtensionBadge,
   formatBytes,
+  isCertificateError,
   toDisplayPath
 } from '../utils/format'
 import { Button } from './ui/button'
@@ -25,7 +26,9 @@ type ProbeState =
   | { status: 'idle' }
   | { status: 'probing' }
   | { status: 'ready'; result: ProbeResult }
-  | { status: 'error'; message: string }
+  /** `certificate`: what couldn't be checked was the server's certificate — the one failure the
+   * user can answer with "Download anyway" (see below). */
+  | { status: 'error'; message: string; certificate: boolean }
 
 const PROBE_DEBOUNCE_MS = 600
 
@@ -86,6 +89,12 @@ function NewDownloadForm({ onDone }: { onDone: () => void }): React.JSX.Element 
   const linkInput = useRef<HTMLInputElement>(null)
 
   const [probe, setProbe] = useState<ProbeState>({ status: 'idle' })
+  // The link whose unverifiable certificate the user accepted, if any: every connection checking
+  // it and downloading it then skips verification. Held by URL rather than as a plain flag, so
+  // editing the link — or another one arriving — starts over with verification on.
+  const [acceptedCertificate, setAcceptedCertificate] = useState<string | null>(null)
+  const trimmedUrl = url.trim()
+  const allowInvalidCertificate = acceptedCertificate !== null && acceptedCertificate === trimmedUrl
   // Tracks deselections rather than selections, so a newly-detected interface starts selected.
   // Starts from the last download's pick: the networks it left out are saved as `off`.
   const [deselectedInterfaceIds, setDeselectedInterfaceIds] = useState<string[]>(() =>
@@ -143,12 +152,16 @@ function NewDownloadForm({ onDone }: { onDone: () => void }): React.JSX.Element 
     setProbe({ status: 'probing' })
     const timer = setTimeout(async () => {
       try {
-        const result = await window.plexo.probeUrl(trimmed)
+        const result = await window.plexo.probeUrl(trimmed, { allowInvalidCertificate })
         if (stale) return
         setProbe({ status: 'ready', result })
       } catch (error) {
         if (stale) return
-        setProbe({ status: 'error', message: describeError(error) })
+        setProbe({
+          status: 'error',
+          message: describeError(error),
+          certificate: isCertificateError(error)
+        })
       }
     }, PROBE_DEBOUNCE_MS)
 
@@ -156,7 +169,7 @@ function NewDownloadForm({ onDone }: { onDone: () => void }): React.JSX.Element 
       stale = true
       clearTimeout(timer)
     }
-  }, [url, dropLink])
+  }, [url, dropLink, allowInvalidCertificate])
 
   const ready = probe.status === 'ready' ? probe.result : null
   const torrent = ready?.kind === 'torrent' ? ready.torrent : null
@@ -298,7 +311,8 @@ function NewDownloadForm({ onDone }: { onDone: () => void }): React.JSX.Element 
           : {
               ...common,
               kind: 'http',
-              streamsPerNetwork: streamsChoice === 'auto' ? undefined : streamsChoice
+              streamsPerNetwork: streamsChoice === 'auto' ? undefined : streamsChoice,
+              allowInvalidCertificate: allowInvalidCertificate || undefined
             },
         linkId
       )
@@ -461,6 +475,23 @@ function NewDownloadForm({ onDone }: { onDone: () => void }): React.JSX.Element 
             {probe.message}
           </div>
         )}
+        {probe.status === 'error' && probe.certificate && !allowInvalidCertificate && (
+          <div className="flex items-start gap-3 rounded-lg border-[0.5px] border-border bg-card px-3 py-2 text-[12.5px]">
+            <span className="min-w-0 flex-1">
+              If you know this server, Plexo can download from it anyway, without checking the
+              certificate. Nothing then proves the file really comes from it, so don’t do that for a
+              link you don’t trust.
+            </span>
+            <Button
+              type="button"
+              variant="secondary"
+              size="sm"
+              onClick={() => setAcceptedCertificate(trimmedUrl)}
+            >
+              Download anyway
+            </Button>
+          </div>
+        )}
 
         {ready && (
           <div className="flex items-center gap-3">
@@ -489,7 +520,8 @@ function NewDownloadForm({ onDone }: { onDone: () => void }): React.JSX.Element 
                       ? ready.supportsRanges
                         ? 'Uses one connection. The file size is unknown.'
                         : 'Uses one connection. This server doesn’t support parallel downloads.'
-                      : 'resumable')
+                      : 'resumable'),
+                  allowInvalidCertificate && 'certificate not checked'
                 ]
                   .filter(Boolean)
                   .join(' · ')}

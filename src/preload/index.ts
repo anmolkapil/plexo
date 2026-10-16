@@ -6,6 +6,7 @@ import type {
   DownloadUpdate,
   InitialState,
   NetworkInterfaceInfo,
+  ProbeOptions,
   UpdateState
 } from '../shared/types'
 
@@ -28,7 +29,7 @@ const plexoApi = {
   deviceBindingSupported: () => invoke('deviceBindingSupported'),
   openNetworkSettings: () => invoke('openNetworkSettings'),
   updateSettings: (patch: AppSettings) => invoke('updateSettings', patch),
-  probeUrl: (url: string) => invoke('probeUrl', url),
+  probeUrl: (url: string, options?: ProbeOptions) => invoke('probeUrl', url, options),
   chooseDestinationFolder: (defaultPath: string) => invoke('chooseDestinationFolder', defaultPath),
   chooseTorrentFile: () => invoke('chooseTorrentFile'),
   /** Where a file dropped on the window is on disk ('' for one that isn't a file). */

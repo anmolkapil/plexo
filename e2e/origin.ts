@@ -1,6 +1,9 @@
 import { createHash } from 'node:crypto'
+import { readFileSync } from 'node:fs'
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http'
-import type { AddressInfo, Socket } from 'node:net'
+import { createServer as createSecureServer, type Server as SecureServer } from 'node:https'
+import type { AddressInfo, Server, Socket } from 'node:net'
+import { join } from 'node:path'
 
 /**
  * The download server every e2e test talks to. It serves one file and can be told, per
@@ -72,6 +75,22 @@ export interface OriginOptions {
   bytesPerSecond?: number
   /** A speed limit every response shares, as on a full link: another connection gets nothing. */
   sharedBytesPerSecond?: number
+  /** Serve over HTTPS with the suite's own self-signed certificate (e2e/tls): a server whose
+   * certificate no client can verify, which is what "Download anyway" answers. */
+  tls?: boolean
+}
+
+/** The suite's own certificate (e2e/tls): self-signed, for loopback only, valid for years. Not a
+ * secret — it signs nothing but the test server. */
+let certificate: { key: Buffer; cert: Buffer } | null = null
+
+function testCertificate(): { key: Buffer; cert: Buffer } {
+  const dir = join(__dirname, 'tls')
+  certificate ??= {
+    key: readFileSync(join(dir, 'localhost-key.pem')),
+    cert: readFileSync(join(dir, 'localhost-cert.pem'))
+  }
+  return certificate
 }
 
 /** Deterministic bytes, so a failing seed reproduces the exact same file. */
@@ -119,18 +138,27 @@ export class Origin {
   private connections = 0
   /** When the shared limit next has room (see sharedBytesPerSecond). */
   private sharedBusyUntil = 0
-  private server = createServer((req, res) => void this.handle(req, res))
+  private server: Server
   private port = 0
 
   constructor(private options: OriginOptions) {
     this.content = seededBytes(options.size, options.seed ?? 1)
     this.etag = options.etag === undefined ? '"v1"' : options.etag
     this.lastModified = options.lastModified ?? null
-    this.server.on('connection', (socket) => {
+    const handler = (req: IncomingMessage, res: ServerResponse): void => void this.handle(req, res)
+    this.server = options.tls
+      ? createSecureServer(testCertificate(), handler)
+      : createServer(handler)
+    // Over TLS the request carries the socket the handshake produced, not the raw one, so number
+    // that: the log's `connection` then means the same thing either way. Destroying it tears down
+    // the TCP connection underneath.
+    const track = (socket: Socket): void => {
       this.connectionIds.set(socket, ++this.connections)
       this.sockets.add(socket)
       socket.on('close', () => this.sockets.delete(socket))
-    })
+    }
+    if (options.tls) (this.server as SecureServer).on('secureConnection', track)
+    else this.server.on('connection', track)
   }
 
   async start(): Promise<this> {
@@ -149,7 +177,9 @@ export class Origin {
   }
 
   url(path = '/files/test.bin'): string {
-    return `http://${this.options.host === '::1' ? '[::1]' : '127.0.0.1'}:${this.port}${path}`
+    const scheme = this.options.tls ? 'https' : 'http'
+    const host = this.options.host === '::1' ? '[::1]' : '127.0.0.1'
+    return `${scheme}://${host}:${this.port}${path}`
   }
 
   get sha256(): string {

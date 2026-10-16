@@ -81,6 +81,9 @@ interface StartOptions {
   destinationDir?: string
   /** For a torrent: the files to download, by index. */
   selectedFiles?: number[]
+  /** Start it without verifying the server's certificate, as New download's "Download anyway"
+   * does (see ProbeOptions and StartHttpDownloadRequest). */
+  allowInvalidCertificate?: boolean
 }
 
 interface Tracked {
@@ -240,7 +243,9 @@ export class PlexoApp {
   async start(url: string, expectedSha: string, options: StartOptions = {}): Promise<string> {
     await this.pinStreams(options.connections)
     await this.api.listInterfaces()
-    const probe = await this.api.probeUrl(url)
+    const probe = await this.api.probeUrl(url, {
+      allowInvalidCertificate: options.allowInvalidCertificate
+    })
     const multiChunk = probe.supportsRanges && probe.totalBytes !== null
     const networks = options.networks ?? ['a']
     const destinationDir = options.destinationDir ?? this.dirs.dest
@@ -264,7 +269,12 @@ export class PlexoApp {
             infoHash: probe.torrent.infoHash,
             selectedFiles: options.selectedFiles
           }
-        : { ...common, kind: 'http', streamsPerNetwork: options.streamsPerNetwork }
+        : {
+            ...common,
+            kind: 'http',
+            streamsPerNetwork: options.streamsPerNetwork,
+            allowInvalidCertificate: options.allowInvalidCertificate
+          }
     )
     this.tracked.set(id, { expectedSha, destBefore, destinationDir })
     return id

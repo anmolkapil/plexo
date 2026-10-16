@@ -4,6 +4,12 @@ const NESTED_ERROR_PREFIX = /^Error:\s*/
 /** A link that worked and then stopped: signed links run out, and a server turns them away. */
 const LINK_REFUSED = /status (401|403|404|410) for range request/
 
+/** A certificate the client can't verify — untrusted, expired, issued for another host, or its
+ * chain stopping short of a known root — as opposed to a TLS mismatch (an old protocol version,
+ * a plain-HTTP port) that skipping verification wouldn't get past. */
+const CERTIFICATE_PROBLEM =
+  /CERT|SELF[-_ ]SIGNED|UNABLE_TO_VERIFY|UNABLE_TO_GET_ISSUER|DEPTH_ZERO|certificate/i
+
 const ERROR_HINTS: Array<{ pattern: RegExp; message: string }> = [
   {
     pattern: /ENOSPC|EDQUOT/,
@@ -95,12 +101,23 @@ const ERROR_HINTS: Array<{ pattern: RegExp; message: string }> = [
  * `error` field, so a failure partway through a transfer reads exactly as friendly as one caught
  * before it started. */
 export function describeError(error: unknown): string {
-  const raw = error instanceof Error ? error.message : String(error)
-  const stripped = raw.replace(IPC_INVOKE_PREFIX, '').replace(NESTED_ERROR_PREFIX, '')
+  const stripped = strippedMessage(error)
 
   for (const { pattern, message } of ERROR_HINTS) {
     if (pattern.test(stripped)) return message
   }
 
   return stripped
+}
+
+/** Whether a failure is the server's certificate. Only these can be downloaded past without
+ * verifying it (see NewDownloadDialog): a TLS problem the certificate isn't behind — an old
+ * protocol version, say — would fail the very same way with verification off. */
+export function isCertificateError(error: unknown): boolean {
+  return CERTIFICATE_PROBLEM.test(strippedMessage(error))
+}
+
+function strippedMessage(error: unknown): string {
+  const raw = error instanceof Error ? error.message : String(error)
+  return raw.replace(IPC_INVOKE_PREFIX, '').replace(NESTED_ERROR_PREFIX, '')
 }

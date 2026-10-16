@@ -156,7 +156,7 @@ export function registerIpcHandlers(getWindow: () => BrowserWindow | null): Down
     await openNetworkSettings()
   })
 
-  handle('probeUrl', async (_event, url) => probeUrl(url))
+  handle('probeUrl', async (_event, url, options) => probeUrl(url, undefined, options))
 
   handle('chooseDestinationFolder', async (_event, defaultPath) => {
     const window = getWindow()

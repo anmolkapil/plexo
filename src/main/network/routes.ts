@@ -236,7 +236,11 @@ async function connectOnInterface(
 
 /** What a request passes its agent: Node hands a request's options to the agent's
  * createConnection, so a connection opened for a request can be dropped with it. */
-type ConnectOptions = ClientRequestArgs & { connectSignal?: AbortSignal }
+type ConnectOptions = ClientRequestArgs & {
+  connectSignal?: AbortSignal
+  /** Waived certificate verification, for a link the user accepted (see StreamConnection). */
+  rejectUnauthorized?: boolean
+}
 
 type Open = (
   options: ConnectOptions,
@@ -303,6 +307,7 @@ export class StreamConnection {
   private readonly https: HttpsAgent
 
   private readonly timeoutMs: number
+  private readonly allowInvalidCertificate: boolean
 
   constructor(
     /** The network, or undefined while it isn't connected. */
@@ -310,7 +315,8 @@ export class StreamConnection {
     {
       timeoutMs,
       connectTimeoutMs = timeoutMs,
-      resolveHost
+      resolveHost,
+      allowInvalidCertificate = false
     }: {
       /** How long a request may take to get its response headers, connecting included. */
       timeoutMs: number
@@ -318,9 +324,13 @@ export class StreamConnection {
        * network that can't get through is found out before a slow server would be. */
       connectTimeoutMs?: number
       resolveHost?: ResolveHost
+      /** Every TLS connection this makes accepts a certificate it can't verify. Only ever set
+       * for a link the user accepted that for (see NewDownloadDialog). */
+      allowInvalidCertificate?: boolean
     }
   ) {
     this.timeoutMs = timeoutMs
+    this.allowInvalidCertificate = allowInvalidCertificate
     const open: Open = async (options, secure) => {
       const iface = network()
       if (!iface) throw new Error('The network is not connected')
@@ -384,7 +394,8 @@ export class StreamConnection {
         path: `${target.pathname}${target.search}`,
         headers,
         agent: secure ? this.https : this.http,
-        connectSignal: signal
+        connectSignal: signal,
+        ...(secure && this.allowInvalidCertificate ? { rejectUnauthorized: false } : {})
       }
       const req = (secure ? httpsRequest : httpRequest)(options, (res) => {
         answered = true

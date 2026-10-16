@@ -6,3 +6,5 @@ tsconfig.json
 tsconfig.*.json
 test-results
 playwright-report
+# The e2e suite's own TLS certificate and key: not code.
+e2e/tls

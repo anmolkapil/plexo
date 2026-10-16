@@ -46,6 +46,12 @@ export interface TorrentProbeResult extends ProbeResultBase {
 
 export type ProbeResult = HttpProbeResult | TorrentProbeResult
 
+/** How a link is checked. `allowInvalidCertificate` reaches past a certificate the computer can't
+ * verify, and is only ever asked for once the user has accepted that (see NewDownloadDialog). */
+export interface ProbeOptions {
+  allowInvalidCertificate?: boolean
+}
+
 export interface TorrentInfo {
   infoHash: string
   pieceLength: number
@@ -397,6 +403,10 @@ export interface StartHttpDownloadRequest extends StartDownloadRequestBase {
   kind: 'http'
   /** Streams per network the user picked; left out, the count is decided automatically. */
   streamsPerNetwork?: number
+  /** The user accepted an unverifiable certificate for this link (see NewDownloadDialog): every
+   * connection this download opens then skips certificate verification. Left out, each one is
+   * verified as usual. */
+  allowInvalidCertificate?: boolean
   browser?: BrowserContext
 }
 

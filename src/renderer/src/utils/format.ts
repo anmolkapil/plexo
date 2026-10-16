@@ -260,7 +260,7 @@ export function toDisplayPath(path: string, homeDir: string): string {
   return path
 }
 
-export { describeError } from '@shared/errors'
+export { describeError, isCertificateError } from '@shared/errors'
 
 const LINK_REFUSED = /status (401|403|404|410|416) for range request/
 

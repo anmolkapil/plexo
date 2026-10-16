@@ -1121,7 +1121,10 @@ export class DownloadManager {
     // A fresh link from the same site usually needs the same sign-in, so the old one carries over
     // unless the browser sent a new one.
     const browser = given?.browser ?? runtime.requestPayload.browser
-    const probe = given?.probe ?? (await probeUrl(url, browser))
+    // A download whose certificate the user accepted keeps that: a fresh link for it is checked
+    // the same way it downloads.
+    const allowInvalidCertificate = runtime.requestPayload.allowInvalidCertificate === true
+    const probe = given?.probe ?? (await probeUrl(url, browser, { allowInvalidCertificate }))
     if (probe.kind !== 'http') throw new Error('That isn’t a link to a file')
     const { totalBytes } = runtime.state
     if ((probe.totalBytes ?? 0) !== totalBytes) {
@@ -1166,7 +1169,9 @@ export class DownloadManager {
     if (!network) return 'unknown'
     const connection = new StreamConnection(() => network, {
       timeoutMs: testKnobs.stallTimeoutMs,
-      connectTimeoutMs: testKnobs.connectTimeoutMs
+      connectTimeoutMs: testKnobs.connectTimeoutMs,
+      // The same link the download has been using, and the same certificate decision it carries.
+      allowInvalidCertificate: runtime.requestPayload.allowInvalidCertificate === true
     })
     try {
       return await compareSamples(runtime, url, browser, connection)
