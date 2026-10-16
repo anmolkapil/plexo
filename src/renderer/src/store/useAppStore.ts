@@ -44,6 +44,10 @@ interface AppStore {
   downloadSchedule: DownloadSchedule | undefined
   /** The New download dialog, over whatever the window shows. */
   newDownloadOpen: boolean
+  /** The Telegram dialog: sign-in, then the Saved Messages media browser. */
+  telegramOpen: boolean
+  openTelegram: () => void
+  closeTelegram: () => void
   /** Persisted — how many downloads run at once; the rest wait in the queue. */
   downloadsAtOnce: number
   /** Persisted — the speed limits (see AppSettings). */
@@ -128,6 +132,9 @@ export const useAppStore = create<AppStore>((set, get) => ({
   setDownloadFilter: (downloadFilter) => set({ downloadFilter }),
   downloadSchedule: initial.downloadSchedule,
   newDownloadOpen: false,
+  telegramOpen: false,
+  openTelegram: () => set({ telegramOpen: true }),
+  closeTelegram: () => set({ telegramOpen: false }),
   downloadsAtOnce: initial.downloadsAtOnce,
   speedLimit: initial.speedLimit,
   slowMode: initial.slowMode,

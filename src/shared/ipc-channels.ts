@@ -34,5 +34,12 @@ export const IpcChannels = {
   dismissLink: 'app:dismiss-link',
   updateState: 'update:state',
   updateStateChanged: 'update:state-changed',
-  showUpdateMenu: 'update:show-menu'
+  showUpdateMenu: 'update:show-menu',
+  telegramState: 'telegram:state',
+  telegramStartLogin: 'telegram:start-login',
+  telegramSubmitCode: 'telegram:submit-code',
+  telegramSubmitPassword: 'telegram:submit-password',
+  telegramLogout: 'telegram:logout',
+  telegramListMedia: 'telegram:list-media',
+  telegramAuthChanged: 'telegram:auth-changed'
 } as const

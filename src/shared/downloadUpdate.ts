@@ -7,7 +7,9 @@ export function applyDownloadUpdate(
 ): DownloadState | null {
   if ('blocks' in update) {
     const { state, blocks: changed, seq } = update
-    if (current?.id === state.id && current.kind === 'http') {
+    // HTTP and Telegram downloads both keep blocks; kinds must match so a snapshot of one
+    // never lands on a live download of the other.
+    if (current?.id === state.id && current.kind === state.kind) {
       if ((current.seq ?? 0) >= seq) return current
       let blocks = current.blocks
       if (changed.length > 0) {

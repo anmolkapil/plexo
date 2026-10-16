@@ -5,7 +5,9 @@ import type {
   HttpBlockState,
   HttpDownloadState,
   StartHttpDownloadRequest,
+  StartTelegramDownloadRequest,
   StartTorrentDownloadRequest,
+  TelegramDownloadState,
   TorrentDownloadState,
   TorrentPieceState
 } from '../../shared/types'
@@ -65,7 +67,15 @@ export interface TorrentTransferTarget extends TransferTargetBase {
   uploadMeters: Meters
 }
 
-export type TransferTarget = HttpTransferTarget | TorrentTransferTarget
+export interface TelegramTransferTarget extends TransferTargetBase {
+  state: TelegramDownloadState
+  requestPayload: StartTelegramDownloadRequest
+  blocks: HttpBlockState[]
+  /** What each reader, and each network, has received (see updateSpeeds). */
+  meters: Meters
+}
+
+export type TransferTarget = HttpTransferTarget | TorrentTransferTarget | TelegramTransferTarget
 
 /** What a transfer asks of the manager. */
 export interface TransferHost {
@@ -148,7 +158,7 @@ export function updateSpeeds(runtime: TransferTarget, now: number): boolean {
     target[key] = value
   }
   const connections: Array<{ id: number; status: string; speedBytesPerSec: number }> =
-    state.kind === 'http' ? state.streams : state.peers
+    state.kind === 'http' ? state.streams : state.kind === 'telegram' ? state.readers : state.peers
   for (const connection of connections) {
     // Read every tick, moving or not, so its window is never stale when it moves again.
     const speed = runtime.meters.connections.get(connection.id)?.read(now) ?? 0
@@ -220,7 +230,8 @@ export function updateTimeLeft(state: DownloadState, elapsedSeconds: number): bo
 export function clearSpeeds(state: DownloadState): void {
   state.speedBytesPerSec = 0
   state.timeLeftSeconds = undefined
-  const connections = state.kind === 'http' ? state.streams : state.peers
+  const connections =
+    state.kind === 'http' ? state.streams : state.kind === 'telegram' ? state.readers : state.peers
   for (const connection of connections) connection.speedBytesPerSec = 0
   for (const network of state.networks) network.speedBytesPerSec = 0
   if (state.kind === 'http') state.diskLimited = undefined

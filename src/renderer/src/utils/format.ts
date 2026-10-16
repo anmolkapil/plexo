@@ -232,6 +232,17 @@ export function groupByNetwork(download: DownloadState): NetworkGroup[] {
       streams: download.streams.filter((stream) => stream.interfaceId === network.id)
     }))
   }
+  if (download.kind === 'telegram') {
+    // Telegram isn't reached through any one network the OS picks for it, so its readers are
+    // shown as the rows a download's networks table knows (their bytes attributed per block).
+    return download.networks.map((network) => ({
+      ...network,
+      transfer: 'http',
+      streams: download.readers
+        .filter((reader) => reader.interfaceId === network.id)
+        .map((reader) => ({ ...reader, rangeStart: 0, rangeEnd: null }))
+    }))
+  }
   return download.networks.map((network) => ({
     ...network,
     peers: download.peers.filter((peer) => peer.interfaceId === network.id)

@@ -3,6 +3,7 @@ import { DownloadActionsProvider } from './components/DownloadActionsProvider'
 import { NetworkBindingDialog } from './components/NetworkBindingDialog'
 import { NewDownloadDialog } from './components/NewDownloadDialog'
 import { StatusBar } from './components/StatusBar'
+import { TelegramDialog } from './components/TelegramDialog'
 import { TitleBar } from './components/TitleBar'
 import { TooltipProvider } from './components/ui/tooltip'
 import { useDownloadEvents } from './hooks/useDownloadEvents'
@@ -68,6 +69,7 @@ function App(): React.JSX.Element {
           </div>
           <StatusBar />
           <NewDownloadDialog />
+          <TelegramDialog />
           <NetworkBindingDialog />
         </div>
       </DownloadActionsProvider>

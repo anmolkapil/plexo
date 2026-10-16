@@ -304,7 +304,9 @@ export class PlexoApp {
       if (last?.status === 'completed') return last
       return entry.kind === 'http'
         ? { ...entry, blocks: [], streams: [] }
-        : { ...entry, pieces: [], peers: [] }
+        : entry.kind === 'telegram'
+          ? { ...entry, blocks: [], readers: [] }
+          : { ...entry, pieces: [], peers: [] }
     })
     // One that finished between the two calls is in both: history has its final state.
     const done = new Set(finished.map((state) => state.id))
@@ -372,9 +374,12 @@ export class PlexoApp {
       (network) => `${network.id}:${network.status}${network.error ? ` (${network.error})` : ''}`
     )
     const connections = state
-      ? (state.kind === 'http' ? state.streams : state.peers).map(
-          (connection) => `${connection.interfaceId}:${connection.status}`
-        )
+      ? (state.kind === 'http'
+          ? state.streams
+          : state.kind === 'telegram'
+            ? state.readers
+            : state.peers
+        ).map((connection) => `${connection.interfaceId}:${connection.status}`)
       : undefined
     throw new Error(
       `Timed out after ${timeout} ms waiting on the download. Last seen: ${
@@ -413,7 +418,7 @@ export function checkEvents(sessions: DownloadState[][]): void {
           `${label}: bytesDownloaded ≤ totalBytes`
         )
       }
-      const units = state.kind === 'http' ? state.blocks : state.pieces
+      const units = state.kind === 'torrent' ? state.pieces : state.blocks
       assert.equal(
         units.every((unit, index) => unit.index === index),
         true,
@@ -421,11 +426,14 @@ export function checkEvents(sessions: DownloadState[][]): void {
       )
       assert.equal(
         units.length,
-        state.kind === 'http' ? state.totalBlocks : state.totalPieces,
+        state.kind === 'torrent' ? state.totalPieces : state.totalBlocks,
         `${label}: as many work units as planned`
       )
       for (const unit of units) {
-        const attributed = Object.values(unit.bytesByInterface).reduce((a, b) => a + b, 0)
+        const attributed = Object.values(unit.bytesByInterface).reduce(
+          (a: number, b: number) => a + b,
+          0
+        )
         assert.equal(
           attributed,
           unit.bytesDownloaded,
@@ -471,7 +479,7 @@ export function checkEvents(sessions: DownloadState[][]): void {
           state.bytesUploaded,
           `${label}: the networks' uploads add up to the download's`
         )
-      } else if (state.status === 'downloading') {
+      } else if (state.kind === 'http' && state.status === 'downloading') {
         // A stream holds a block exactly while it is fetching it. A block has at most one stream
         // fetching it for real and two racing it as hedges, and is in flight whenever the first
         // is there. What the stream rows show is only as true as this.

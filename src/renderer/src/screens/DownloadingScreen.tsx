@@ -430,7 +430,7 @@ export const DownloadingScreen = memo(function DownloadingScreen({
       {/* Block grid: pinned with the file info. It's capped in height and scrolls itself. */}
       <div className="shrink-0 px-5 pt-3">
         <BlockGrid
-          blocks={download.kind === 'http' ? download.blocks : download.pieces}
+          blocks={download.kind === 'torrent' ? download.pieces : download.blocks}
           groups={groups}
           visuals={visuals}
           knownSize={knownSize}
@@ -498,7 +498,11 @@ export const DownloadingScreen = memo(function DownloadingScreen({
                     : 0
                 }
                 totalBytes={wantedBytes(download)}
-                blocks={download.kind === 'http' ? download.blocks : undefined}
+                blocks={
+                  download.kind === 'http' || download.kind === 'telegram'
+                    ? download.blocks
+                    : undefined
+                }
                 onSwitch={(enabled) =>
                   void window.plexo.setDownloadNetwork(download.id, row.id, enabled)
                 }

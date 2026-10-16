@@ -32,6 +32,7 @@
     "@base-ui/react": "^1.8.0",
     "@electron-toolkit/preload": "^3.0.2",
     "@electron-toolkit/utils": "^4.0.0",
+    "big-integer": "1.6.52",
     "bittorrent-peerid": "2.0.2",
     "class-variance-authority": "^0.7.1",
     "cn": "^0.3.0",
@@ -42,6 +43,7 @@
     "lucide-react": "^1.47.0",
     "parse-torrent": "11.0.24",
     "react-day-picker": "^10.0.2",
+    "telegram": "^2.26.22",
     "webtorrent": "3.0.21",
     "zustand": "^5.0.15"
   },
