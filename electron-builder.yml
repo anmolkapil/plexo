@@ -80,12 +80,24 @@ linux:
       arch: [x64, arm64]
     - target: rpm
       arch: [x64, arm64]
+    # Plain archive for distros without FUSE or a native package (AUR packagers, NixOS, etc.):
+    # extract and run ./plexo. Doesn't update itself, like the .deb and .rpm.
+    - target: tar.gz
+      arch: [x64, arm64]
+  # Names the .tar.gz, which has no options of its own. Without it the x64 archive would carry no
+  # architecture, and docs/downloads.js would read it as one file for every machine. The deb and
+  # rpm sections below keep their usual names, since they'd otherwise inherit this one.
+  artifactName: ${name}-${version}-${arch}.${ext}
   maintainer: electronjs.org
   category: Utility
   # Offered for magnet links and .torrent files ("Open with"), not made their default.
   mimeTypes: [x-scheme-handler/magnet, application/x-bittorrent, x-scheme-handler/plexo]
 appImage:
   artifactName: ${name}-${version}-${arch}.${ext}
+deb:
+  artifactName: ${name}_${version}_${arch}.${ext}
+rpm:
+  artifactName: ${name}-${version}.${arch}.${ext}
 npmRebuild: false
 # Where the app looks for updates. Builds never publish themselves (--publish never): the release
 # workflow uploads them, with the latest*.yml files the updater reads.

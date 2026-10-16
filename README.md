@@ -178,7 +178,7 @@ npm run dev
 | `npm run build:mac`       | Creates macOS packages in `dist/`                             |
 | `npm run build:win`       | Creates the Windows installer in `dist/`                      |
 | `npm run build:unpack`    | Creates an unpacked app for the current platform in `dist/`   |
-| `npm run build:linux`     | Creates AppImage, `.deb` and `.rpm` packages in `dist/`       |
+| `npm run build:linux`     | Creates AppImage, `.deb`, `.rpm` and `.tar.gz` in `dist/`     |
 | `npm run build:extension` | Builds the Chrome and Firefox extensions in `extension/dist/` |
 
 Run platform packaging commands on the corresponding operating system. Local builds are unsigned unless signing credentials are configured. [CONTRIBUTING.md](CONTRIBUTING.md) covers packaging requirements, extension setup and testing.

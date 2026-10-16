@@ -11,6 +11,8 @@ const builds = (version: string): string[] => [
   `plexo-${version}-x86_64.AppImage`,
   `plexo-${version}.aarch64.rpm`,
   `plexo-${version}.x86_64.rpm`,
+  `plexo-${version}-arm64.tar.gz`,
+  `plexo-${version}-x64.tar.gz`,
   `plexo_${version}_amd64.deb`,
   `plexo_${version}_arm64.deb`
 ]
