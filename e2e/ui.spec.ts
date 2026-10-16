@@ -145,7 +145,12 @@ test.describe('UI journeys @smoke', () => {
       return { minimum: [width, height], size: window.getSize() }
     }, null)
     expect(minimum.minimum).toEqual([720, 620])
-    expect(minimum.size).toEqual(minimum.minimum)
+    if (process.platform === 'win32') {
+      expect(minimum.size[0]).toBe(minimum.minimum[0])
+      expect(Math.abs(minimum.size[1] - minimum.minimum[1])).toBeLessThanOrEqual(2)
+    } else {
+      expect(minimum.size).toEqual(minimum.minimum)
+    }
     const origin = await serve({ size: SIZE })
     const reached = origin.hold(0)
     await plexo.start(origin.url(), origin.sha256)

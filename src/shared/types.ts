@@ -378,6 +378,34 @@ export interface InitialState {
   speedUnit: SpeedUnit
   /** The last folder picked, if it still exists — otherwise the renderer uses downloadsDir. */
   destinationDir?: string
+  isWindows?: boolean
+}
+
+export interface NetworkDoctorIssue {
+  id:
+    | 'fMinimizeConnections'
+    | 'defaultRoute'
+    | 'subnetOverlap'
+    | 'apipa'
+    | 'noGateway'
+    | 'virtualAdapter'
+  severity: 'warning' | 'info'
+  title: string
+  detail: string
+  recommendation?: string
+  interfaceName?: string
+}
+
+export interface NetworkDoctorReport {
+  timestamp: number
+  supported: boolean
+  partOfDomain?: boolean
+  defaultRouteOwner?: {
+    interfaceName: string
+    metric: number
+    nextHop?: string
+  }
+  issues: NetworkDoctorIssue[]
 }
 
 interface StartDownloadRequestBase {

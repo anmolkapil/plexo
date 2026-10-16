@@ -61,6 +61,7 @@ const plexoApi = {
   resumeFromLink: (linkId: string, downloadId: string) =>
     invoke('resumeFromLink', linkId, downloadId),
   dismissLink: (id: string) => invoke('dismissLink', id),
+  getNetworkDoctorReport: (force?: boolean) => invoke('getNetworkDoctorReport', force),
 
   /** pendingLinks() has the new link. */
   onLinkReceived: (callback: () => void): (() => void) => {

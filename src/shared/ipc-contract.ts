@@ -7,7 +7,8 @@ import type {
   ProbeResult,
   StartDownloadRequest,
   TorrentFileEntry,
-  UpdateState
+  UpdateState,
+  NetworkDoctorReport
 } from './types'
 
 /** The request/response half of the IPC surface (every IpcChannels entry except the
@@ -66,4 +67,6 @@ export interface IpcContract {
   resumeFromLink: { args: [linkId: string, downloadId: string]; result: void }
   /** Forgets the sign-in of a link that won't be started. */
   dismissLink: { args: [id: string]; result: void }
+  /** Read-only Windows Network Doctor diagnostic report. */
+  getNetworkDoctorReport: { args: [force?: boolean]; result: NetworkDoctorReport }
 }

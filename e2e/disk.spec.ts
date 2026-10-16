@@ -129,18 +129,27 @@ test.describe('destination folder problems @smoke', () => {
     serve,
     dirs
   }) => {
-    test.skip(process.platform === 'win32', 'chmod does not make a folder read-only on Windows')
     const origin = await serve({ size: 4 * BLOCK })
-    await chmod(dirs.dest, 0o555)
+    if (process.platform === 'win32') {
+      execFileSync('icacls', [dirs.dest, '/deny', '*S-1-1-0:(WD,AD)'], { stdio: 'pipe' })
+    } else {
+      await chmod(dirs.dest, 0o555)
+    }
     try {
-      await expect(plexo.start(origin.url(), origin.sha256)).rejects.toThrow(/EACCES|permission/i)
+      await expect(plexo.start(origin.url(), origin.sha256)).rejects.toThrow(
+        /EACCES|EPERM|permission/i
+      )
       const downloads = join(dirs.userData, 'downloads')
       expect(
         existsSync(downloads) ? await readdir(downloads) : [],
         'no orphaned parts folder from the refused start'
       ).toEqual([])
     } finally {
-      await chmod(dirs.dest, 0o755)
+      if (process.platform === 'win32') {
+        execFileSync('icacls', [dirs.dest, '/reset'], { stdio: 'pipe' })
+      } else {
+        await chmod(dirs.dest, 0o755)
+      }
     }
   })
 })

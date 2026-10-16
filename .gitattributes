@@ -1,0 +1,2 @@
+# Enforce LF endings across all operating systems to prevent ESLint / Prettier warnings
+* text=auto eol=lf
