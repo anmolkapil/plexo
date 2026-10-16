@@ -84,6 +84,15 @@ const STALL_TIMEOUT_MS = testKnobs.stallTimeoutMs
 // able to follow it too instead of failing outright.
 const MAX_REDIRECTS = 5
 
+// A socket hands over what it has as it arrives — often 16 KiB at a time — and each write is a
+// trip through libuv's thread pool and back to the main thread. Body chunks are gathered into
+// one write (one writev) of up to WRITE_COALESCE_BYTES, and held no longer than
+// WRITE_COALESCE_MS, so a slow connection's bytes still reach the disk (and count) promptly.
+// A batch in flight plus the next one gathering stay under half the writer's buffer
+// (downloadFile.ts): a full writer still means the disk is behind (see DiskWatch), not batching.
+const WRITE_COALESCE_BYTES = 128 * 1024
+const WRITE_COALESCE_MS = 20
+
 interface ServedRange {
   start: number
   end: number
@@ -159,6 +168,7 @@ export function downloadChunk(options: ChunkDownloadOptions): Promise<void> {
     let currentReq: ClientRequest | null = null
     let currentFileStream: Writable | null = null
     let stallWatchdog: NodeJS.Timeout | null = null
+    let coalesceTimer: NodeJS.Timeout | null = null
 
     const clearWatchdog = (): void => {
       if (stallWatchdog) {
@@ -178,6 +188,7 @@ export function downloadChunk(options: ChunkDownloadOptions): Promise<void> {
       if (settled) return
       settled = true
       clearWatchdog()
+      if (coalesceTimer) clearTimeout(coalesceTimer)
       signal.removeEventListener('abort', onAbort)
       fn()
     }
@@ -318,6 +329,25 @@ export function downloadChunk(options: ChunkDownloadOptions): Promise<void> {
             res.resume()
           }
 
+          // Corked between flushes; see WRITE_COALESCE_BYTES. end() uncorks, so the end and
+          // fail paths write out what is gathered like any other buffered bytes.
+          let corked = false
+          let gathered = 0
+          const flushWrites = (): void => {
+            if (!corked) return
+            corked = false
+            gathered = 0
+            fileStream.uncork()
+          }
+          const gather = (): void => {
+            if (corked) return
+            corked = true
+            fileStream.cork()
+            // One timer, re-armed per batch; firing with nothing gathered does nothing.
+            if (coalesceTimer) coalesceTimer.refresh()
+            else coalesceTimer = setTimeout(() => flushWrites(), WRITE_COALESCE_MS)
+          }
+
           // Written by hand rather than piped so an overlong body can be cut off
           // at the range boundary: an overlong response could overwrite the next block.
           res.on('data', (chunk: Buffer) => {
@@ -333,14 +363,17 @@ export function downloadChunk(options: ChunkDownloadOptions): Promise<void> {
               bytesDownloaded += usable.length
               const progress = bytesDownloaded
               onNetworkProgress(progress)
-              if (
-                // Every write's callback comes before the writer closes, and this only
-                // settles once it has, stopped or not.
-                !fileStream.write(usable, (error) => {
-                  if (error) fail(error)
-                  else onProgress(progress)
-                })
-              ) {
+              gather()
+              // Every write's callback comes before the writer closes, and this only
+              // settles once it has, stopped or not.
+              const accepted = fileStream.write(usable, (error) => {
+                if (error) fail(error)
+                else onProgress(progress)
+              })
+              gathered += usable.length
+              // A full writer only drains once what it holds is let go.
+              if (!accepted || gathered >= WRITE_COALESCE_BYTES) flushWrites()
+              if (!accepted) {
                 onWriteWait?.(true)
                 hold()
                 fileStream.once('drain', () => {
@@ -350,6 +383,7 @@ export function downloadChunk(options: ChunkDownloadOptions): Promise<void> {
               }
               const wait = throttle?.(usable.length) ?? 0
               if (wait > 0) {
+                flushWrites()
                 hold()
                 setTimeout(release, wait)
               }
@@ -372,6 +406,7 @@ export function downloadChunk(options: ChunkDownloadOptions): Promise<void> {
               return
             }
             bodyEnded = true
+            flushWrites()
             // Held until its last bytes are written; closing the file isn't the disk falling
             // behind.
             onWriteWait?.(true)
