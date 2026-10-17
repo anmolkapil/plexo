@@ -109,6 +109,9 @@ async function requestFollowingRedirects(
     if (response.statusCode >= 300 && response.statusCode < 400) {
       const location = headerValue(response.headers, 'location')
       if (!location) break
+      if (redirect === MAX_REDIRECTS) {
+        throw new Error('Too many redirects while checking the link')
+      }
       current = new URL(location, current)
       continue
     }
