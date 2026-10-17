@@ -74,9 +74,30 @@ export function decodeRfc2047Filename(name: string): string {
 }
 
 export function parseContentDispositionFilename(disposition: string): string | null {
+  // Read complete parameters, including quoted extension values, so a name inside
+  // another parameter cannot shadow filename. HTTP permits spaces/tabs around '='.
+  const parameters = new Map<string, { raw: string; quoted: boolean }>()
+  const extendedPattern = /^([a-zA-Z0-9_-]+)'[^']*'([^;\s]+)/
+  let firstQuotedFilename: string | undefined
+  const parameter =
+    /(?:^|;)[ \t]*([!#$%&'*+.^_`|~0-9a-z-]+)[ \t]*=[ \t]*(("(?:[^"\\]|\\.)*")|([^; \t]+))/gi
+  for (const match of disposition.matchAll(parameter)) {
+    const key = match[1].toLowerCase()
+    const quoted = match[3] !== undefined
+    // Keep the previous decoder's recovery order for duplicate parameters.
+    if (key === 'filename' && quoted && firstQuotedFilename === undefined) {
+      firstQuotedFilename = match[2]
+    }
+    if (key === 'filename*' && (quoted || !extendedPattern.test(match[2]))) continue
+    if (!parameters.has(key)) {
+      parameters.set(key, { raw: match[2], quoted })
+    }
+  }
+
   // RFC 6266 / RFC 5987: filename* takes precedence over filename
   // format: filename*=charset'language'encoded-value
-  const extMatch = /\bfilename\*=([a-zA-Z0-9_-]+)'[^']*'([^;\s]+)/i.exec(disposition)
+  const extended = parameters.get('filename*')
+  const extMatch = extended ? extendedPattern.exec(extended.raw) : null
   if (extMatch?.[2]) {
     // RFC 5987 requires both UTF-8 and ISO-8859-1. decodeURIComponent only reads UTF-8, so a
     // Latin-1 byte like %A3 (?) would throw and leave the raw escapes as the name.
@@ -93,7 +114,11 @@ export function parseContentDispositionFilename(disposition: string): string | n
   }
 
   // Quoted string: preserves semicolons inside quotes, e.g. filename="report; final.pdf"
-  const quotedMatch = /\bfilename="((?:[^"\\]|\\.)*)"/i.exec(disposition)
+  const filename = parameters.get('filename')
+  const quotedMatch =
+    firstQuotedFilename === undefined
+      ? null
+      : [firstQuotedFilename, firstQuotedFilename.slice(1, -1)]
   if (quotedMatch?.[1]) {
     const unescaped = quotedMatch[1].replace(/\\(.)/g, '$1')
     let decoded: string
@@ -106,7 +131,7 @@ export function parseContentDispositionFilename(disposition: string): string | n
   }
 
   // Unquoted token fallback
-  const tokenMatch = /\bfilename=([^;\s]+)/i.exec(disposition)
+  const tokenMatch = filename ? [filename.raw, filename.raw] : null
   if (tokenMatch?.[1]) {
     let decoded: string
     try {

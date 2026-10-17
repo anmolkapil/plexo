@@ -145,6 +145,41 @@ test.describe('happy paths @smoke', () => {
 
 test.describe('file names @smoke', () => {
   const cases: [string, string, RegExp][] = [
+    [
+      'a quoted filename keeps priority over an earlier duplicate token',
+      'attachment; filename=preview.csv; filename="quarterly report.csv"',
+      /^quarterly report\.csv$/
+    ],
+    [
+      'malformed earlier extended values do not hide a usable filename star',
+      "attachment; filename*=not-extended; filename*=\"UTF-8''preview.csv\"; filename*=UTF-8''; filename*=UTF-8''report.csv",
+      /^report\.csv$/
+    ],
+    [
+      'a filename parameter accepts optional whitespace',
+      'attachment; filename = "quarterly report.csv"',
+      /^quarterly report\.csv$/
+    ],
+    [
+      'an unrelated parameter does not shadow filename',
+      'attachment; x-filename="preview.csv"; filename="quarterly report.csv"',
+      /^quarterly report\.csv$/
+    ],
+    [
+      'a quoted extension value does not shadow filename star',
+      'attachment; note="filename*=UTF-8\'\'preview.csv"; filename="quarterly report.csv"',
+      /^quarterly report\.csv$/
+    ],
+    [
+      'an ordinary quoted filename is preserved',
+      'attachment; filename="quarterly report.csv"',
+      /^quarterly report\.csv$/
+    ],
+    [
+      'a UTF-8 filename star is decoded',
+      "attachment; filename*=UTF-8''caf%C3%A9.csv",
+      /^café\.csv$/
+    ],
     ['path traversal is flattened', 'attachment; filename="../../evil.sh"', /^\.\._\.\._evil\.sh$/],
     ['control characters are replaced', 'attachment; filename="a%0Ab.txt"', /^a_b\.txt$/],
     [
