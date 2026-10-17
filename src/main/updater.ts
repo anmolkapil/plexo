@@ -139,6 +139,11 @@ function setAppMenu(): void {
  * there isn't one. */
 export function startUpdater(window: () => BrowserWindow | null, autoUpdate: boolean): void {
   getWindow = window
+  // The Microsoft Store updates its own installs; one installing itself would fight it.
+  if (process.windowsStore) {
+    state = { ...state, status: 'store' }
+    return
+  }
   state = { ...state, autoUpdate }
   autoUpdater.autoDownload = autoUpdate
   // On by default for an rc build, and then it only ever looks for newer rc tags: 1.0.0 would

@@ -141,7 +141,9 @@ function createWindow(): void {
 }
 
 app.whenReady().then(async () => {
-  electronApp.setAppUserModelId('com.plexo.app')
+  // A Store package already has its app ID (its package family name), which its notifications
+  // and taskbar button go by; Microsoft says such an app shouldn't set its own.
+  if (!process.windowsStore) electronApp.setAppUserModelId('com.plexo.app')
 
   // A failed move keeps the old file, to retry next launch — it must never stop the window opening.
   await migrateLegacyNetworkPreferences().catch((error) =>
@@ -167,8 +169,9 @@ app.whenReady().then(async () => {
     offer: (link) => offerLink(link, ensureWindow())
   }).catch((error) => console.error('[plexo] browser bridge failed to start', error))
   // Unlike magnet:, plexo:// is Plexo's own, so registering it takes nothing from another app. A
-  // development build has no fixed path to register.
-  if (app.isPackaged) app.setAsDefaultProtocolClient('plexo')
+  // development build has no fixed path to register, and a Store package declares it in its
+  // manifest instead (electron-builder.yml's win.protocols).
+  if (app.isPackaged && !process.windowsStore) app.setAsDefaultProtocolClient('plexo')
 
   nativeTheme.on('updated', () => {
     mainWindow?.setBackgroundColor(nativeTheme.shouldUseDarkColors ? '#1c1c1e' : '#ffffff')

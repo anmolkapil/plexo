@@ -193,6 +193,10 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for setup, required checks and pull reque
 
 Special thanks to [Dhananjay Bhosale](https://github.com/DhananjayBhosale) for code signing and notarizing the macOS app.
 
+## Privacy
+
+Plexo collects nothing about you: no accounts, analytics or telemetry. See [PRIVACY.md](PRIVACY.md) for what it connects to and what it keeps.
+
 ## License
 
 [MIT](LICENSE), copyright 2026 Anmol Kapil.

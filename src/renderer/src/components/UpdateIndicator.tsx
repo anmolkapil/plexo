@@ -22,8 +22,9 @@ function describe({ status, version, percent, autoUpdate }: UpdateState): string
 }
 
 /** Where the app's own update is, at a glance. Clicking opens the update menu (see
- * main/updater.ts) — natively, so it's the same menu as the macOS app menu's. */
-export function UpdateIndicator(): React.JSX.Element {
+ * main/updater.ts) — natively, so it's the same menu as the macOS app menu's. Nothing in a
+ * Microsoft Store install, which the Store updates. */
+export function UpdateIndicator(): React.JSX.Element | null {
   const [update, setUpdate] = useState<UpdateState>({ status: 'idle', autoUpdate: true })
 
   useEffect(() => {
@@ -33,6 +34,7 @@ export function UpdateIndicator(): React.JSX.Element {
   }, [])
 
   const { status, percent } = update
+  if (status === 'store') return null
   const label = describe(update)
   const text =
     status === 'downloading'
