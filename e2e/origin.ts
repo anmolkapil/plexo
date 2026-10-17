@@ -35,7 +35,7 @@ export type Fault =
 
 /** The app's probe (src/main/download/probe.ts asks for bytes=0-1023), as opposed to a chunk. */
 export const isProbe = (range: OriginRequest['range']): boolean =>
-  range?.start === 0 && range.end === 1023
+  (range?.start === 0 && range.end === 1023) || (range?.start === 1024 && range.end === 2047)
 
 export interface OriginRequest {
   /** 1-based count of requests this server has seen. */
