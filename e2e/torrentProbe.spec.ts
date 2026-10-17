@@ -1,6 +1,6 @@
 import { mkdtemp, writeFile } from 'node:fs/promises'
 import { createServer, type Server } from 'node:http'
-import type { AddressInfo } from 'node:net'
+import { createServer as createNetServer, type AddressInfo } from 'node:net'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type WebTorrent from 'webtorrent'
@@ -130,14 +130,61 @@ test.describe('getting a torrent in', () => {
     await expect(plexo.api.probeUrl(url)).rejects.toThrow(/BitTorrent v2 only/)
   })
 
+  test('a magnet link with only an xs= source, its details fetched over HTTP', async ({
+    plexo
+  }) => {
+    const { client, torrent } = await seed([named(seededBytes(200_000, 7), 'notes.pdf')])
+    // Only the .torrent is served; the seeding client takes no part.
+    await new Promise((done) => client.destroy(done))
+    const { url, server } = await serveTorrent(torrent.torrentFile)
+    servers.push(server)
+    const magnet = `magnet:?xt=urn:btih:${torrent.infoHash}&xs=${encodeURIComponent(url)}`
+
+    const probe = await plexo.api.probeUrl(magnet)
+    expect(probe.kind).toBe('torrent')
+    if (probe.kind !== 'torrent') throw new Error('Expected torrent metadata')
+    expect(probe.suggestedFileName).toBe('notes.pdf')
+  })
+
   test.describe('with nobody to ask', () => {
+    test('a magnet link with no trackers and no DHT gives up at once', async ({ plexo }) => {
+      const magnet = `magnet:?xt=urn:btih:${'ab'.repeat(20)}&dn=nothing`
+      const started = Date.now()
+      await expect(plexo.api.probeUrl(magnet)).rejects.toThrow(/Couldn’t find anyone sharing/)
+      // Well inside the 3-minute wait for peers: there was nothing to wait for.
+      expect(Date.now() - started).toBeLessThan(10_000)
+    })
+  })
+
+  test.describe('with a DHT that reaches no one', () => {
+    // A bootstrap node nobody listens on: the DHT's lookup ends with no nodes to ask, as it does
+    // behind a VPN or firewall that drops BitTorrent's UDP.
+    test.use({ appEnv: { PLEXO_E2E_DHT: '1', PLEXO_E2E_DHT_BOOTSTRAP: '127.0.0.1:9' } })
+
+    test('a magnet link gives up once the lookup ends', async ({ plexo }) => {
+      const magnet = `magnet:?xt=urn:btih:${'cd'.repeat(20)}&dn=nothing`
+      const started = Date.now()
+      await expect(plexo.api.probeUrl(magnet)).rejects.toThrow(/Couldn’t find anyone sharing/)
+      expect(Date.now() - started).toBeLessThan(30_000)
+    })
+  })
+
+  test.describe('with a peer that never answers', () => {
     test.use({ appEnv: { PLEXO_E2E_MAGNET_MS: '1500' } })
 
-    test('a magnet link nobody answers gives up', async ({ plexo }) => {
-      const magnet = `magnet:?xt=urn:btih:${'ab'.repeat(20)}&dn=nothing`
-      await expect(plexo.api.probeUrl(magnet)).rejects.toThrow(
-        /No peers responded to this magnet link/
-      )
+    test('a magnet link still waits for its peers, then gives up', async ({ plexo }) => {
+      // Accepts the connection and says nothing, so no metadata ever comes.
+      const silent = createNetServer(() => {})
+      await new Promise<void>((resolve) => silent.listen(0, '127.0.0.1', resolve))
+      try {
+        const port = (silent.address() as AddressInfo).port
+        const magnet = `magnet:?xt=urn:btih:${'ef'.repeat(20)}&dn=quiet&x.pe=127.0.0.1:${port}`
+        await expect(plexo.api.probeUrl(magnet)).rejects.toThrow(
+          /No peers responded to this magnet link/
+        )
+      } finally {
+        silent.close()
+      }
     })
   })
 })
