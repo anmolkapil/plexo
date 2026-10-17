@@ -99,11 +99,11 @@ let current: { infoHash: string; metadata: Promise<Uint8Array>; cancel: () => vo
 /** A magnet link's .torrent, from whichever of its peers answers first. */
 export async function fetchMagnetMetadata(magnet: string): Promise<Uint8Array> {
   const { default: parseTorrent } = await import('parse-torrent')
-  const { infoHash, announce, peerAddresses } = await parseTorrent(magnet).catch(() => {
+  const { infoHash, announce, peerAddresses, xs } = await parseTorrent(magnet).catch(() => {
     throw new Error('This magnet link isn’t valid')
   })
-  // Only the DHT can find peers for a link that names no tracker and no peer.
-  const dhtOnly = !announce?.length && !peerAddresses?.length
+  // Only the DHT can help a link that names no tracker, no peer and no .torrent to fetch (xs).
+  const dhtOnly = !announce?.length && !peerAddresses?.length && !xs?.length
   if (current?.infoHash === infoHash) return current.metadata
   current?.cancel()
 

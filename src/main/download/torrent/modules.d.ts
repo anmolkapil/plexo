@@ -120,9 +120,10 @@ declare module 'parse-torrent' {
     length?: number
     pieceLength?: number
     files?: { path: string; name: string; length: number; offset: number }[]
-    /** A magnet link's trackers (tr) and peers (x.pe). */
+    /** A magnet link's trackers (tr), peers (x.pe) and .torrent sources (xs). */
     announce?: string[]
     peerAddresses?: string[]
+    xs?: string | string[]
   }
   export default function parseTorrent(torrentId: string | Uint8Array): Promise<ParsedTorrent>
 }

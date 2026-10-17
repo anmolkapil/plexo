@@ -130,6 +130,22 @@ test.describe('getting a torrent in', () => {
     await expect(plexo.api.probeUrl(url)).rejects.toThrow(/BitTorrent v2 only/)
   })
 
+  test('a magnet link with only an xs= source, its details fetched over HTTP', async ({
+    plexo
+  }) => {
+    const { client, torrent } = await seed([named(seededBytes(200_000, 7), 'notes.pdf')])
+    // Only the .torrent is served; the seeding client takes no part.
+    await new Promise((done) => client.destroy(done))
+    const { url, server } = await serveTorrent(torrent.torrentFile)
+    servers.push(server)
+    const magnet = `magnet:?xt=urn:btih:${torrent.infoHash}&xs=${encodeURIComponent(url)}`
+
+    const probe = await plexo.api.probeUrl(magnet)
+    expect(probe.kind).toBe('torrent')
+    if (probe.kind !== 'torrent') throw new Error('Expected torrent metadata')
+    expect(probe.suggestedFileName).toBe('notes.pdf')
+  })
+
   test.describe('with nobody to ask', () => {
     test('a magnet link with no trackers and no DHT gives up at once', async ({ plexo }) => {
       const magnet = `magnet:?xt=urn:btih:${'ab'.repeat(20)}&dn=nothing`
