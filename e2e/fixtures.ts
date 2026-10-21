@@ -264,7 +264,12 @@ export class PlexoApp {
             infoHash: probe.torrent.infoHash,
             selectedFiles: options.selectedFiles
           }
-        : { ...common, kind: 'http', streamsPerNetwork: options.streamsPerNetwork }
+        : {
+            ...common,
+            kind: 'http',
+            requestedUrl: probe.requestedUrl,
+            streamsPerNetwork: options.streamsPerNetwork
+          }
     )
     this.tracked.set(id, { expectedSha, destBefore, destinationDir })
     return id

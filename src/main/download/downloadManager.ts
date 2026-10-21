@@ -333,6 +333,16 @@ async function partialLeftovers(persisted: unknown): Promise<string[]> {
   return leftovers
 }
 
+/** `value` when it's a web link, the only kind a download's link is refreshed from. */
+function webLink(value: unknown): string | undefined {
+  if (typeof value !== 'string') return undefined
+  try {
+    return /^https?:$/.test(new URL(value).protocol) ? value : undefined
+  } catch {
+    return undefined
+  }
+}
+
 function formatGigabytes(bytes: number): string {
   return `${(bytes / 1024 ** 3).toFixed(2)} GB`
 }
@@ -571,7 +581,8 @@ export class DownloadManager {
       reconcile: () => this.reconcile(runtime),
       failDownload: (message, discard) => this.failDownload(runtime, message, discard),
       failNetwork: (network, message) => this.failNetwork(runtime, network, message),
-      scheduleUpdate: () => this.scheduleUpdate(runtime)
+      scheduleUpdate: () => this.scheduleUpdate(runtime),
+      refreshLink: () => this.refreshLink(runtime)
     }
     const runtime: HttpDownloadRuntime = Object.assign(target, this.runtimeFields(), {
       kind: 'http' as const,
@@ -897,6 +908,9 @@ export class DownloadManager {
 
   async start(requestPayload: StartDownloadRequest): Promise<string> {
     await this.initialization
+    if (requestPayload.kind === 'http' && requestPayload.requestedUrl !== undefined) {
+      requestPayload = { ...requestPayload, requestedUrl: webLink(requestPayload.requestedUrl) }
+    }
     if (requestPayload.kind === 'http' && requestPayload.browser !== undefined) {
       const browser = browserContextFrom(requestPayload.browser)
       if (!browser) throw new Error('The browser’s details for this download couldn’t be read.')
@@ -986,6 +1000,7 @@ export class DownloadManager {
         id,
         kind: 'http',
         url: requestPayload.url,
+        requestedUrl: requestPayload.requestedUrl,
         fileName: basename(destinationPath),
         destinationPath,
         totalBytes: requestPayload.totalBytes,
@@ -1118,6 +1133,46 @@ export class DownloadManager {
     replaceable: () => boolean,
     given?: { probe?: HttpProbeResult; browser?: BrowserContext }
   ): Promise<void> {
+    await this.adoptLink(runtime, url, replaceable, given)
+    this.resume(runtime.state.id)
+  }
+
+  /** The server turned a running download's link away (see TransferHost.refreshLink): the link
+   * it was given, checked as a link given to Fix is, takes its place. Undefined when there is no
+   * other link, or Fix is checking one. */
+  private refreshLink(runtime: HttpDownloadRuntime): Promise<boolean> | undefined {
+    const { id } = runtime.state
+    const { url, requestedUrl } = runtime.requestPayload
+    if (!requestedUrl || requestedUrl === url || this.relinking.has(id)) return undefined
+    const { signal } = runtime.stop
+    const running = (): boolean =>
+      this.runtimes.get(id) === runtime && !signal.aborted && runtime.state.status === 'downloading'
+    this.relinking.add(id)
+    return this.adoptLink(runtime, requestedUrl, running)
+      .then(
+        (adopted) => {
+          // The same link again: it was the link that was turned away, not one that ran out.
+          if (adopted === url) return false
+          this.scheduleUpdate(runtime)
+          return true
+        },
+        (error: unknown) => {
+          // The link turned away stays, and fails the download as it would have.
+          console.warn('[plexo] link refresh', error)
+          return false
+        }
+      )
+      .finally(() => this.relinking.delete(id))
+  }
+
+  /** Makes `url` the download's link once it's checked to serve the file downloaded so far, while
+   * `current` says the download is still as it was. The link the download now fetches. */
+  private async adoptLink(
+    runtime: HttpDownloadRuntime,
+    url: string,
+    current: () => boolean,
+    given?: { probe?: HttpProbeResult; browser?: BrowserContext }
+  ): Promise<string> {
     // A fresh link from the same site usually needs the same sign-in, so the old one carries over
     // unless the browser sent a new one.
     const browser = given?.browser ?? runtime.requestPayload.browser
@@ -1144,12 +1199,16 @@ export class DownloadManager {
     if (verdict === 'unknown') {
       throw new Error('Plexo couldn’t check that link against what’s downloaded. Try again.')
     }
-    if (!replaceable()) throw new Error('The download changed while its new link was checked.')
+    if (!current()) throw new Error('The download changed while its new link was checked.')
+    // The link given is the one asked for a fresh link next time.
+    const requestedUrl = webLink(probe.requestedUrl)
     runtime.requestPayload.url = probe.finalUrl
+    runtime.requestPayload.requestedUrl = requestedUrl
     runtime.requestPayload.browser = browser
     runtime.state.url = probe.finalUrl
+    runtime.state.requestedUrl = requestedUrl
     await this.persistNow(runtime)
-    this.resume(runtime.state.id)
+    return probe.finalUrl
   }
 
   private async compareWithDisk(

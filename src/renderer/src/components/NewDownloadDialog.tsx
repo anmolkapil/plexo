@@ -306,6 +306,7 @@ function NewDownloadForm({ onDone }: { onDone: () => void }): React.JSX.Element 
           : {
               ...common,
               kind: 'http',
+              requestedUrl: probe.result.requestedUrl,
               streamsPerNetwork: streamsChoice === 'auto' ? undefined : streamsChoice
             },
         linkId

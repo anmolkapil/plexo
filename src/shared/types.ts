@@ -233,6 +233,8 @@ interface DownloadStateBase {
 
 export interface HttpDownloadState extends DownloadStateBase {
   kind: 'http'
+  /** The link it was given (see StartHttpDownloadRequest.requestedUrl). */
+  requestedUrl?: string
   networks: HttpDownloadNetwork[]
   streams: HttpStreamState[]
   peakStreams: number
@@ -403,6 +405,10 @@ interface StartDownloadRequestBase {
 
 export interface StartHttpDownloadRequest extends StartDownloadRequestBase {
   kind: 'http'
+  /** The link as it was given, when `url` is where it redirected to. A signed link it redirects
+   * to (a CDN's, an S3 presigned one) can run out mid-download; this one is asked for a fresh
+   * one then. Unset in downloads saved before it was kept. */
+  requestedUrl?: string
   /** Streams per network the user picked; left out, the count is decided automatically. */
   streamsPerNetwork?: number
   browser?: BrowserContext
