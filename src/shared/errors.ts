@@ -2,7 +2,13 @@ const IPC_INVOKE_PREFIX = /^Error invoking remote method '[^']*':\s*/
 const NESTED_ERROR_PREFIX = /^Error:\s*/
 
 /** A link that worked and then stopped: signed links run out, and a server turns them away. */
-const LINK_REFUSED = /status (401|403|404|410) for range request/
+const LINK_REFUSED = /status (401|403|404|410|416) for range request/
+
+/** Whether an error says the server refused this download's byte range: its link is no longer
+ * good, and a fresh one to the same file is what carries on. */
+export function linkRefused(error: string | undefined | null): boolean {
+  return !!error && LINK_REFUSED.test(error)
+}
 
 const ERROR_HINTS: Array<{ pattern: RegExp; message: string }> = [
   {
@@ -68,23 +74,23 @@ const ERROR_HINTS: Array<{ pattern: RegExp; message: string }> = [
     message: 'That doesn’t look like a valid link.'
   },
   {
-    pattern: /Server responded with status 401/,
+    pattern: /(?:Server responded with|Unexpected) status 401\b/,
     message: 'This link requires authentication. Try a direct download link.'
   },
   {
-    pattern: /Server responded with status 403/,
+    pattern: /(?:Server responded with|Unexpected) status 403\b/,
     message: 'The server denied access to this file. Check the link or try a new one.'
   },
   {
-    pattern: /Server responded with status 404/,
+    pattern: /(?:Server responded with|Unexpected) status 404\b/,
     message: 'The file couldn’t be found. Check the link and try again.'
   },
   {
-    pattern: /Server responded with status 4\d\d/,
+    pattern: /(?:Server responded with|Unexpected) status 4\d\d\b/,
     message: 'The server rejected the download. Check the link and try again.'
   },
   {
-    pattern: /Server responded with status 5\d\d/,
+    pattern: /(?:Server responded with|Unexpected) status 5\d\d\b/,
     message: 'The server is having trouble. Try again later.'
   }
 ]
