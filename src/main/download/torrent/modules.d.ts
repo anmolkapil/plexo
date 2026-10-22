@@ -17,8 +17,8 @@ declare module 'webtorrent' {
     /** Bytes per second this client uploads at most. */
     uploadLimit?: number
     /** Added by Plexo's patch (patches/webtorrent+3.0.21.patch): opens every outgoing TCP peer
-     * connection. */
-    connect?: (options: { host: string; port: number }) => Socket
+     * connection. `key` is the peer's key in the swarm: its address, or a twin's own key. */
+    connect?: (options: { host: string; port: number; key: string }) => Socket
   }
 
   /** What webtorrent hands a store: the torrent's files, paths relative to `path`. */
@@ -75,6 +75,9 @@ declare module 'webtorrent' {
     bitfield: { get(index: number): boolean }
     destroy(options?: { destroyStore?: boolean }, callback?: (error?: Error) => void): void
     addPeer(address: string): boolean
+    /** Added by Plexo's patch: dials `address` again under `key`, shaking hands as `peerId` (hex),
+     * so one peer can be reached over more than one network. Null if `key` is already there. */
+    addTwinPeer(address: string, key: string, peerId: string): object | null
   }
 
   export default class WebTorrent extends EventEmitter {
