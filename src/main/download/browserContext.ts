@@ -2,10 +2,31 @@ import type { BrowserContext, BrowserCookie } from '../../shared/types'
 
 const USER_AGENT = 'Plexo/1.0'
 
+function decodedUserinfo(value: string): string {
+  try {
+    return decodeURIComponent(value)
+  } catch {
+    return value
+  }
+}
+
+/** Basic authorization for a link that includes a username or password. `URL` keeps userinfo
+ * percent-encoded; the header needs the decoded bytes. A redirect onto another host builds a URL
+ * with no userinfo, so this host's password is not sent there. */
+function basicAuthorization(url: URL): string | undefined {
+  if (url.username === '' && url.password === '') return undefined
+  const token = Buffer.from(
+    `${decodedUserinfo(url.username)}:${decodedUserinfo(url.password)}`
+  ).toString('base64')
+  return `Basic ${token}`
+}
+
 /** Called again for every redirect, so a site's session cookie never reaches the next host (its
  * CDN), while a cookie set for a whole domain still follows a hop within it. */
 export function requestHeaders(url: URL, browser?: BrowserContext): Record<string, string> {
   const headers: Record<string, string> = { 'User-Agent': browser?.userAgent ?? USER_AGENT }
+  const authorization = basicAuthorization(url)
+  if (authorization) headers['Authorization'] = authorization
   if (browser?.referer) headers['Referer'] = browser.referer
   const cookie = browser ? cookieHeader(url, browser.cookies) : ''
   if (cookie) headers['Cookie'] = cookie
