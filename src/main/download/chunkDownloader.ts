@@ -289,7 +289,15 @@ export function downloadChunk(options: ChunkDownloadOptions): Promise<void> {
               res.resume()
               return
             }
-            if (rangeEnd !== null && served.end > rangeEnd) {
+            // Some hosts name the end of the file in Content-Range while sending Content-Length
+            // bytes for the range. The header alone would look like an overrun; the length says
+            // the body is exactly what we asked for, so take it rather than fail every block.
+            const declared = Number(header(res, 'content-length') ?? NaN)
+            if (
+              rangeEnd !== null &&
+              served.end > rangeEnd &&
+              !(Number.isFinite(declared) && declared === expectedBytes)
+            ) {
               fail(
                 new Error(
                   `Server returned more than the requested range: through byte ${served.end}, asked through ${rangeEnd}`
