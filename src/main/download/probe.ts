@@ -188,7 +188,8 @@ export async function probeUrl(rawUrl: string, browser?: BrowserContext): Promis
     }
   }
 
-  if (!response || response.statusCode === 0 || response.statusCode >= 400) {
+  // A redirect still standing here had no Location to follow: it isn't the file.
+  if (!response || response.statusCode === 0 || response.statusCode >= 300) {
     throw new Error(`Server responded with status ${response?.statusCode || 'unknown'}`)
   }
 

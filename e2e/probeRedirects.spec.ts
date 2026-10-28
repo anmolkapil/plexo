@@ -31,4 +31,15 @@ test.describe('probe redirect limits @smoke', () => {
       await expect(plexo.api.probeUrl(origin.url(path))).rejects.toThrow(/Too many redirects/)
     })
   }
+
+  test('a redirect without a Location is refused, not offered as the file', async ({
+    plexo,
+    serve
+  }) => {
+    const origin = await serve({ size: 3 * BLOCK })
+    origin.setRule(({ path }) =>
+      path === '/moved' ? { status: 302, headers: { 'Content-Length': '0' } } : 'ok'
+    )
+    await expect(plexo.api.probeUrl(origin.url('/moved'))).rejects.toThrow(/status 302/)
+  })
 })
