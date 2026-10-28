@@ -72,6 +72,9 @@ test.describe('torrent paths', () => {
     refused(['../evil'])
     refused(['Name/../../evil'])
     refused(['Name/A.txt', 'Name/a.txt'])
+    // é composed and decomposed: macOS saves both under one name.
+    refused(['Name/caf\u00e9.txt', 'Name/cafe\u0301.txt'])
+    refused(['Caf\u00e9/a.txt', 'Cafe\u0301/a.txt'])
     refused(['Name/x', 'Name/x/y'])
     refused(['Name/::'])
     refused(['Name/CON.txt'], 'win32')

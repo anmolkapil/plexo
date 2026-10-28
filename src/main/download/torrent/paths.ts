@@ -49,14 +49,16 @@ export function safeTorrentPaths(
     return { path: relative, length: file.length }
   })
 
-  // Compared without case: macOS and Windows treat "A.txt" and "a.txt" as one file. A file can't
-  // also be a folder another file sits in.
-  const taken = new Set(checked.map((file) => file.path.toLowerCase()))
+  // Compared without case: macOS and Windows treat "A.txt" and "a.txt" as one file, and macOS
+  // treats an é composed or decomposed as one too. A file can't also be a folder another file
+  // sits in.
+  const key = (file: { path: string }): string => file.path.normalize('NFC').toLowerCase()
+  const taken = new Set(checked.map(key))
   if (taken.size !== checked.length) {
     throw new UnsafeTorrentError('Two files in this torrent would be saved as the same file')
   }
   for (const file of checked) {
-    const segments = file.path.toLowerCase().split(path.sep)
+    const segments = key(file).split(path.sep)
     for (let end = 1; end < segments.length; end++) {
       if (taken.has(segments.slice(0, end).join(path.sep))) {
         throw new UnsafeTorrentError('A file in this torrent has the same name as a folder in it')
