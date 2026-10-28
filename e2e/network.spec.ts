@@ -2,6 +2,7 @@ import { expect, test } from '@playwright/test'
 import { createServer, type IncomingMessage } from 'node:http'
 import type { AddressInfo } from 'node:net'
 import type { NetworkInterfaceInfo } from '../src/shared/types'
+import { requestHeaders } from '../src/main/download/browserContext'
 import { StreamConnection } from '../src/main/network/routes'
 
 const iface: NetworkInterfaceInfo = {
@@ -143,6 +144,25 @@ test('a network that comes back with a new address is reached at that one @smoke
     current = loopback
     const { res } = await connection.request(url, {})
     expect(await body(res)).toBe('ok')
+  } finally {
+    connection.close()
+    await new Promise<void>((resolve) => server.close(() => resolve()))
+  }
+})
+
+test('a link that includes a username and password sends basic authorization @smoke', async () => {
+  let authorization: string | undefined
+  const server = createServer((req, res) => {
+    authorization = req.headers.authorization
+    res.end('ok')
+  })
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve))
+  const connection = new StreamConnection(() => loopback, { timeoutMs: 2000 })
+  try {
+    const port = (server.address() as AddressInfo).port
+    const url = new URL(`http://user:p%40ss@127.0.0.1:${port}/file.zip`)
+    expect(await body((await connection.request(url, requestHeaders(url))).res)).toBe('ok')
+    expect(authorization).toBe(`Basic ${Buffer.from('user:p@ss').toString('base64')}`)
   } finally {
     connection.close()
     await new Promise<void>((resolve) => server.close(() => resolve()))

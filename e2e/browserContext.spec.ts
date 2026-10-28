@@ -32,6 +32,26 @@ test("a site's cookies never reach another site", () => {
   expect(sentTo('https://api.github.com/x', [github])).toBeUndefined()
 })
 
+test('a link with a username and password sends basic authorization @smoke', () => {
+  const headers = requestHeaders(new URL('https://user:p%40ss@files.example.com/dl/a.zip'))
+  expect(headers.Authorization).toBe(`Basic ${Buffer.from('user:p@ss').toString('base64')}`)
+  // A token with no password is still basic auth, with an empty password.
+  expect(requestHeaders(new URL('https://token@files.example.com/a.zip')).Authorization).toBe(
+    `Basic ${Buffer.from('token:').toString('base64')}`
+  )
+  expect(requestHeaders(new URL('https://files.example.com/a.zip')).Authorization).toBeUndefined()
+})
+
+test('authorization stays on the host named in the link @smoke', () => {
+  const start = new URL('https://user:secret@files.example/a')
+  const token = `Basic ${Buffer.from('user:secret').toString('base64')}`
+  // A relative redirect keeps the userinfo, so the same host still receives it.
+  expect(requestHeaders(new URL('/b', start)).Authorization).toBe(token)
+  // An absolute redirect does not inherit it, so another host is not sent the password.
+  expect(requestHeaders(new URL('https://cdn.example/b', start)).Authorization).toBeUndefined()
+  expect(requestHeaders(new URL('//cdn.example/b', start)).Authorization).toBeUndefined()
+})
+
 test('path and secure decide as a browser does, longest path first', () => {
   const root = cookie({ name: 'a', path: '/' })
   const docs = cookie({ name: 'b', path: '/docs' })
