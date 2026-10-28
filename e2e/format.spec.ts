@@ -1,5 +1,6 @@
 import { expect, test } from '@playwright/test'
 import {
+  describeError,
   formatBytes,
   formatEta,
   formatPercent,
@@ -40,5 +41,22 @@ test.describe('formatting @smoke', () => {
     expect(formatEta(59.01)).toBe('1m 0s')
     expect(formatEta(59.5)).toBe('1m 0s')
     expect(formatEta(61)).toBe('1m 1s')
+  })
+
+  test('a name with TLS or SSL in it isn’t read as a certificate problem', () => {
+    const certificate = /security certificate/
+    expect(describeError(new Error('unable to verify the first certificate'))).toMatch(certificate)
+    expect(describeError(new Error('certificate has expired'))).toMatch(certificate)
+    expect(
+      describeError(
+        new Error('Client network socket disconnected before secure TLS connection was established')
+      )
+    ).toMatch(certificate)
+    expect(describeError(new Error('Windows can’t save a file named Thesis: TLS 1.3.pdf'))).toBe(
+      'Windows can’t save a file named Thesis: TLS 1.3.pdf'
+    )
+    expect(
+      describeError(new Error('No selected network has an address compatible with ssl.example.com'))
+    ).toBe('No selected network has an address compatible with ssl.example.com')
   })
 })

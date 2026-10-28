@@ -59,7 +59,8 @@ const ERROR_HINTS: Array<{ pattern: RegExp; message: string }> = [
     message: 'The connection timed out. Check your network and try again.'
   },
   {
-    pattern: /CERT|SSL|TLS/i,
+    // What Node and OpenSSL say, not any message that names a file or host with TLS or SSL in it.
+    pattern: /certificate|SSL routines|secure TLS connection/,
     message:
       'The server’s security certificate couldn’t be verified. Check the link or try again later.'
   },
