@@ -62,7 +62,7 @@ https://github.com/user-attachments/assets/e57728f4-fb63-441f-839c-174eef954b17
 
 ### Download management
 
-- Download direct links, magnet links and `.torrent` files
+- Download direct links, magnet links, `.torrent` files and Usenet NZBs
 - Select torrent files before or during a download
 - Pause and resume supported downloads across restarts
 - Automatically reconnect downloads after sleep
@@ -157,6 +157,8 @@ Plexo downloads different parts of the same file through each internet connectio
 For direct downloads, Plexo uses HTTP range requests to fetch chunks in parallel. Streams take new chunks from a shared queue as they finish, so faster connections handle more of the file. Plexo adjusts stream counts to network, server and disk performance. Near the end, idle streams can race slow chunks; the first to finish wins. Servers without range support use a single stream.
 
 For torrents, Plexo distributes peer connections across your selected networks. New peers connect through the network with the fewest peers.
+
+For Usenet NZBs, Plexo shares your news server account's connections evenly across your selected networks. Each article is decoded and written straight to its place in its file; articles the server no longer has are left as gaps. Plexo doesn't repair or unpack downloads.
 
 Each network needs its own internet connection to add bandwidth. Plexo combines connections for its own downloads and requires no VPN or virtual network adapter.
 

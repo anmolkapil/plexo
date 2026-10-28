@@ -44,7 +44,12 @@ export interface TorrentProbeResult extends ProbeResultBase {
   torrent: TorrentInfo
 }
 
-export type ProbeResult = HttpProbeResult | TorrentProbeResult
+export interface NzbProbeResult extends ProbeResultBase {
+  kind: 'nzb'
+  nzb: NzbInfo
+}
+
+export type ProbeResult = HttpProbeResult | TorrentProbeResult | NzbProbeResult
 
 /** How the check of a magnet link is going, while it's still going: `noPeersYet` once its first
  * search came back empty and it's looking a little longer. */
@@ -60,6 +65,15 @@ export interface TorrentInfo {
   /** Where each file will be written, relative to the destination folder, already checked to be
    * safe (see main/download/torrent/paths.ts). */
   files: { path: string; length: number }[]
+}
+
+/** What an NZB holds: Usenet articles, grouped into the files they make up once decoded. */
+export interface NzbInfo {
+  /** Identifies the NZB among those probed lately (see main/download/nzb/nzbFile.ts). */
+  hash: string
+  /** Each file as it will be saved in the download's folder, and what its articles add up to:
+   * a little more than the file itself, since yEnc encodes it with some overhead. */
+  files: { name: string; bytes: number; segments: number }[]
 }
 
 /** One of a torrent download's files, for listing them while it runs. */
@@ -151,7 +165,18 @@ export interface TorrentPieceState extends WorkUnitState {
   provisionalBytes: number
 }
 
-export type DownloadUnitState = HttpBlockState | TorrentPieceState
+/** `missing`: the news server no longer has the article, or sent it damaged. What the article
+ * held is left as zeros in its file, for a par2 repair to restore. */
+export type NzbSegmentStatus = HttpBlockStatus | 'missing'
+
+/** One Usenet article of an NZB download. Its range is in the NZB's own byte count, the articles
+ * as posted, one after the other: the files' real sizes are only known once they come in. */
+export interface NzbSegmentState extends WorkUnitState {
+  kind: 'nzb'
+  status: NzbSegmentStatus
+}
+
+export type DownloadUnitState = HttpBlockState | TorrentPieceState | NzbSegmentState
 
 /**
  * - on: in use.
@@ -262,18 +287,51 @@ export interface TorrentDownloadState extends DownloadStateBase {
   uploadSpeedBytesPerSec: number
 }
 
-export type DownloadState = HttpDownloadState | TorrentDownloadState
+/** One file of an NZB download. */
+export interface NzbFileState {
+  /** As it is saved, in the download's folder. */
+  name: string
+  /** What its articles add up to, as the NZB counts them. */
+  bytes: number
+  /** Its real size, from its articles' yEnc headers; unset until one has come in. */
+  size?: number
+  segments: number
+  /** Articles the server didn't have, or sent damaged (see NzbSegmentStatus). */
+  missing: number
+}
+
+/** A Usenet download: an NZB's articles, fetched over connections to the user's news server. Its
+ * streams are those connections, its blocks the articles. */
+export interface NzbDownloadState extends DownloadStateBase {
+  kind: 'nzb'
+  networks: HttpDownloadNetwork[]
+  streams: HttpStreamState[]
+  peakStreams: number
+  blocks: NzbSegmentState[]
+  totalBlocks: number
+  nzbFiles: NzbFileState[]
+  /** Of `totalBytes`, the bytes of articles that are missing. */
+  missingBytes: number
+  /** The news server it downloads from, by host name. */
+  server: string
+}
+
+export type DownloadState = HttpDownloadState | TorrentDownloadState | NzbDownloadState
 
 /** A finished download as history keeps it: its state without the work units and connections,
  * which only a running download needs. */
 export type FinishedDownload = (
-  Omit<HttpDownloadState, 'blocks' | 'streams'> | Omit<TorrentDownloadState, 'pieces' | 'peers'>
+  | Omit<HttpDownloadState, 'blocks' | 'streams'>
+  | Omit<TorrentDownloadState, 'pieces' | 'peers'>
+  | Omit<NzbDownloadState, 'blocks' | 'streams'>
 ) & {
-  /** The blocks or pieces it was written in (a torrent's: those its chosen files needed). */
+  /** The blocks or pieces it was written in (a torrent's: those its chosen files needed; an
+   * NZB's: its articles that came in). */
   unitsWritten: number
   /** Set when listed: its file or folder is no longer where it was saved. */
   missing?: boolean
-  /** Chosen torrent files relative to its destination folder, retained for safe file removal. */
+  /** Chosen torrent files (or an NZB's files) relative to its destination folder, retained for
+   * safe file removal. */
   downloadedFiles?: string[]
 }
 
@@ -293,7 +351,13 @@ export interface TorrentDownloadUpdate {
   pieces: TorrentPieceState[]
 }
 
-export type DownloadUpdate = HttpDownloadUpdate | TorrentDownloadUpdate
+export interface NzbDownloadUpdate {
+  seq: number
+  state: Omit<NzbDownloadState, 'blocks'>
+  blocks: NzbSegmentState[]
+}
+
+export type DownloadUpdate = HttpDownloadUpdate | TorrentDownloadUpdate | NzbDownloadUpdate
 
 /** User customization for one physical network, keyed by NetworkInterfaceInfo.id — lets a
  * cryptic OS device name (e.g. "feth0") get a real label, and a color distinct from its
@@ -447,4 +511,37 @@ export interface StartTorrentDownloadRequest extends StartDownloadRequestBase {
   selectedFiles?: number[]
 }
 
-export type StartDownloadRequest = StartHttpDownloadRequest | StartTorrentDownloadRequest
+export interface StartNzbDownloadRequest extends StartDownloadRequestBase {
+  kind: 'nzb'
+  /** The download starts from the NZB retained when it was probed (see NzbInfo.hash). */
+  nzbHash: string
+}
+
+export type StartDownloadRequest =
+  StartHttpDownloadRequest | StartTorrentDownloadRequest | StartNzbDownloadRequest
+
+/** The news server NZB downloads come from, as the window sees it: never its password. */
+export interface UsenetServer {
+  host: string
+  port: number
+  tls: boolean
+  username: string
+  /** How many connections the server allows at once, for every network together. */
+  connections: number
+  /** A password is set. */
+  hasPassword: boolean
+  /** Its password is kept only until Plexo quits: this computer offers no keychain to seal it
+   * with (see main/download/nzb/usenetServer.ts). */
+  passwordInMemory?: boolean
+}
+
+/** What the window sends to set the news server, or to test one. `password` left out keeps the
+ * one already saved. */
+export interface UsenetServerInput {
+  host: string
+  port: number
+  tls: boolean
+  username: string
+  connections: number
+  password?: string
+}

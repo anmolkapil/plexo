@@ -1,4 +1,10 @@
-import type { HttpBlockState, HttpStreamState, NetworkStatus, SpeedUnit } from '@shared/types'
+import type {
+  HttpBlockState,
+  HttpStreamState,
+  NetworkStatus,
+  NzbSegmentState,
+  SpeedUnit
+} from '@shared/types'
 import { useState } from 'react'
 import { DANGER, type NetworkVisual } from '../theme'
 import type { HttpNetworkGroup, NetworkGroup, TorrentNetworkGroup } from '../utils/format'
@@ -17,7 +23,9 @@ interface NetworkRowProps {
   visual: NetworkVisual
   sharePercent: number
   totalBytes?: number | null
-  blocks?: HttpBlockState[]
+  blocks?: (HttpBlockState | NzbSegmentState)[]
+  /** An NZB download's: its streams are connections to the news server, its blocks articles. */
+  usenet?: boolean
   onSwitch: (enabled: boolean) => void
 }
 
@@ -77,9 +85,9 @@ function ProgressBar({
 
 function streamProgress(
   stream: HttpStreamState,
-  blocks?: HttpBlockState[]
+  blocks?: (HttpBlockState | NzbSegmentState)[]
 ): {
-  block: HttpBlockState | undefined
+  block: HttpBlockState | NzbSegmentState | undefined
   done: boolean
   size: number
   downloaded: number
@@ -101,13 +109,16 @@ function streamProgress(
 function HttpStreamRows({
   group,
   visual,
-  blocks
+  blocks,
+  usenet = false
 }: {
   group: HttpNetworkGroup
   visual: NetworkVisual
-  blocks?: HttpBlockState[]
+  blocks?: (HttpBlockState | NzbSegmentState)[]
+  usenet?: boolean
 }): React.JSX.Element {
   const formatSpeed = useFormatSpeed()
+  const [name, unit] = usenet ? ['Connection', 'Article'] : ['Stream', 'Chunk']
   return (
     <>
       {group.streams.map((stream, index) => {
@@ -137,11 +148,11 @@ function HttpStreamRows({
             </div>
             <div role="cell" className="flex min-w-0 items-center gap-[6px]">
               <span className="font-medium whitespace-nowrap text-foreground">
-                Stream #{index + 1}
+                {name} #{index + 1}
               </span>
               {progress.block && (
                 <span className="rounded-[3px] border-[0.5px] border-border bg-secondary px-[4.5px] py-[1.5px] text-[9px] leading-none whitespace-nowrap text-muted-foreground">
-                  Chunk #{progress.block.index + 1}
+                  {unit} #{progress.block.index + 1}
                 </span>
               )}
               {/* A lit dot and a speed say it's fetching; only what isn't the usual gets a word. */}
@@ -176,7 +187,7 @@ function HttpStreamRows({
             </div>
             <ProgressBar
               className="h-[5px]"
-              label={`Stream #${index + 1} progress`}
+              label={`${name} #${index + 1} progress`}
               percent={progress.percent}
               color={visual.solid}
             />
@@ -371,6 +382,7 @@ export function NetworkRow({
   sharePercent,
   totalBytes,
   blocks,
+  usenet = false,
   onSwitch
 }: NetworkRowProps): React.JSX.Element {
   const formatSpeed = useFormatSpeed()
@@ -382,7 +394,7 @@ export function NetworkRow({
   const hasError = group.status === 'failed'
   const rounded = Math.round(sharePercent)
   const shareLabel = group.bytesDownloaded === 0 ? '0%' : rounded === 0 ? '<1%' : `${rounded}%`
-  const noun = group.transfer === 'http' ? 'stream' : 'peer'
+  const noun = group.transfer === 'torrent' ? 'peer' : usenet ? 'connection' : 'stream'
   return (
     <>
       <div
@@ -511,7 +523,7 @@ export function NetworkRow({
       </div>
       {expanded &&
         (group.transfer === 'http' ? (
-          <HttpStreamRows group={group} visual={visual} blocks={blocks} />
+          <HttpStreamRows group={group} visual={visual} blocks={blocks} usenet={usenet} />
         ) : (
           <PeerRows group={group} visual={visual} />
         ))}
