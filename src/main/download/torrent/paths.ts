@@ -5,8 +5,9 @@ import { posix, win32 } from 'node:path'
 // eslint-disable-next-line no-control-regex -- control characters are exactly what it strips
 export const STRIPPED_FROM_NAMES = /[<>:"/\\|?*\u0000-\u001F]/g
 // Unlike filename-reserved-regex's own check, this also catches the name with an extension:
-// Windows reserves CON.txt as well as CON.
-const WINDOWS_RESERVED = /^(con|prn|aux|nul|com\d|lpt\d)(\..*)?$/i
+// Windows reserves CON.txt as well as CON, and the superscript device names COM¹/²/³ and LPT¹/²/³
+// the same way as COM1 (see the Win32 "Naming a File" reserved names).
+const WINDOWS_RESERVED = /^(con|prn|aux|nul|com[0-9¹²³]|lpt[0-9¹²³])(\..*)?$/i
 // eslint-disable-next-line no-control-regex -- Windows can't save control characters either
 const WINDOWS_INVALID = /[<>:"|?*\u0000-\u001F]|[. ]$/
 const MAX_NAME_BYTES = 255
