@@ -473,8 +473,9 @@ export function checkEvents(sessions: DownloadState[][]): void {
         )
       } else if (state.status === 'downloading') {
         // A stream holds a block exactly while it is fetching it. A block has at most one stream
-        // fetching it for real and two racing it as hedges, and is in flight whenever the first
-        // is there. What the stream rows show is only as true as this.
+        // fetching it for real from where it has got to, two racing that one as hedges, and any
+        // number fetching parts split off further on; it is in flight whenever the first is
+        // there. What the stream rows show is only as true as this.
         const primaries = new Map<number, number>()
         const hedges = new Map<number, number>()
         for (const stream of state.streams) {
@@ -486,8 +487,14 @@ export function checkEvents(sessions: DownloadState[][]): void {
           )
           if (stream.currentBlockIndex === undefined) {
             assert.ok(!stream.hedge, `${label}: idle stream ${stream.id} is not racing`)
+            assert.ok(!stream.split, `${label}: idle stream ${stream.id} is not splitting`)
             continue
           }
+          assert.ok(
+            !(stream.hedge && stream.split),
+            `${label}: stream ${stream.id} is a hedge or a split, not both`
+          )
+          if (stream.split) continue
           const tally = stream.hedge ? hedges : primaries
           tally.set(stream.currentBlockIndex, (tally.get(stream.currentBlockIndex) ?? 0) + 1)
         }

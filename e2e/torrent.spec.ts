@@ -202,6 +202,25 @@ test.describe('torrents over two networks', () => {
     const done = await plexo.waitForTorrentStatus('completed', 60_000)
     expect(done.networks.find((network) => network.id === 'b')?.enabled).toBe(false)
   })
+
+  test('one seeder is reached over both networks, and fills both', async ({ plexo }) => {
+    const data = seededBytes(8 * MB, 44)
+    const torrent = await swarm.seed([named(data, 'twin.bin')], {
+      pieceLength: PIECE,
+      uploadLimit: 1 * MB
+    })
+
+    await plexo.start(await torrentFileOnDisk(torrent), sha256(data), { networks: ['a', 'b'] })
+    const done = await plexo.waitForTorrentStatus('completed', 30_000)
+    for (const id of ['a', 'b']) {
+      const network = done.networks.find((entry) => entry.id === id)!
+      expect(network.bytesDownloaded, `network ${id} delivered pieces`).toBeGreaterThan(0)
+    }
+    const seen = new Set(
+      plexo.sessions.flat().flatMap((state) => (state.kind === 'torrent' ? state.peers : []))
+    )
+    expect(new Set([...seen].map((peer) => peer.interfaceId))).toEqual(new Set(['a', 'b']))
+  })
 })
 
 test.describe('uploading', () => {

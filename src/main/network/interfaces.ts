@@ -1,5 +1,6 @@
 import { execFile } from 'node:child_process'
-import { readdir, readFile, realpath } from 'node:fs/promises'
+import { existsSync } from 'node:fs'
+import { readdir, readFile, readlink, realpath } from 'node:fs/promises'
 import { networkInterfaces } from 'node:os'
 import { promisify } from 'node:util'
 import type { NetworkAddress, NetworkInterfaceInfo, NetworkInterfaceKind } from '../../shared/types'
@@ -12,6 +13,26 @@ interface WindowsAdapter {
   Name: string
   InterfaceDescription: string
   NdisPhysicalMedium: number
+}
+
+interface LinuxAdapter {
+  displayName: string
+  kind: NetworkInterfaceKind
+  /** The USB serial of the device behind a USB network adapter, such as a tethered phone. */
+  usbSerial?: string
+}
+
+/** A phone shared over USB gets a random MAC each time it's plugged in, and so a new enx… name
+ * that matches nothing saved for it. The serial its USB device reports doesn't change: the network
+ * function is …/usb1/1-2/1-2:1.0, and its parent, 1-2, is the phone. */
+async function readUsbSerial(sysPath: string): Promise<string | undefined> {
+  try {
+    const usbDevice = await realpath(`${sysPath}/device/..`)
+    if (!usbDevice.includes('/usb')) return undefined
+    return (await readFile(`${usbDevice}/serial`, 'utf8')).trim() || undefined
+  } catch {
+    return undefined
+  }
 }
 
 /**
@@ -56,68 +77,6 @@ function classifyLinuxDevice(device: string): NetworkInterfaceKind {
   return 'other'
 }
 
-interface LinuxDevice {
-  /** A bridge or veth no traffic leaves the computer through: Docker's br-<id> and docker0,
-   * libvirt's virbr0, and the veth pairs plugged into them. */
-  internalOnly: boolean
-  /** The USB device behind a tethered phone: its serial, and what it calls itself. */
-  usb?: { serial: string; name: string }
-}
-
-const readSysfs = (path: string): Promise<string | undefined> =>
-  readFile(path, 'utf8').then(
-    (text) => text.trim() || undefined,
-    () => undefined
-  )
-
-/** A phone shared over USB gets a random MAC each time it's plugged in, and so a new enx… name
- * that matches nothing saved for it. The USB serial it reports doesn't change, so that names it. */
-async function readLinuxDevice(device: string): Promise<LinuxDevice> {
-  const sysfs = `/sys/class/net/${device}`
-  const path = await realpath(sysfs).catch(() => '')
-  if (path.startsWith('/sys/devices/virtual/')) {
-    if (/^veth/.test(device)) return { internalOnly: true }
-    // A bridge is internal unless a real device is plugged into it (br0 over eth0 is the
-    // computer's own network); Docker's and libvirt's only ever hold veths and taps.
-    const ports = await readdir(`${sysfs}/brif`).catch(() => null)
-    if (!ports) return { internalOnly: false }
-    const portPaths = await Promise.all(
-      ports.map((port) => realpath(`${sysfs}/brif/${port}`).catch(() => ''))
-    )
-    return { internalOnly: !portPaths.some((p) => p && !p.includes('/virtual/')) }
-  }
-  // …/usb1/1-2/1-2:1.0 is the network function; its parent, 1-2, is the phone.
-  const usbDevice = await realpath(`${sysfs}/device/..`).catch(() => '')
-  if (!usbDevice.includes('/usb')) return { internalOnly: false }
-  const [serial, manufacturer, product] = await Promise.all(
-    ['serial', 'manufacturer', 'product'].map((file) => readSysfs(`${usbDevice}/${file}`))
-  )
-  if (!serial) return { internalOnly: false }
-  const productName = product?.replace(/_/g, ' ')
-  const name =
-    productName && manufacturer && !productName.toLowerCase().startsWith(manufacturer.toLowerCase())
-      ? `${manufacturer} ${productName}`
-      : (productName ?? manufacturer ?? device)
-  return { internalOnly: false, usb: { serial, name } }
-}
-
-async function getLinuxDevices(devices: string[]): Promise<Map<string, LinuxDevice>> {
-  if (process.platform !== 'linux') return new Map()
-  const read = await Promise.all(
-    devices.map(async (device) => [device, await readLinuxDevice(device)] as const)
-  )
-  // Ids must be unique: a serial two devices share (cheap phones that all report
-  // 0123456789ABCDEF, or one phone with two network functions) names neither of them.
-  const serials = read.flatMap(([, info]) => (info.usb ? [info.usb.serial] : []))
-  const shared = new Set(serials.filter((serial, i) => serials.indexOf(serial) !== i))
-  return new Map(
-    read.map(([device, info]) => [
-      device,
-      info.usb && shared.has(info.usb.serial) ? { internalOnly: false } : info
-    ])
-  )
-}
-
 function classifyInterface(hardwarePortName: string): NetworkInterfaceKind {
   const name = hardwarePortName.toLowerCase()
   if (/wi-?fi|wireless|wlan|802\.11|airport/.test(name)) return 'wifi'
@@ -158,6 +117,109 @@ async function getWindowsAdapters(): Promise<Map<string, WindowsAdapter>> {
   }
 }
 
+/**
+ * Queries Linux sysfs and udev to detect hardware interfaces (PCI, USB, Wi-Fi, Ethernet)
+ * and filter out virtual host/container bridges (e.g. docker0, br-*, veth*).
+ */
+async function getLinuxAdapters(): Promise<Map<string, LinuxAdapter>> {
+  const adapters = new Map<string, LinuxAdapter>()
+  if (process.platform !== 'linux') return adapters
+
+  let devices: string[]
+  try {
+    devices = await readdir('/sys/class/net')
+  } catch {
+    return adapters
+  }
+
+  await Promise.all(
+    devices.map(async (device) => {
+      if (device === 'lo') return
+      // Filter out internal container, hypervisor, and dummy bridges/interfaces
+      if (/^(docker|br-|veth|virbr|vboxnet|vmnet|cni|flannel|cbr|dummy)/i.test(device)) return
+
+      const sysPath = `/sys/class/net/${device}`
+      let isVirtual = false
+      try {
+        const link = await readlink(sysPath)
+        isVirtual = link.includes('/devices/virtual/')
+      } catch {
+        /* ignore */
+      }
+
+      // Pure virtual devices with no hardware backing and no wireless/phy capabilities
+      if (
+        isVirtual &&
+        !existsSync(`${sysPath}/device`) &&
+        !existsSync(`${sysPath}/wireless`) &&
+        !existsSync(`${sysPath}/phy80211`)
+      ) {
+        return
+      }
+
+      let isWireless =
+        existsSync(`${sysPath}/wireless`) ||
+        existsSync(`${sysPath}/phy80211`) ||
+        /^wl/i.test(device)
+
+      let isUsb = /^usb|^rndis/i.test(device)
+      try {
+        const link = await readlink(sysPath)
+        if (link.includes('/usb')) isUsb = true
+      } catch {
+        /* ignore */
+      }
+
+      let udevModel = ''
+      try {
+        const { stdout } = await execFileAsync('udevadm', ['info', '-q', 'property', sysPath], {
+          timeout: 1000
+        })
+        for (const line of stdout.split('\n')) {
+          if (line.startsWith('ID_BUS=usb')) isUsb = true
+          if (line.startsWith('DEVTYPE=wlan')) isWireless = true
+          if (line.startsWith('ID_MODEL_FROM_DATABASE=')) {
+            udevModel = line.slice('ID_MODEL_FROM_DATABASE='.length).trim()
+          }
+        }
+      } catch {
+        /* ignore */
+      }
+
+      let kind: NetworkInterfaceKind = 'other'
+      if (isWireless) kind = 'wifi'
+      else if (isUsb) kind = 'usb'
+      else if (/^(eth|en)/i.test(device)) kind = 'ethernet'
+      else kind = classifyInterface(device)
+
+      const displayName =
+        udevModel ||
+        (kind === 'wifi'
+          ? 'Wi-Fi'
+          : kind === 'ethernet'
+            ? 'Ethernet'
+            : kind === 'usb'
+              ? 'USB Network'
+              : device)
+
+      const usbSerial = kind === 'usb' ? await readUsbSerial(sysPath) : undefined
+      adapters.set(device, { displayName, kind, usbSerial })
+    })
+  )
+
+  // Ids must be unique: a serial two devices share (cheap phones that all report
+  // 0123456789ABCDEF, or one phone with two network functions) names neither of them.
+  const serials = [...adapters.values()].flatMap((adapter) =>
+    adapter.usbSerial ? [adapter.usbSerial] : []
+  )
+  const shared = new Set(serials.filter((serial, i) => serials.indexOf(serial) !== i))
+  for (const adapter of adapters.values()) {
+    if (adapter.usbSerial && shared.has(adapter.usbSerial)) delete adapter.usbSerial
+  }
+
+  return adapters
+}
+
 /** Computes the CIDR subnet (e.g. "192.168.1.0/24") from an IPv4 address and netmask. */
 export function ipv4Subnet(address: string, netmask: string): string | null {
   const ipParts = address.split('.').map(Number)
@@ -182,7 +244,7 @@ export function ipv4Subnet(address: string, netmask: string): string | null {
  * takes a child process, while the addresses themselves are one cheap system call. */
 let labels: {
   devices: string
-  lookup: Promise<[Map<string, string>, Map<string, WindowsAdapter>, Map<string, LinuxDevice>]>
+  lookup: Promise<[Map<string, string>, Map<string, WindowsAdapter>, Map<string, LinuxAdapter>]>
 } | null = null
 
 /**
@@ -197,20 +259,14 @@ export async function listActiveInterfaces(): Promise<NetworkInterfaceInfo[]> {
   if (labels?.devices !== devices) {
     labels = {
       devices,
-      lookup: Promise.all([
-        getMacHardwarePortNames(),
-        getWindowsAdapters(),
-        getLinuxDevices(Object.keys(all))
-      ])
+      lookup: Promise.all([getMacHardwarePortNames(), getWindowsAdapters(), getLinuxAdapters()])
     }
   }
-  const [hardwarePorts, windowsAdapters, linuxDevices] = await labels.lookup
+  const [hardwarePorts, windowsAdapters, linuxAdapters] = await labels.lookup
   const result: NetworkInterfaceInfo[] = []
 
   for (const [device, addresses] of Object.entries(all)) {
     if (!addresses) continue
-    const linux = linuxDevices.get(device)
-    if (linux?.internalOnly) continue
     const usable: NetworkAddress[] = addresses
       .filter(
         (addr) =>
@@ -230,23 +286,31 @@ export async function listActiveInterfaces(): Promise<NetworkInterfaceInfo[]> {
       }))
     if (usable.length === 0) continue
 
+    // On Linux, skip internal/virtual bridge adapters that aren't recognized hardware/adapters
+    if (process.platform === 'linux' && linuxAdapters.size > 0 && !linuxAdapters.has(device)) {
+      continue
+    }
+
     const hardwareName = hardwarePorts.get(device)
     const adapter = windowsAdapters.get(device)
+    const linuxAdapter = linuxAdapters.get(device)
+
     let kind =
-      process.platform === 'linux'
+      linuxAdapter?.kind ??
+      (process.platform === 'linux'
         ? classifyLinuxDevice(device)
-        : classifyInterface(adapter?.InterfaceDescription ?? hardwareName ?? device)
+        : classifyInterface(adapter?.InterfaceDescription ?? hardwareName ?? device))
     // NDIS media: 1 = wireless LAN, 9 = native 802.11, 14 = Ethernet (802.3).
     if (adapter?.NdisPhysicalMedium === 1 || adapter?.NdisPhysicalMedium === 9) kind = 'wifi'
     else if (kind === 'other' && adapter?.NdisPhysicalMedium === 14) kind = 'ethernet'
+
+    const displayName = linuxAdapter?.displayName ?? hardwareName ?? device
+
     result.push({
-      // A tethered phone keeps its saved name and color across replugs (see readLinuxDevice).
-      id: linux?.usb ? `usb:${linux.usb.serial}` : device,
+      // A tethered phone keeps its saved name and color across replugs (see readUsbSerial).
+      id: linuxAdapter?.usbSerial ? `usb:${linuxAdapter.usbSerial}` : device,
       device,
-      // What the OS shows people: macOS's hardware port ("Wi-Fi", "iPhone USB"), else the device —
-      // on Windows its alias ("Wi-Fi", "Ethernet 2"), on Linux its name (wlp2s0), or for a phone
-      // what it calls itself ("SAMSUNG Android").
-      displayName: hardwareName ?? linux?.usb?.name ?? device,
+      displayName,
       addresses: usable,
       kind,
       mac: addresses.find((addr) => addr.mac && addr.mac !== '00:00:00:00:00:00')?.mac

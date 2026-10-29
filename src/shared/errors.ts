@@ -43,6 +43,26 @@ const ERROR_HINTS: Array<{ pattern: RegExp; message: string }> = [
       'The downloaded file has an unexpected size. Plexo couldn’t save the completed file. Try downloading again.'
   },
   {
+    pattern: /Proxy authentication required|HTTP 407/i,
+    message: 'Proxy authentication failed — check your proxy username and password.'
+  },
+  {
+    pattern: /SOCKS5 authentication failed/i,
+    message: 'SOCKS5 proxy authentication failed — check your username and password.'
+  },
+  {
+    pattern: /Connecting to proxy .* timed out/i,
+    message: 'Connecting to proxy timed out — check the proxy host, port, and your network.'
+  },
+  {
+    pattern: /Proxy CONNECT failed/i,
+    message: 'The HTTP proxy rejected the connection request.'
+  },
+  {
+    pattern: /SOCKS[45] connection (?:rejected|failed)/i,
+    message: 'The SOCKS proxy rejected the connection — check your proxy settings.'
+  },
+  {
     pattern: /ENOTFOUND|EAI_AGAIN/,
     message: 'Plexo couldn’t find the server. Check the link and your connection.'
   },

@@ -1,6 +1,7 @@
 import { expect, test } from '@playwright/test'
 import fc from 'fast-check'
 import {
+  partEnd,
   pickWork,
   type AttemptView,
   type SchedulerPolicy,
@@ -372,4 +373,218 @@ test('no racing while the disk is behind, and racing resumes once it keeps up', 
   })
   expect(pick({ ...s, diskBehind: true }, 1, 'b')).toBeUndefined()
   expect(pick(s, 1, 'b')).toBe('hedge:0')
+})
+
+test.describe('scheduler: splitting what is left', () => {
+  // Parts of 1000-byte blocks, halved down to 100 bytes a side.
+  const SPLIT: SchedulerPolicy = { ...POLICY, minSplitBytes: 100 }
+  const part = (
+    streamId: number,
+    networkId: string,
+    startOffset: number,
+    end: number,
+    received: number,
+    kind: AttemptView['kind'] = 'primary'
+  ): AttemptView => ({
+    ...attempt(streamId, networkId, kind),
+    startOffset,
+    end,
+    networkReceived: received
+  })
+  const split = (s: SchedulerState, id = 9, networkId = 'a'): string | undefined => {
+    const work = pickWork(s, { id, networkId, speedBytesPerSec: 100 }, NOW, SPLIT)
+    return work && `${work.kind}:${work.block.index}@${work.start ?? ''}-${work.end ?? ''}`
+  }
+  // Holders as fast as anyone free, as from a server that caps each connection: racing them
+  // wouldn't pay.
+  const capped = (
+    attempts: [number, AttemptView[]][],
+    blocks = [block(0, 'downloading'), block(1, 'downloading')],
+    over: Partial<SchedulerState> = {}
+  ): SchedulerState => ({
+    ...state({
+      blocks,
+      streams: [
+        stream(0, 'a', 'downloading', 100),
+        stream(1, 'a', 'downloading', 100),
+        stream(2, 'a', 'downloading', 100),
+        stream(9, 'a', 'pending', 100)
+      ],
+      attempts
+    }),
+    ...over
+  })
+
+  test('a free stream takes the back half of the part with the most bytes left', () => {
+    const s = capped([
+      [0, [part(0, 'a', 0, 1000, 600)]],
+      [1, [part(1, 'a', 0, 1000, 200)]]
+    ])
+    // Block 1 has 800 left, from byte 200: the free stream takes 600–1000.
+    expect(split(s)).toBe('split:1@600-1000')
+  })
+
+  test('a part split off before can be split again', () => {
+    const s = capped([[0, [part(0, 'a', 0, 500, 400), part(1, 'a', 500, 1000, 50, 'split')]]])
+    expect(split(s)).toBe('split:0@775-1000')
+  })
+
+  test('no speeds come into it: a holder far faster than the free stream is still split', () => {
+    const s = capped([[0, [part(0, 'a', 0, 1000, 0)]]])
+    const fast = { ...s, streams: [stream(0, 'a', 'downloading', 1e9), stream(9, 'a', 'pending')] }
+    expect(split(fast)).toBe('split:0@500-1000')
+  })
+
+  test('nothing is split smaller than the minimum on either side', () => {
+    expect(split(capped([[0, [part(0, 'a', 0, 1000, 800)]]]))).toBe('split:0@900-1000')
+    expect(split(capped([[0, [part(0, 'a', 0, 1000, 801)]]]))).toBeUndefined()
+  })
+
+  test('never while a block is still waiting: that comes first', () => {
+    const s = capped([[0, [part(0, 'a', 0, 1000, 0)]]], [block(0, 'downloading'), block(1)])
+    expect(split(s)).toBe('primary:1@-')
+  })
+
+  test('not while the disk is behind', () => {
+    const s = capped([[0, [part(0, 'a', 0, 1000, 0)]]], undefined, { diskBehind: true })
+    expect(split(s)).toBeUndefined()
+  })
+
+  test('not a block of unknown length', () => {
+    const open = { ...block(0, 'downloading'), rangeEnd: null }
+    expect(split(capped([[0, [part(0, 'a', 0, 1000, 0)]]], [open]))).toBeUndefined()
+  })
+
+  test('not a part being raced, nor one on its way out', () => {
+    const raced = capped([
+      [0, [part(0, 'a', 0, 1000, 0), part(1, 'a', 0, 1000, 0, 'hedge')]],
+      [1, [{ ...part(2, 'a', 0, 1000, 0), abortReason: 'refresh' }]]
+    ])
+    expect(split(raced)).toBeUndefined()
+  })
+
+  test('not by a network that got nothing from the block', () => {
+    const s = capped([[0, [part(0, 'a', 0, 1000, 0)]]], undefined, {
+      avoid: new Map([[0, 'a']])
+    })
+    expect(split(s)).toBeUndefined()
+  })
+
+  test('racing still comes first when it would clearly pay', () => {
+    const s = capped([[0, [part(0, 'a', 0, 1000, 0)]]])
+    const crawling = {
+      ...s,
+      streams: [stream(0, 'a', 'downloading', 1), stream(9, 'a', 'pending')]
+    }
+    expect(
+      pickWork(crawling, { id: 9, networkId: 'a', speedBytesPerSec: 100 }, NOW, SPLIT)?.kind
+    ).toBe('hedge')
+  })
+
+  test('a race is over what is left of the part from the frontier, not the whole block', () => {
+    // 100 bytes left before the split at 500: not worth racing at 10 B/s against a 5 s bar.
+    const s = capped(
+      [[0, [part(0, 'a', 0, 500, 400), part(1, 'a', 500, 1000, 0, 'split')]]],
+      [block(0, 'downloading', 400)]
+    )
+    const slow = { ...s, streams: [stream(0, 'a', 'downloading', 30), stream(9, 'a', 'pending')] }
+    expect(pickWork(slow, { id: 9, networkId: 'a' }, NOW, POLICY)).toBeUndefined()
+  })
+
+  test('what a split left unfetched when it stopped is taken whole, before anything else', () => {
+    // A split of 500–1000 stopped at 700: 700–1000 is nobody's.
+    const s = capped([[0, [part(0, 'a', 0, 500, 100)]]], [block(0, 'downloading', 100)], {
+      segments: new Map([[0, [{ start: 500, end: 700 }]]]),
+      diskBehind: true
+    })
+    expect(split(s)).toBe('split:0@700-1000')
+  })
+
+  test('a gap is only looked for behind someone fetching from the frontier', () => {
+    const s = capped([[0, [part(1, 'a', 500, 1000, 0, 'split')]]], [block(0, 'downloading', 100)])
+    expect(split(s)).not.toMatch(/@100-/)
+  })
+
+  test('partEnd stops a part where the next one begins', () => {
+    const b = block(0, 'downloading', 100)
+    const attempts = [part(1, 'a', 600, 1000, 0, 'split')]
+    expect(partEnd(b, attempts, [{ start: 300, end: 400 }], 100)).toBe(300)
+    expect(partEnd(b, attempts, [], 100)).toBe(600)
+    expect(partEnd(b, [], [], 100)).toBe(1000)
+    expect(partEnd({ ...b, rangeEnd: null }, [], [], 0)).toBeNull()
+  })
+
+  test('whatever is handed out is a stretch nobody else is fetching or has', () => {
+    // Blocks cut into parts at random: each part is held, raced, or already in as a segment.
+    fc.assert(
+      fc.property(
+        fc.array(
+          fc.record({
+            frontier: fc.integer({ min: 0, max: 400 }),
+            cuts: fc.uniqueArray(fc.integer({ min: 401, max: 999 }), { maxLength: 4 }),
+            fates: fc.array(fc.constantFrom('held', 'segment', 'gap'), {
+              minLength: 5,
+              maxLength: 5
+            }),
+            received: fc.array(fc.integer({ min: 0, max: 600 }), { minLength: 5, maxLength: 5 }),
+            raced: fc.boolean()
+          }),
+          { minLength: 1, maxLength: 3 }
+        ),
+        (rows) => {
+          const blocks = rows.map((r, i) => block(i, 'downloading', r.frontier))
+          const attempts: [number, AttemptView[]][] = []
+          const segments = new Map<number, { start: number; end: number }[]>()
+          let id = 0
+          rows.forEach((r, i) => {
+            const bounds = [r.frontier, ...[...r.cuts].sort((a, b) => a - b), LENGTH]
+            const held: AttemptView[] = []
+            const done: { start: number; end: number }[] = []
+            for (let k = 0; k + 1 < bounds.length; k++) {
+              const [start, end] = [bounds[k], bounds[k + 1]]
+              const fate = k === 0 ? 'held' : r.fates[k]
+              const got = Math.min(r.received[k], end - start)
+              if (fate === 'held') {
+                held.push(part(id++, 'a', start, end, got, k === 0 ? 'primary' : 'split'))
+                if (k === 0 && r.raced) held.push(part(id++, 'a', start, end, got, 'hedge'))
+              } else if (fate === 'segment' && got > 0) {
+                done.push({ start, end: start + got })
+              }
+            }
+            attempts.push([i, held])
+            segments.set(i, done)
+          })
+          const s: SchedulerState = {
+            ...state({ blocks, streams: [stream(99, 'a', 'pending')], attempts }),
+            segments
+          }
+          const work = pickWork(s, { id: 99, networkId: 'a' }, NOW, SPLIT)
+          if (!work || work.kind !== 'split') return
+          const start = work.start!
+          const end = work.end!
+          expect(start).toBeGreaterThan(work.block.bytesDownloaded)
+          expect(end).toBeGreaterThan(start)
+          expect(end).toBeLessThanOrEqual(LENGTH)
+          // Nothing already in overlaps it.
+          for (const segment of segments.get(work.block.index) ?? []) {
+            expect(segment.end <= start || segment.start >= end).toBe(true)
+          }
+          // Whoever is fetching across its start has yet to reach it, by at least the minimum,
+          // and isn't being raced; nobody else is fetching any of it.
+          for (const other of s.attempts.get(work.block.index) ?? []) {
+            const from = other.startOffset!
+            const to = other.end!
+            if (from < start && to > start) {
+              expect(from + other.networkReceived! + 100).toBeLessThanOrEqual(start)
+              expect(end - start).toBeGreaterThanOrEqual(100)
+              expect(to).toBe(end)
+              expect(other.kind === 'split' || !rows[work.block.index].raced).toBe(true)
+            } else {
+              expect(to <= start || from >= end).toBe(true)
+            }
+          }
+        }
+      )
+    )
+  })
 })

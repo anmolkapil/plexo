@@ -1,6 +1,15 @@
 import type { ProbeResult } from '@shared/types'
 import { cn } from 'cn'
-import { AlertTriangle, ChevronLeft, ChevronRight, FolderOpen, Globe, Lock, X } from 'lucide-react'
+import {
+  AlertTriangle,
+  ChevronLeft,
+  ChevronRight,
+  FolderOpen,
+  Globe,
+  Lock,
+  Pencil,
+  X
+} from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 import { useFormatSpeedLimit } from '../hooks/useFormatSpeed'
 import { useNetworkUsage } from '../hooks/useNetworks'
@@ -20,6 +29,7 @@ import { Dialog, DialogContent, DialogTitle } from './ui/dialog'
 import { ToggleGroup, ToggleGroupItem } from './ui/toggle-group'
 import { TorrentFileList } from './TorrentFiles'
 import { Tooltip, TooltipContent, TooltipTrigger } from './ui/tooltip'
+import { NetworkEditPopover } from './NetworkEditPopover'
 
 type ProbeState =
   | { status: 'idle' }
@@ -539,43 +549,102 @@ function NewDownloadForm({ onDone }: { onDone: () => void }): React.JSX.Element 
               const visual = networkVisual(iface.id, iface.kind, iface.displayName)
               const selected = selectedInterfaceIds.includes(iface.id)
               const reached = isReached(iface.id)
-              const speedLimit = networkPreferences[iface.id]?.speedLimit
+              const preference = networkPreferences[iface.id]
+              const speedLimit = preference?.speedLimit
+              const proxy = preference?.proxy
+              const isProxyActive = Boolean(proxy?.enabled && proxy.host)
               // What's worth knowing before it's picked: it can't be, or it's capped.
               const note = reached
                 ? 'Data limit reached'
                 : speedLimit !== undefined
                   ? `Limited to ${formatSpeedLimit(speedLimit)}`
                   : null
-              const chip = (
+
+              const toggleButton = (
                 <button
-                  key={iface.id}
                   type="button"
                   aria-pressed={selected}
                   // Not `disabled`: a disabled button never gets the hover that says why.
                   aria-disabled={reached || undefined}
                   onClick={() => handleToggleInterface(iface.id)}
                   className={cn(
-                    'flex h-7 items-center gap-1.5 rounded-full border px-2.5 text-[12.5px] transition-colors',
+                    'flex items-center gap-1.5 focus-visible:outline-none cursor-pointer select-none py-1',
+                    reached && 'cursor-not-allowed line-through'
+                  )}
+                >
+                  <span
+                    className="size-2 rounded-full shrink-0"
+                    style={{ background: visual.solid }}
+                  />
+                  <span className="truncate">{visual.name}</span>
+                </button>
+              )
+
+              return (
+                <div
+                  key={iface.id}
+                  className={cn(
+                    'group/chip inline-flex h-7 items-center rounded-full border text-[12.5px] transition-colors pl-2.5 pr-1 gap-1',
                     selected
                       ? 'border-transparent'
                       : 'border-border text-[var(--text-secondary)] opacity-70',
-                    reached && 'cursor-not-allowed line-through opacity-50'
+                    reached && 'opacity-50'
                   )}
                   style={
                     selected ? { background: visual.bg, borderColor: visual.border } : undefined
                   }
                 >
-                  <span className="size-2 rounded-full" style={{ background: visual.solid }} />
-                  {visual.name}
-                </button>
-              )
-              return note === null ? (
-                chip
-              ) : (
-                <Tooltip key={iface.id}>
-                  <TooltipTrigger render={chip} />
-                  <TooltipContent>{note}</TooltipContent>
-                </Tooltip>
+                  {note === null ? (
+                    toggleButton
+                  ) : (
+                    <Tooltip>
+                      <TooltipTrigger render={toggleButton} />
+                      <TooltipContent>{note}</TooltipContent>
+                    </Tooltip>
+                  )}
+
+                  <NetworkEditPopover
+                    interfaceId={iface.id}
+                    interfaceKind={iface.kind}
+                    osName={iface.displayName}
+                    defaultFocusProxy={true}
+                    trigger={
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="xs"
+                        aria-label={
+                          isProxyActive
+                            ? `Configure proxy (${proxy!.type.toUpperCase()}) or edit ${visual.name}`
+                            : `Configure proxy or edit ${visual.name}`
+                        }
+                        className={cn(
+                          'h-5 px-1.5 rounded-full text-muted-foreground hover:text-foreground shrink-0 gap-1 flex items-center font-mono text-[9px] uppercase tracking-[0.04em]',
+                          isProxyActive
+                            ? 'font-semibold text-foreground bg-foreground/10 hover:bg-foreground/15'
+                            : 'hover:bg-foreground/10'
+                        )}
+                      >
+                        {isProxyActive ? (
+                          <>
+                            <span>PROXY · {proxy!.type}</span>
+                            <Pencil className="size-2.5 opacity-70" />
+                          </>
+                        ) : (
+                          <>
+                            <Pencil className="size-2.5 opacity-70" />
+                            <span className="capitalize font-sans text-[10.5px]">Proxy</span>
+                          </>
+                        )}
+                      </Button>
+                    }
+                    tooltip={
+                      isProxyActive
+                        ? `Proxy active (${proxy!.type.toUpperCase()} · ${proxy!.host}:${proxy!.port}) — click to configure`
+                        : `Configure proxy or edit ${visual.name}`
+                    }
+                  />
+                </div>
               )
             })}
           </div>
