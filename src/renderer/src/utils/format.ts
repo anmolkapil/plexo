@@ -130,11 +130,6 @@ export function describeFileCount(chosen: number, total: number): string {
   return chosen === total ? files : `${chosen} of ${files}`
 }
 
-/** A torrent file's path within the torrent's own folder, which every path starts with. */
-export function pathInTorrent(path: string): string {
-  return path.split(/[\\/]/).slice(1).join('/') || path
-}
-
 /** What a download fetches: all of it, bar a torrent's pieces no chosen file needs. */
 export function wantedBytes(download: DownloadState | FinishedDownload): number {
   return download.totalBytes - (download.kind === 'torrent' ? download.skippedBytes : 0)
@@ -242,15 +237,6 @@ export function groupByNetwork(download: DownloadState): NetworkGroup[] {
  * carried part of the file. */
 export function networksInPlay<T extends DownloadNetwork>(networks: T[]): T[] {
   return networks.filter((network) => network.enabled || network.bytesDownloaded > 0)
-}
-
-/** Whether a network is carrying bytes right now: an HTTP stream fetching, or a torrent peer
- * receiving. Read from connection status rather than speed, so every view of a download agrees
- * on which networks are live even between speed samples. */
-export function networkActive(group: NetworkGroup): boolean {
-  return group.transfer === 'http'
-    ? group.streams.some((stream) => stream.status === 'downloading')
-    : group.peers.some((peer) => peer.status === 'receiving')
 }
 
 /** Shortens an absolute path under the user's home directory to a "~/..." form for display. */
