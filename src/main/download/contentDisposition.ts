@@ -130,8 +130,8 @@ export function parseContentDispositionFilename(disposition: string): string | n
     return decodeRfc2047Filename(decoded)
   }
 
-  // Unquoted token fallback
-  const tokenMatch = filename ? [filename.raw, filename.raw] : null
+  // Unquoted token fallback. A quoted one that got here was empty: the quotes aren't a name.
+  const tokenMatch = filename && !filename.quoted ? [filename.raw, filename.raw] : null
   if (tokenMatch?.[1]) {
     let decoded: string
     try {
