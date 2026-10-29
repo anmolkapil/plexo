@@ -106,6 +106,45 @@ test.describe('happy paths @smoke', () => {
     expect(origin.chunkRequests().filter((request) => request.range !== null)).toEqual([])
   })
 
+  test('server that ignores the end of a range: one stream, whole file', async ({
+    plexo,
+    serve
+  }) => {
+    const origin = await serve({ size: 10 * BLOCK })
+    origin.setRule(({ range }) => (range ? 'wholeRange' : 'ok'))
+    const probe = await plexo.api.probeUrl(origin.url())
+    expect(probe).toMatchObject({
+      kind: 'http',
+      supportsRanges: false,
+      totalBytes: 10 * BLOCK
+    })
+    await plexo.start(origin.url(), origin.sha256)
+    const state = await plexo.waitForHttpStatus('completed')
+    expect(state.streams).toHaveLength(1)
+    // The transfer asks for the whole file, not a range the server would overrun.
+    expect(origin.chunkRequests().filter((request) => request.range !== null)).toEqual([])
+  })
+
+  test('server that names the file end but sends only the range: streams still split', async ({
+    plexo,
+    serve
+  }) => {
+    const origin = await serve({ size: 10 * BLOCK })
+    // Cloudflare-fronted hosts: Content-Range ends at the file, Content-Length is the range.
+    origin.setRule(({ range }) => (range ? 'rangeToEof' : 'ok'))
+    const probe = await plexo.api.probeUrl(origin.url())
+    expect(probe).toMatchObject({
+      kind: 'http',
+      supportsRanges: true,
+      totalBytes: 10 * BLOCK
+    })
+    await plexo.start(origin.url(), origin.sha256, { connections: 2 })
+    await plexo.waitForHttpStatus('completed')
+    expect(
+      origin.chunkRequests().filter((request) => request.range !== null).length
+    ).toBeGreaterThan(0)
+  })
+
   test('a link that answers 403 with or without a range is still an error', async ({
     plexo,
     serve
