@@ -183,6 +183,11 @@ test.describe('file names @smoke', () => {
     ['path traversal is flattened', 'attachment; filename="../../evil.sh"', /^\.\._\.\._evil\.sh$/],
     ['control characters are replaced', 'attachment; filename="a%0Ab.txt"', /^a_b\.txt$/],
     [
+      'an unquoted filename keeps its spaces',
+      'attachment; filename=quarterly report.csv; size=10',
+      /^quarterly report\.csv$/
+    ],
+    [
       'an ISO-8859-1 filename* is decoded',
       "attachment; filename*=iso-8859-1'en'%A3%20rates.txt",
       /^£ rates\.txt$/
