@@ -253,20 +253,27 @@ export function networkActive(group: NetworkGroup): boolean {
     : group.peers.some((peer) => peer.status === 'receiving')
 }
 
+function canonicalPath(value: string): string {
+  return value.normalize('NFC').replace(/\\/g, '/').replace(/\/$/, '')
+}
+
+function windowsPath(value: string): boolean {
+  return /^[a-z]:/i.test(value) || value.startsWith('//')
+}
+
 /** Shortens an absolute path under the user's home directory to a "~/..." form for display. */
 export function toDisplayPath(path: string, homeDir: string): string {
-  const normalize = (value: string): string => {
-    const normalized = value.replace(/\\/g, '/').replace(/\/$/, '')
-    return /^[a-z]:/i.test(normalized) || normalized.startsWith('//')
-      ? normalized.toLowerCase()
-      : normalized
-  }
-  const home = normalize(homeDir)
-  const target = normalize(path)
-  if (home && (target === home || target.startsWith(`${home}/`))) {
-    return `~${path.slice(home.length)}`
-  }
-  return path
+  const home = canonicalPath(homeDir)
+  const target = canonicalPath(path)
+  if (!home) return path
+  const fold = (value: string): string => (windowsPath(value) ? value.toLowerCase() : value)
+  const homeKey = fold(home)
+  const targetKey = fold(target)
+  if (targetKey !== homeKey && !targetKey.startsWith(`${homeKey}/`)) return path
+  const suffix = target.slice(home.length)
+  if (!suffix) return '~'
+  const sep = path.includes('\\') ? '\\' : '/'
+  return `~${suffix.replace(/\//g, sep)}`
 }
 
 export { describeError } from '@shared/errors'
