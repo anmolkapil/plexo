@@ -1,6 +1,6 @@
 import { execFile } from 'node:child_process'
 import { existsSync } from 'node:fs'
-import { readdir, readlink } from 'node:fs/promises'
+import { readdir, readFile, readlink, realpath } from 'node:fs/promises'
 import { networkInterfaces } from 'node:os'
 import { promisify } from 'node:util'
 import type { NetworkAddress, NetworkInterfaceInfo, NetworkInterfaceKind } from '../../shared/types'
@@ -18,6 +18,21 @@ interface WindowsAdapter {
 interface LinuxAdapter {
   displayName: string
   kind: NetworkInterfaceKind
+  /** The USB serial of the device behind a USB network adapter, such as a tethered phone. */
+  usbSerial?: string
+}
+
+/** A phone shared over USB gets a random MAC each time it's plugged in, and so a new enx… name
+ * that matches nothing saved for it. The serial its USB device reports doesn't change: the network
+ * function is …/usb1/1-2/1-2:1.0, and its parent, 1-2, is the phone. */
+async function readUsbSerial(sysPath: string): Promise<string | undefined> {
+  try {
+    const usbDevice = await realpath(`${sysPath}/device/..`)
+    if (!usbDevice.includes('/usb')) return undefined
+    return (await readFile(`${usbDevice}/serial`, 'utf8')).trim() || undefined
+  } catch {
+    return undefined
+  }
 }
 
 /**
@@ -187,9 +202,20 @@ async function getLinuxAdapters(): Promise<Map<string, LinuxAdapter>> {
               ? 'USB Network'
               : device)
 
-      adapters.set(device, { displayName, kind })
+      const usbSerial = kind === 'usb' ? await readUsbSerial(sysPath) : undefined
+      adapters.set(device, { displayName, kind, usbSerial })
     })
   )
+
+  // Ids must be unique: a serial two devices share (cheap phones that all report
+  // 0123456789ABCDEF, or one phone with two network functions) names neither of them.
+  const serials = [...adapters.values()].flatMap((adapter) =>
+    adapter.usbSerial ? [adapter.usbSerial] : []
+  )
+  const shared = new Set(serials.filter((serial, i) => serials.indexOf(serial) !== i))
+  for (const adapter of adapters.values()) {
+    if (adapter.usbSerial && shared.has(adapter.usbSerial)) delete adapter.usbSerial
+  }
 
   return adapters
 }
@@ -281,7 +307,8 @@ export async function listActiveInterfaces(): Promise<NetworkInterfaceInfo[]> {
     const displayName = linuxAdapter?.displayName ?? hardwareName ?? device
 
     result.push({
-      id: device,
+      // A tethered phone keeps its saved name and color across replugs (see readUsbSerial).
+      id: linuxAdapter?.usbSerial ? `usb:${linuxAdapter.usbSerial}` : device,
       device,
       displayName,
       addresses: usable,
