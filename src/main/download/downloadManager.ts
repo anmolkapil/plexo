@@ -744,6 +744,7 @@ export class DownloadManager {
     }
     this.runtimes.delete(runtime.state.id)
     await this.removePersistedDownload(runtime, false)
+    this.updateTaskbarProgress()
     this.historyChanged()
   }
 
@@ -1591,6 +1592,7 @@ export class DownloadManager {
       }
       this.runtimes.delete(id)
       await this.removePersistedDownload(runtime)
+      this.updateTaskbarProgress()
       if (runtime.state.status === 'completed') {
         await removeFromHistory([id])
         this.historyChanged()
@@ -1652,6 +1654,7 @@ export class DownloadManager {
       })
     )
     await this.limits.save()
+    this.updateTaskbarProgress()
   }
 
   /**
@@ -1768,7 +1771,11 @@ export class DownloadManager {
         runtime.state.bytesDownloaded
       await this.persistNow(runtime)
       await runtime.file.discardLeftover().catch(() => {})
-      this.notify('Download complete', `${runtime.state.fileName} has finished downloading.`)
+      this.notify(
+        'Download complete',
+        `${runtime.state.fileName} has finished downloading. Click to show in folder.`,
+        runtime.state.destinationPath
+      )
     } catch (error) {
       runtime.state.status = 'error'
       runtime.state.error = error instanceof Error ? error.message : String(error)
@@ -1888,21 +1895,82 @@ export class DownloadManager {
     runtime.transfer.reconcile()
   }
 
-  private notify(title: string, body: string): void {
+  private notify(title: string, body: string, filePath?: string): void {
     if (testKnobs.userDataDir || !Notification.isSupported()) return
     try {
       const notification = new Notification({ title, body })
       notification.on('click', () => {
-        const window = this.getWindow()
-        if (window && !window.isDestroyed()) {
-          if (window.isMinimized()) window.restore()
-          window.show()
-          window.focus()
+        if (filePath) {
+          shell.showItemInFolder(filePath)
+        } else {
+          const window = this.getWindow()
+          if (window && !window.isDestroyed()) {
+            if (window.isMinimized()) window.restore()
+            window.show()
+            window.focus()
+          }
         }
       })
       notification.show()
     } catch {
       // Best-effort notification
+    }
+  }
+
+  private updateTaskbarProgress(): void {
+    if (testKnobs.userDataDir) return
+    const window = this.getWindow()
+    if (!window || window.isDestroyed()) return
+
+    const downloading: DownloadRuntime[] = []
+    const paused: DownloadRuntime[] = []
+
+    for (const runtime of this.runtimes.values()) {
+      if (runtime.state.status === 'downloading') {
+        downloading.push(runtime)
+      } else if (runtime.state.status === 'paused') {
+        paused.push(runtime)
+      }
+    }
+
+    if (downloading.length === 0) {
+      if (paused.length > 0) {
+        let total = 0
+        let downloaded = 0
+        for (const r of paused) {
+          total += r.state.totalBytes || 0
+          downloaded += r.state.bytesDownloaded || 0
+        }
+        if (total > 0) {
+          const ratio = Math.min(Math.max(downloaded / total, 0), 1)
+          window.setProgressBar(ratio, { mode: 'paused' })
+          return
+        }
+      }
+      window.setProgressBar(-1)
+      return
+    }
+
+    let total = 0
+    let downloaded = 0
+    let indeterminate = false
+
+    for (const r of downloading) {
+      if (r.state.totalBytes && r.state.totalBytes > 0) {
+        total += r.state.totalBytes
+        downloaded += r.state.bytesDownloaded || 0
+      } else {
+        indeterminate = true
+      }
+    }
+
+    if (indeterminate && total === 0) {
+      window.setProgressBar(2)
+    } else if (total > 0) {
+      const ratio = Math.min(Math.max(downloaded / total, 0), 1)
+      window.setProgressBar(ratio, { mode: 'normal' })
+    } else {
+      window.setProgressBar(-1)
     }
   }
 
@@ -1926,6 +1994,7 @@ export class DownloadManager {
     if (runtime.state.status === 'paused' || runtime.state.status === 'cancelled') {
       clearSpeeds(runtime.state)
     }
+    this.updateTaskbarProgress()
     window.webContents.send(IpcChannels.downloadUpdated, this.takeUpdate(runtime))
   }
 
