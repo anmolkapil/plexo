@@ -388,6 +388,17 @@ export class DownloadManager {
     await this.configureSettings(settings)
   }
 
+  /** How many downloads are currently downloading or queued. */
+  activeDownloadCount(): number {
+    let count = 0
+    for (const runtime of this.runtimes.values()) {
+      if (runtime.state.status === 'downloading' || runtime.state.status === 'queued') {
+        count++
+      }
+    }
+    return count
+  }
+
   private async configureSettings(settings: AppSettings): Promise<void> {
     const previousPreferences = this.networkPreferences
     this.networkPreferences = settings.networkPreferences ?? {}
