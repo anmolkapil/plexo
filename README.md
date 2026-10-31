@@ -12,6 +12,7 @@
 <p align="center">
   <a href="https://getplexo.app">Download</a> ·
   <a href="#features">Features</a> ·
+  <a href="packages/plexo-cli">CLI</a> ·
   <a href="#troubleshooting">Troubleshooting</a> ·
   <a href="#how-it-works">How it works</a> ·
   <a href="#build-from-source">Build</a>
@@ -76,6 +77,12 @@ https://github.com/user-attachments/assets/e57728f4-fb63-441f-839c-174eef954b17
 - Switch to Slow mode for calls and streaming
 - Set daily, weekly or monthly data allowances
 - Schedule downloads by time and day
+
+### Standalone CLI (`plexo-cli`)
+
+- Lightweight terminal-first multi-network bonding: `pip install plexo-cli`
+- Supports direct range bonding, multi-source mirrors (`-m`), sequential video streaming (`--sequential`), torrent multi-homing (`plexo torrent`), per-adapter quotas (`-q`), clipboard watching (`plexo watch`), and local acceleration proxy (`plexo proxy`).
+- See [packages/plexo-cli](packages/plexo-cli) for detailed documentation and guides.
 
 ## Troubleshooting
 
