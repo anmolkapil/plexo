@@ -312,6 +312,29 @@ export interface ProxyConfig {
   password?: string
 }
 
+/** One SOCKS5 server in the pool (see Socks5Settings). */
+export interface Socks5Host {
+  /** Stable across edits, so a host can be told apart from one that merely has the same address. */
+  id: string
+  /** Switched off, it stays listed but gets no connections. */
+  enabled: boolean
+  host: string
+  port: number
+  username?: string
+  password?: string
+}
+
+/** The SOCKS5 pool: while `enabled`, every download connection goes through one of the enabled
+ * `hosts`, and connections are spread over them as evenly as the networks they run on allow (see
+ * main/network/socks5Pool.ts). A network with a proxy of its own keeps it. */
+export interface Socks5Settings {
+  enabled: boolean
+  hosts: Socks5Host[]
+}
+
+/** How many hosts the pool holds. */
+export const MAX_SOCKS5_HOSTS = 50
+
 export type DataLimitPeriod = 'day' | 'week' | 'month'
 
 export interface NetworkPreference {
@@ -376,6 +399,8 @@ export interface AppSettings {
   /** How speeds are shown everywhere; sizes stay in bytes either way. */
   speedUnit?: SpeedUnit
   browserExtensionUsed?: boolean
+  /** The SOCKS5 pool: on or off, and the servers it spreads connections over. */
+  socks5?: Socks5Settings
 }
 
 /** bytes: MB/s. bits: Mbps, as internet plans and speed tests count them. */
@@ -402,6 +427,7 @@ export interface InitialState {
   speedUnit: SpeedUnit
   /** The last folder picked, if it still exists — otherwise the renderer uses downloadsDir. */
   destinationDir?: string
+  socks5?: Socks5Settings
 }
 
 interface StartDownloadRequestBase {

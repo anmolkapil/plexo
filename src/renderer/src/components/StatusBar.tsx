@@ -5,6 +5,7 @@ import { formatBytes } from '../utils/format'
 import { useFormatSpeedLimit } from '../hooks/useFormatSpeed'
 import { useDownloadSchedule } from '../hooks/useDownloadSchedule'
 import { ScreenFooter } from './ScreenFooter'
+import { Socks5Control } from './Socks5Control'
 import { ThemeToggle } from './ThemeToggle'
 import { Switch } from './ui/switch'
 import { ToggleGroup, ToggleGroupItem } from './ui/toggle-group'
@@ -95,6 +96,7 @@ export function StatusBar(): React.JSX.Element {
       {/* Controls, most-flipped first: the edge holds the set-once view preferences. */}
       <div className="flex shrink-0 items-center gap-3">
         <UpdateIndicator />
+        <Socks5Control />
         <Tooltip>
           <TooltipTrigger
             render={

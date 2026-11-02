@@ -25,6 +25,7 @@ import { onMagnetCheckStatus } from '../download/torrent/metadata'
 import { deviceBindingSupported } from '../network/deviceBinding'
 import { pendingLink, pendingLinks, releaseLink } from '../openLinks'
 import { NetworkMonitor } from '../network/interfaces'
+import { socks5Pool } from '../network/socks5Pool'
 import { loadSettings, saveSettings } from '../settings'
 import { showUpdateMenu, updateState } from '../updater'
 
@@ -78,6 +79,8 @@ export function registerIpcHandlers(getWindow: () => BrowserWindow | null): Down
     if (window && !window.isDestroyed()) window.webContents.send(IpcChannels.networksChanged, list)
   })
   const manager = new DownloadManager(getWindow, networks)
+  // Read once at launch; restored downloads come back paused, so nothing connects before it's done.
+  void loadSettings().then((settings) => socks5Pool.configure(settings.socks5))
   // Waking from sleep, the networks may have changed without a poll in between to see it.
   powerMonitor.on('resume', () => {
     manager.systemResumed()
@@ -104,7 +107,10 @@ export function registerIpcHandlers(getWindow: () => BrowserWindow | null): Down
     }
     await saveSettings(patch)
     // Read back rather than taken from the patch: what was saved is what passed the checks.
-    await manager.applySettings(await loadSettings())
+    const saved = await loadSettings()
+    // Running downloads pick it up at their next request (see StreamConnection.request).
+    socks5Pool.configure(saved.socks5)
+    await manager.applySettings(saved)
   })
 
   // Answered via sendSync from the preload, which blocks the page until returnValue is set — so a
@@ -135,7 +141,8 @@ export function registerIpcHandlers(getWindow: () => BrowserWindow | null): Down
         slowMode: settings.slowMode ?? false,
         slowModeSpeed: settings.slowModeSpeed ?? DEFAULT_SLOW_MODE_SPEED,
         speedUnit: settings.speedUnit ?? 'bytes',
-        destinationDir: destinationExists ? destinationDir : undefined
+        destinationDir: destinationExists ? destinationDir : undefined,
+        socks5: settings.socks5
       } satisfies InitialState
     } catch (error) {
       console.error('[plexo] failed to read initial state', error)

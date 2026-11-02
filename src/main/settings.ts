@@ -1,13 +1,17 @@
+import { randomUUID } from 'node:crypto'
 import { rm } from 'node:fs/promises'
 import { isAbsolute, join } from 'node:path'
 import { app, nativeTheme } from 'electron'
 import {
   DOWNLOADS_AT_ONCE,
+  MAX_SOCKS5_HOSTS,
   type AppSettings,
   type NetworkPreference,
   type NetworkPreferences,
   type ProxyConfig,
   type ProxyType,
+  type Socks5Host,
+  type Socks5Settings,
   type ThemeSource
 } from '../shared/types'
 import { readJson, updateJson } from './jsonFile'
@@ -51,6 +55,46 @@ function sanitizeProxyConfig(value: unknown): ProxyConfig | undefined {
     ...(username ? { username } : {}),
     ...(password ? { password } : {})
   }
+}
+
+/** The SOCKS5 pool, host by host: a host that can't be read is left out rather than the whole
+ * list lost. A host with no address is no host. */
+function sanitizeSocks5(value: unknown): Socks5Settings | undefined {
+  if (!isRecord(value)) return undefined
+  const hosts: Socks5Host[] = []
+  const ids = new Set<string>()
+  for (const entry of Array.isArray(value.hosts) ? value.hosts : []) {
+    if (hosts.length >= MAX_SOCKS5_HOSTS) break
+    if (!isRecord(entry)) continue
+    const host = typeof entry.host === 'string' ? entry.host.trim() : ''
+    if (!host) continue
+    const port =
+      typeof entry.port === 'number' &&
+      Number.isInteger(entry.port) &&
+      entry.port >= 1 &&
+      entry.port <= 65535
+        ? entry.port
+        : 1080
+    // Ids tell hosts apart across edits; a missing or repeated one is replaced.
+    const id =
+      typeof entry.id === 'string' && entry.id.length > 0 && !ids.has(entry.id)
+        ? entry.id
+        : randomUUID()
+    ids.add(id)
+    hosts.push({
+      id,
+      enabled: entry.enabled !== false,
+      host,
+      port,
+      ...(typeof entry.username === 'string' && entry.username.length > 0
+        ? { username: entry.username }
+        : {}),
+      ...(typeof entry.password === 'string' && entry.password.length > 0
+        ? { password: entry.password }
+        : {})
+    })
+  }
+  return { enabled: value.enabled === true, hosts }
 }
 
 /** A rate or an amount of bytes: a positive whole number, or nothing. */
@@ -126,6 +170,10 @@ function sanitizeSettings(parsed: unknown): AppSettings {
     settings.speedUnit = parsed.speedUnit
   }
   if (parsed.browserExtensionUsed === true) settings.browserExtensionUsed = true
+  if (parsed.socks5 !== undefined) {
+    const socks5 = sanitizeSocks5(parsed.socks5)
+    if (socks5) settings.socks5 = socks5
+  }
   return settings
 }
 

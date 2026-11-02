@@ -12,6 +12,7 @@ import type { Duplex } from 'node:stream'
 import type { IpFamily, NetworkInterfaceInfo, ProxyConfig } from '../../shared/types'
 import { connectRoute } from './deviceBinding'
 import { createProxyConnection } from './proxyTunnel'
+import { socks5Pool } from './socks5Pool'
 
 export interface NetworkRoute {
   device: string
@@ -392,6 +393,8 @@ class RoutedHttpsAgent extends HttpsAgent {
   }
 }
 
+let connectionCount = 0
+
 export interface ResponseStart {
   req: ClientRequest
   res: IncomingMessage
@@ -415,6 +418,10 @@ export class StreamConnection {
   private readonly https: HttpsAgent
 
   private readonly timeoutMs: number
+  /** Who this connection is to the SOCKS5 pool. */
+  private readonly poolId = `connection-${++connectionCount}`
+  /** The pool's settings as the sockets now open were made under (see send). */
+  private poolEpoch = socks5Pool.epoch
 
   constructor(
     /** The network, or undefined while it isn't connected. */
@@ -438,21 +445,33 @@ export class StreamConnection {
     const open: Open = async (options, secure) => {
       const iface = network()
       if (!iface) throw new Error('The network is not connected')
-      const proxyConfig = proxy?.()
-      return connectOnInterface(
-        iface,
-        options.host ?? '',
-        Number(options.port),
-        secure,
-        Math.min(connectTimeoutMs, timeoutMs),
-        // Given up on when its request is, not only when the stream closes: a request abandoned
-        // mid-connect (a stuck connection being replaced) shouldn't leave a handshake running.
-        options.connectSignal
-          ? AbortSignal.any([this.lifetime.signal, options.connectSignal])
-          : this.lifetime.signal,
-        resolveHost,
-        proxyConfig
-      )
+      // A proxy set for this network is its own and stays; otherwise the SOCKS5 pool, if it's on,
+      // gives this connection one of its hosts.
+      const own = proxy?.()
+      const pooled = own?.enabled ? undefined : socks5Pool.acquire(this.poolId, iface.id)
+      try {
+        const socket = await connectOnInterface(
+          iface,
+          options.host ?? '',
+          Number(options.port),
+          secure,
+          Math.min(connectTimeoutMs, timeoutMs),
+          // Given up on when its request is, not only when the stream closes: a request abandoned
+          // mid-connect (a stuck connection being replaced) shouldn't leave a handshake running.
+          options.connectSignal
+            ? AbortSignal.any([this.lifetime.signal, options.connectSignal])
+            : this.lifetime.signal,
+          resolveHost,
+          own?.enabled ? own : pooled
+        )
+        if (pooled) socks5Pool.report(pooled, true)
+        return socket
+      } catch (error) {
+        // Giving up on a connection isn't the host's fault.
+        const aborted = error instanceof Error && error.name === 'AbortError'
+        if (pooled && !aborted) socks5Pool.report(pooled, false)
+        throw error
+      }
     }
     this.http = new RoutedHttpAgent(open)
     this.https = new RoutedHttpsAgent(open)
@@ -463,6 +482,12 @@ export class StreamConnection {
     headers: Record<string, string>,
     signal?: AbortSignal
   ): Promise<ResponseStart> {
+    // The SOCKS5 settings changed since its sockets were opened: they may go through a host that
+    // is no longer wanted, or none at all. Between requests, nothing is lost by dropping them.
+    if (this.poolEpoch !== socks5Pool.epoch) {
+      this.poolEpoch = socks5Pool.epoch
+      this.reconnect()
+    }
     return this.send(target, headers, signal, true)
   }
 
@@ -479,6 +504,7 @@ export class StreamConnection {
     this.lifetime.abort()
     this.http.destroy()
     this.https.destroy()
+    socks5Pool.release(this.poolId)
   }
 
   private send(

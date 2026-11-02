@@ -7,6 +7,13 @@ const PROXY_CONNECT_TIMEOUT_MS = 15_000
 
 const abortError = (): DOMException => new DOMException('Aborted', 'AbortError')
 
+// Both readers below take bytes with read(), in paused mode, and leave what they don't take in
+// the socket. They don't listen for 'data': a reply that arrives whole (SOCKS5's 10-byte answer
+// to CONNECT comes in one segment, and is read in two parts) would have its second part put back
+// with unshift() just after the listener was removed, and Node drops what is pushed back to a
+// flowing stream that has no listener. Whoever takes the socket next (TLS, the HTTP client) finds
+// what is left and starts it flowing by listening for 'data'.
+
 /** Reads exactly `length` bytes from a socket, or rejects on error, close, timeout, or abort. */
 function readExactBytes(
   socket: Socket | TLSSocket,
@@ -14,27 +21,25 @@ function readExactBytes(
   signal?: AbortSignal
 ): Promise<Buffer> {
   return new Promise((resolve, reject) => {
-    let buffer = Buffer.alloc(0)
-
     const cleanup = (): void => {
-      socket.removeListener('data', onData)
+      socket.removeListener('readable', onReadable)
       socket.removeListener('error', onError)
       socket.removeListener('close', onClose)
       socket.removeListener('timeout', onTimeout)
       signal?.removeEventListener('abort', onAbort)
     }
 
-    const onData = (chunk: Buffer): void => {
-      buffer = Buffer.concat([buffer, chunk])
-      if (buffer.length >= length) {
-        cleanup()
-        const result = buffer.subarray(0, length)
-        const remainder = buffer.subarray(length)
-        if (remainder.length > 0) {
-          socket.unshift(remainder)
-        }
-        resolve(result)
+    // read(length) gives nothing until that many bytes are in; once the socket has ended it gives
+    // whatever is left, which is then too little.
+    function onReadable(): void {
+      const chunk = socket.read(length) as Buffer | null
+      if (chunk === null) return
+      cleanup()
+      if (chunk.length < length) {
+        reject(new Error('Proxy connection closed unexpectedly'))
+        return
       }
+      resolve(chunk)
     }
 
     const onError = (error: Error): void => {
@@ -65,14 +70,16 @@ function readExactBytes(
     }
     signal?.addEventListener('abort', onAbort, { once: true })
 
-    socket.on('data', onData)
+    socket.on('readable', onReadable)
     socket.once('error', onError)
     socket.once('close', onClose)
     socket.once('timeout', onTimeout)
+    // Whatever arrived before we started listening is already waiting.
+    onReadable()
   })
 }
 
-/** Reads data until `\r\n\r\n` HTTP header delimiter is reached. */
+/** Reads until the `\r\n\r\n` that ends an HTTP response's headers; anything after it stays in the socket. */
 function readHttpHeaders(
   socket: Socket | TLSSocket,
   signal?: AbortSignal
@@ -81,26 +88,27 @@ function readHttpHeaders(
     let buffer = Buffer.alloc(0)
 
     const cleanup = (): void => {
-      socket.removeListener('data', onData)
+      socket.removeListener('readable', onReadable)
       socket.removeListener('error', onError)
       socket.removeListener('close', onClose)
       socket.removeListener('timeout', onTimeout)
       signal?.removeEventListener('abort', onAbort)
     }
 
-    const onData = (chunk: Buffer): void => {
-      buffer = Buffer.concat([buffer, chunk])
-      const delimiterIndex = buffer.indexOf('\r\n\r\n')
-      if (delimiterIndex !== -1) {
+    function onReadable(): void {
+      let chunk: Buffer | null
+      while ((chunk = socket.read() as Buffer | null) !== null) {
+        buffer = Buffer.concat([buffer, chunk])
+        const delimiterIndex = buffer.indexOf('\r\n\r\n')
+        if (delimiterIndex === -1) continue
         cleanup()
         const headerText = buffer.subarray(0, delimiterIndex).toString('utf-8')
         const remainder = buffer.subarray(delimiterIndex + 4)
-        if (remainder.length > 0) {
-          socket.unshift(remainder)
-        }
+        if (remainder.length > 0) socket.unshift(remainder)
         const statusMatch = /^HTTP\/\d\.\d\s+(\d+)/i.exec(headerText)
         const status = statusMatch ? parseInt(statusMatch[1], 10) : 0
         resolve({ headers: headerText, status })
+        return
       }
     }
 
@@ -132,10 +140,11 @@ function readHttpHeaders(
     }
     signal?.addEventListener('abort', onAbort, { once: true })
 
-    socket.on('data', onData)
+    socket.on('readable', onReadable)
     socket.once('error', onError)
     socket.once('close', onClose)
     socket.once('timeout', onTimeout)
+    onReadable()
   })
 }
 
