@@ -187,6 +187,7 @@ function UsenetServerForm({
             />
           </label>
         </div>
+        {!tls && <p className={hintClass}>Without SSL your password is sent unencrypted.</p>}
         <div className="flex items-center gap-3">
           <label htmlFor={`${id}-username`} className={labelClass}>
             Username
