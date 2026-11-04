@@ -75,12 +75,13 @@ export function decodeRfc2047Filename(name: string): string {
 
 export function parseContentDispositionFilename(disposition: string): string | null {
   // Read complete parameters, including quoted extension values, so a name inside
-  // another parameter cannot shadow filename. HTTP permits spaces/tabs around '='.
+  // another parameter cannot shadow filename. HTTP permits spaces/tabs around '='. An unquoted
+  // value runs to the next ';', as browsers read it: servers send filename=my report.pdf.
   const parameters = new Map<string, { raw: string; quoted: boolean }>()
   const extendedPattern = /^([a-zA-Z0-9_-]+)'[^']*'([^;\s]+)/
   let firstQuotedFilename: string | undefined
   const parameter =
-    /(?:^|;)[ \t]*([!#$%&'*+.^_`|~0-9a-z-]+)[ \t]*=[ \t]*(("(?:[^"\\]|\\.)*")|([^; \t]+))/gi
+    /(?:^|;)[ \t]*([!#$%&'*+.^_`|~0-9a-z-]+)[ \t]*=[ \t]*(("(?:[^"\\]|\\.)*")|([^; \t](?:[^;]*[^; \t])?))/gi
   for (const match of disposition.matchAll(parameter)) {
     const key = match[1].toLowerCase()
     const quoted = match[3] !== undefined

@@ -184,6 +184,11 @@ test.describe('file names @smoke', () => {
     ['control characters are replaced', 'attachment; filename="a%0Ab.txt"', /^a_b\.txt$/],
     ['an empty quoted filename falls back to the link', 'attachment; filename=""', /^test\.bin$/],
     [
+      'an unquoted filename keeps its spaces',
+      'attachment; filename=quarterly report.csv; size=10',
+      /^quarterly report\.csv$/
+    ],
+    [
       'an ISO-8859-1 filename* is decoded',
       "attachment; filename*=iso-8859-1'en'%A3%20rates.txt",
       /^£ rates\.txt$/
