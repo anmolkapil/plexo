@@ -1,5 +1,14 @@
 import { electronApp, is, optimizer } from '@electron-toolkit/utils'
-import { app, BrowserWindow, Menu, nativeImage, nativeTheme, shell, Tray } from 'electron'
+import {
+  app,
+  BrowserWindow,
+  Menu,
+  nativeImage,
+  nativeTheme,
+  Notification,
+  shell,
+  Tray
+} from 'electron'
 import { join } from 'path'
 import icon from '../../resources/icon-dark.png?asset'
 import { registerIpcHandlers } from './ipc/handlers'
@@ -26,6 +35,30 @@ let mainWindow: BrowserWindow | null = null
 let downloadManager: DownloadManager | null = null
 let quitAfterSuspending = false
 let tray: Tray | null = null
+let isQuitting = false
+let hasShownTrayNotification = false
+
+function ensureTray(): Tray {
+  if (tray && !tray.isDestroyed()) return tray
+  tray = new Tray(nativeImage.createFromPath(icon).resize({ width: 16, height: 16 }))
+  tray.setToolTip('Plexo')
+  tray.on('click', () => bringForward(ensureWindow()))
+  tray.on('double-click', () => bringForward(ensureWindow()))
+  tray.setContextMenu(
+    Menu.buildFromTemplate([
+      { label: 'Open Plexo', click: () => bringForward(ensureWindow()) },
+      { type: 'separator' },
+      {
+        label: 'Quit Plexo',
+        click: () => {
+          isQuitting = true
+          app.quit()
+        }
+      }
+    ])
+  )
+  return tray
+}
 
 /** Only once the app is ready. */
 function ensureWindow(): BrowserWindow {
@@ -104,6 +137,35 @@ function createWindow(): void {
     if (!testKnobs.hideWindow) mainWindow?.show()
   })
 
+  mainWindow.on('session-end', () => {
+    isQuitting = true
+  })
+  mainWindow.on('query-session-end', () => {
+    isQuitting = true
+  })
+
+  mainWindow.on('close', (event) => {
+    if (isQuitting || process.platform === 'darwin') return
+
+    const activeCount = downloadManager?.activeDownloadCount() ?? 0
+    const runsForBrowser = keepsRunningForBrowser()
+
+    if (activeCount > 0 || runsForBrowser) {
+      event.preventDefault()
+      mainWindow?.hide()
+      ensureTray()
+      if (!hasShownTrayNotification && activeCount > 0) {
+        hasShownTrayNotification = true
+        if (Notification.isSupported()) {
+          new Notification({
+            title: 'Plexo is still downloading',
+            body: 'Downloads will continue in the background. Open Plexo again, or use its tray icon, to quit.'
+          }).show()
+        }
+      }
+    }
+  })
+
   mainWindow.on('closed', () => {
     mainWindow = null
   })
@@ -180,11 +242,18 @@ app.whenReady().then(async () => {
   startUpdater(() => mainWindow, (await loadSettings()).autoUpdate !== false)
 
   app.on('activate', function () {
-    if (BrowserWindow.getAllWindows().length === 0) createWindow()
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      if (mainWindow.isMinimized()) mainWindow.restore()
+      mainWindow.show()
+      mainWindow.focus()
+    } else if (BrowserWindow.getAllWindows().length === 0) {
+      createWindow()
+    }
   })
 })
 
 app.on('before-quit', (event) => {
+  isQuitting = true
   if (quitAfterSuspending || !downloadManager) return
 
   event.preventDefault()
@@ -203,17 +272,7 @@ app.on('before-quit', (event) => {
 
 app.on('window-all-closed', () => {
   if (process.platform === 'darwin') return
-  if (!keepsRunningForBrowser()) return app.quit()
-  // Kept running in the tray, so the browser extension can still reach it.
-  if (tray) return
-  tray = new Tray(nativeImage.createFromPath(icon).resize({ width: 16, height: 16 }))
-  tray.setToolTip('Plexo')
-  tray.on('click', () => bringForward(ensureWindow()))
-  tray.setContextMenu(
-    Menu.buildFromTemplate([
-      { label: 'Open Plexo', click: () => bringForward(ensureWindow()) },
-      { type: 'separator' },
-      { label: 'Quit Plexo', click: () => app.quit() }
-    ])
-  )
+  const activeCount = downloadManager?.activeDownloadCount() ?? 0
+  if (!keepsRunningForBrowser() && activeCount === 0) return app.quit()
+  ensureTray()
 })
