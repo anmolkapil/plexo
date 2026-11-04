@@ -6,6 +6,7 @@ import type {
   HttpDownloadState,
   NzbDownloadState,
   NzbSegmentState,
+  ProxyConfig,
   StartHttpDownloadRequest,
   StartNzbDownloadRequest,
   StartTorrentDownloadRequest,
@@ -94,6 +95,7 @@ export interface TransferHost {
   failDownload(message: string, discard?: boolean): void
   failNetwork(network: DownloadNetwork, message: string): void
   scheduleUpdate(): void
+  getProxyForInterface?(networkId: string): ProxyConfig | undefined
 }
 
 // Raw per-event deltas are too noisy to display (socket buffers flush in

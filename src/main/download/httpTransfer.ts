@@ -20,7 +20,7 @@ import {
 import { downloadChunk, fetchRange, HttpStatusError, RemoteChangedError } from './chunkDownloader'
 import { compareVersion, type FileVersion } from './fileVersion'
 import { interleave, MAX_STREAMS_PER_NETWORK, startingStreams } from './plan'
-import { pickWork, type SchedulerPolicy, type Work } from './scheduler'
+import { partEnd, pickWork, type SchedulerPolicy, type Segment, type Work } from './scheduler'
 import {
   delay,
   recomputeAggregates,
@@ -36,19 +36,23 @@ type AbortReason = 'refresh' | 'lost'
 /**
  * One request for one block, by one stream. A block normally has a single (primary) attempt.
  * Near the end of a download a second (hedge) one may race it — see scheduler.ts — and then the
- * block is finished by whichever gets there first.
+ * block is finished by whichever gets there first. Or the block may be split: a split attempt
+ * fetches the back part of what another has left, and that one stops where the split begins.
  *
  * Both write straight into the staging file at the block's own offsets. Every response is checked
  * to be the download's version before any of it is written, so racing attempts write identical
  * bytes and it doesn't matter which lands last: whatever either has written stays secured.
  */
 interface Attempt {
-  kind: 'primary' | 'hedge'
+  kind: 'primary' | 'hedge' | 'split'
   block: HttpBlockState
   streamId: number
   networkId: string
   /** Where the request begins, as an offset into the block. Null until it is known. */
   startOffset: number | null
+  /** Where it stops, as an offset into the block, exclusive; null for a block of unknown length.
+   * Brought forward while it runs when a split takes over the rest (see scheduler.ts). */
+  end: number | null
   /** Bytes the destination writer has accepted; safe to resume from this prefix. */
   received: number
   /** Bytes the network has delivered, independently of disk backpressure. */
@@ -155,7 +159,14 @@ const MAX_REFRESHES_PER_BLOCK = 2
 const SCHEDULER_POLICY: SchedulerPolicy = {
   hedgeAfterMs: testKnobs.hedgeAfterMs,
   maxHedgesPerBlock: 2,
-  startupMs: 1000
+  startupMs: 1000,
+  minSplitBytes: 256 * 1024
+}
+
+/** What a split fetched ahead of its block's frontier before it ended, and who fetched it. */
+interface AheadSegment extends Segment {
+  networkId: string
+  streamId: number
 }
 
 /** Whether the file can be fetched in parts. Otherwise one request has to carry all of it: one
@@ -299,6 +310,10 @@ export class HttpTransfer implements Transfer {
   private attempts = new Map<number, Attempt[]>()
   /** Hedges started per block index, capped at SCHEDULER_POLICY.maxHedgesPerBlock. */
   private hedgesByBlock = new Map<number, number>()
+  /** By block index, what splits that have ended fetched ahead of the block's frontier. Counted
+   * once the frontier reaches them (see join), so never saved as progress: after a pause or a
+   * crash they are simply fetched again. Forgotten on reset. */
+  private aheadByBlock = new Map<number, AheadSegment[]>()
   /** By network id: everything its streams have received, and when it last showed it was alive —
    * received something, or came into use. */
   private traffic = new Map<string, { received: number; aliveAt: number }>()
@@ -418,6 +433,7 @@ export class HttpTransfer implements Transfer {
 
   reset(): void {
     this.avoidNetworkByBlock.clear()
+    this.aheadByBlock.clear()
     this.reconciled.clear()
     this.disk.reset()
   }
@@ -617,7 +633,9 @@ export class HttpTransfer implements Transfer {
   private otherAttemptsPosition(attempt: Attempt): number {
     let furthest = 0
     for (const other of this.attempts.get(attempt.block.index) ?? []) {
-      if (other !== attempt) furthest = Math.max(furthest, this.attemptPosition(other))
+      // A split ahead of the frontier secures nothing until the frontier reaches it.
+      if (other === attempt || (other.startOffset ?? 0) > attempt.block.bytesDownloaded) continue
+      furthest = Math.max(furthest, this.attemptPosition(other))
     }
     return furthest
   }
@@ -627,17 +645,29 @@ export class HttpTransfer implements Transfer {
     chunk.status = 'pending'
     chunk.currentBlockIndex = undefined
     chunk.hedge = undefined
+    chunk.split = undefined
     chunk.speedBytesPerSec = 0
   }
 
   private beginAttempt(chunk: HttpStreamState, self: ChunkRuntime, work: Work): Attempt {
     const { block } = work
+    const inFlight = this.attempts.get(block.index) ?? []
+    const segments = this.aheadByBlock.get(block.index) ?? []
+    // A primary or a hedge fetches from the frontier — from byte 0 if the server can't serve
+    // ranges — up to where a split's part begins.
+    const startOffset =
+      work.kind === 'split'
+        ? work.start!
+        : work.kind === 'hedge' || this.runtime.requestPayload.supportsRanges
+          ? block.bytesDownloaded
+          : 0
     const attempt: Attempt = {
       kind: work.kind,
       block,
       streamId: chunk.id,
       networkId: chunk.interfaceId,
-      startOffset: null,
+      startOffset,
+      end: work.kind === 'split' ? work.end! : partEnd(block, inFlight, segments, startOffset),
       received: 0,
       networkReceived: 0,
       lastNetworkAt: 0,
@@ -655,16 +685,23 @@ export class HttpTransfer implements Transfer {
       block.status = 'downloading'
       block.interfaceId = chunk.interfaceId
       this.avoidNetworkByBlock.delete(block.index)
-    } else {
+    } else if (work.kind === 'hedge') {
       this.hedgesByBlock.set(block.index, (this.hedgesByBlock.get(block.index) ?? 0) + 1)
+    } else {
+      // Whoever is fetching across where the split begins stops there. Its response has yet to
+      // reach that point (see nextSplit), and nothing can arrive between here and the cut.
+      for (const other of inFlight) {
+        if (other.end !== null && (other.startOffset ?? 0) < startOffset && other.end > startOffset)
+          other.end = startOffset
+      }
     }
-    const inFlight = this.attempts.get(block.index)
-    if (inFlight) inFlight.push(attempt)
+    if (inFlight.length > 0) inFlight.push(attempt)
     else this.attempts.set(block.index, [attempt])
     self.attempt = attempt
 
     chunk.status = 'downloading'
     chunk.hedge = work.kind === 'hedge' ? true : undefined
+    chunk.split = work.kind === 'split' ? true : undefined
     chunk.rangeStart = block.rangeStart
     chunk.rangeEnd = block.rangeEnd
     chunk.currentBlockIndex = block.index
@@ -690,22 +727,19 @@ export class HttpTransfer implements Transfer {
   ): Promise<AttemptOutcome> {
     const { block } = attempt
     try {
+      // A failed range leaves its written prefix in the staging file, and the attempt starts
+      // after it (see beginAttempt). Without range support, the server can only restart from
+      // byte zero: what another attempt has already secured stays counted.
+      const startOffset = attempt.startOffset ?? 0
       if (attempt.kind === 'primary') {
-        // A failed range leaves its written prefix in the staging file. Without range support,
-        // the server can only restart from byte zero.
-        attempt.startOffset = this.runtime.requestPayload.supportsRanges ? block.bytesDownloaded : 0
-        // What another attempt has already secured stays counted.
-        const keep = Math.max(attempt.startOffset, this.otherAttemptsPosition(attempt))
+        const keep = Math.max(startOffset, this.otherAttemptsPosition(attempt))
         if (retractBlock(block, keep, attempt.previousWriter) > 0) {
           recomputeAggregates(this.runtime.state, this.runtime.blocks)
         }
-      } else {
-        attempt.startOffset = block.bytesDownloaded
       }
 
-      const length = block.rangeEnd === null ? null : block.rangeEnd - block.rangeStart + 1
-      if (length !== null && attempt.startOffset >= length) {
-        // The staging file already holds the whole block.
+      if (attempt.end !== null && startOffset >= attempt.end) {
+        // The staging file already holds its whole part.
         return attempt.kind === 'primary'
           ? { type: 'completed' }
           : { type: 'aborted', reason: 'lost' }
@@ -715,12 +749,13 @@ export class HttpTransfer implements Transfer {
       await downloadChunk({
         url: this.runtime.requestPayload.url,
         browser: this.runtime.requestPayload.browser,
-        rangeStart: block.rangeStart + attempt.startOffset,
-        rangeEnd: block.rangeEnd,
+        rangeStart: block.rangeStart + startOffset,
+        rangeEnd: attempt.end === null ? null : block.rangeStart + attempt.end - 1,
+        // Its end can come forward while it runs (see beginAttempt).
+        wanted: attempt.end === null ? undefined : () => attempt.end! - startOffset,
         wholeFile: !this.runtime.requestPayload.supportsRanges,
         connection: self.connection,
-        createDestination: () =>
-          this.runtime.file.writer(block.rangeStart + (attempt.startOffset ?? 0)),
+        createDestination: () => this.runtime.file.writer(block.rangeStart + startOffset),
         signal: AbortSignal.any([self.controller.signal, attempt.abort.signal]),
         acceptedVersions: this.acceptedVersions,
         onResponse: (info) => (attempt.response = info),
@@ -740,6 +775,7 @@ export class HttpTransfer implements Transfer {
             attempt.received = bytesThisRun
             this.disk.landed(Date.now())
             this.onAttemptProgress(chunk, attempt)
+            this.host.scheduleUpdate()
           }
         }
       })
@@ -771,18 +807,130 @@ export class HttpTransfer implements Transfer {
   }
 
   private onAttemptProgress(chunk: HttpStreamState, attempt: Attempt): void {
+    // A split's bytes count once the block's frontier reaches where it started.
+    if ((attempt.startOffset ?? 0) > attempt.block.bytesDownloaded) return
+    this.advance(attempt.block, attempt.networkId, this.attemptPosition(attempt), chunk)
+  }
+
+  /** Moves the block's frontier forward to `position`, crediting what it gains to the network
+   * and stream that fetched it, then over whatever splits have fetched from there on. */
+  private advance(
+    block: HttpBlockState,
+    networkId: string,
+    position: number,
+    stream: HttpStreamState | undefined
+  ): void {
+    if (this.credit(block, networkId, position, stream) === 0) return
+    if (this.aheadByBlock.has(block.index) || (this.attempts.get(block.index)?.length ?? 0) > 1) {
+      this.join(block)
+    }
+  }
+
+  /** Moves the block's frontier forward to `position` and counts what it gains. */
+  private credit(
+    block: HttpBlockState,
+    networkId: string,
+    position: number,
+    stream: HttpStreamState | undefined
+  ): number {
     // Only what gets the block further than it already was counts as progress: a racing attempt
     // re-fetches bytes the other already has.
-    const gained = advanceBlock(attempt.block, attempt.networkId, this.attemptPosition(attempt))
-    chunk.bytesDownloaded += gained
-    this.network(attempt.networkId).bytesDownloaded += gained
-
+    const gained = advanceBlock(block, networkId, position)
+    if (gained === 0) return 0
+    if (stream) stream.bytesDownloaded += gained
+    this.network(networkId).bytesDownloaded += gained
     // This runs on every completed writer callback, so it folds the delta in rather than re-summing
     // every block — that sum is O(blocks), and a large file has thousands of them. The other
     // callers of recomputeAggregates are rare enough to afford the full pass, and each one
     // re-derives the true total, so any drift here cannot accumulate.
     this.runtime.state.bytesDownloaded += gained
-    this.host.scheduleUpdate()
+    return gained
+  }
+
+  /** Moves the block's frontier over what splits have fetched from where it now is: the parts
+   * of attempts it has reached, and the segments of ones that have ended. */
+  private join(block: HttpBlockState): void {
+    const streamOf = (id: number): HttpStreamState | undefined =>
+      this.runtime.state.streams.find((stream) => stream.id === id)
+    for (let moved = true; moved;) {
+      moved = false
+      const before = block.bytesDownloaded
+      for (const other of this.attempts.get(block.index) ?? []) {
+        if ((other.startOffset ?? 0) > block.bytesDownloaded) continue
+        if (this.attemptPosition(other) <= block.bytesDownloaded) continue
+        this.credit(block, other.networkId, this.attemptPosition(other), streamOf(other.streamId))
+      }
+      const segments = this.aheadByBlock.get(block.index) ?? []
+      for (const segment of segments) {
+        if (segment.start > block.bytesDownloaded || segment.end <= block.bytesDownloaded) continue
+        this.credit(block, segment.networkId, segment.end, streamOf(segment.streamId))
+      }
+      const left = segments.filter((segment) => segment.end > block.bytesDownloaded)
+      if (left.length > 0) this.aheadByBlock.set(block.index, left)
+      else this.aheadByBlock.delete(block.index)
+      moved = block.bytesDownloaded > before
+    }
+  }
+
+  /** Remembers what a split fetched ahead of its block's frontier, up to `end`. */
+  private keepAhead(attempt: Attempt, end: number): void {
+    const { block } = attempt
+    const start = attempt.startOffset
+    if (start === null || start <= block.bytesDownloaded || end <= start) return
+    if (block.status === 'completed') return
+    const segments = this.aheadByBlock.get(block.index) ?? []
+    segments.push({ start, end, networkId: attempt.networkId, streamId: attempt.streamId })
+    this.aheadByBlock.set(block.index, segments)
+  }
+
+  /** Squares the block up after one of its attempts ended. A block whose frontier has reached its
+   * end is complete, and whoever is still fetching it has lost; so has whoever is fetching a part
+   * the frontier has passed. A block left with no one fetching from its frontier hands that on to
+   * the split that begins there, if there is one, or goes back to the queue. */
+  private settle(block: HttpBlockState, networkId: string): void {
+    if (block.status === 'completed') return
+    if (block.rangeEnd !== null && block.bytesDownloaded >= block.rangeEnd - block.rangeStart + 1) {
+      block.status = 'completed'
+      block.interfaceId = networkId
+      this.aheadByBlock.delete(block.index)
+      this.loseRivals(block)
+      return
+    }
+    this.loseRivals(block, (rival) => rival.end !== null && rival.end <= block.bytesDownloaded)
+    // One called off for another reason still holds its part until it has let go, and then
+    // settles the block itself.
+    const holding = (this.attempts.get(block.index) ?? []).filter(
+      (attempt) => attempt.abortReason !== 'lost'
+    )
+    if (holding.some((attempt) => attempt.kind === 'primary')) return
+    const next = holding.find(
+      (attempt) =>
+        attempt.kind === 'split' &&
+        !attempt.abortReason &&
+        (attempt.startOffset ?? 0) <= block.bytesDownloaded
+    )
+    if (next) {
+      next.kind = 'primary'
+      block.status = 'downloading'
+      block.interfaceId = next.networkId
+      const stream = this.runtime.state.streams.find((chunk) => chunk.id === next.streamId)
+      if (stream) stream.split = undefined
+    } else if (block.status === 'downloading') {
+      block.status = 'pending'
+    }
+  }
+
+  /** Stops the attempts still fetching a block that `lost` picks — by default, all of them:
+   * the block is done. Their streams show as free at once: their requests only end once the
+   * abort reaches them, and until then they would show holding a block that is no longer in
+   * flight. */
+  private loseRivals(block: HttpBlockState, lost: (rival: Attempt) => boolean = () => true): void {
+    for (const rival of this.attempts.get(block.index) ?? []) {
+      if (!lost(rival)) continue
+      this.abortAttempt(rival, 'lost')
+      const stream = this.runtime.state.streams.find((chunk) => chunk.id === rival.streamId)
+      if (stream) this.goIdle(stream)
+    }
   }
 
   /** Applies what became of an attempt to the download. 'stop' ends the stream. */
@@ -830,22 +978,35 @@ export class HttpTransfer implements Transfer {
     }
 
     this.endAttempt(self, attempt)
-    block.status = 'completed'
-    block.interfaceId = attempt.networkId
-    if (block.rangeEnd !== null) {
-      // Progress events can lag the final write, so square the block up to its exact size and
-      // credit the shortfall to the network that finished it.
-      const blockBytes = block.rangeEnd - block.rangeStart + 1
-      chunk.bytesDownloaded += advanceBlock(block, attempt.networkId, blockBytes)
-      self.lastBlockSpeed =
-        (attempt.networkReceived /
-          Math.max(1, (attempt.lastNetworkAt || Date.now()) - attempt.startedAt)) *
-        1000
-    }
     self.failures = 0
     self.strikes = 0
-    // Whoever is still racing for the block has lost.
-    for (const rival of this.attempts.get(block.index) ?? []) this.abortAttempt(rival, 'lost')
+    if (block.rangeEnd === null) {
+      // A block of unknown length is the whole file, in one request: it is all in.
+      block.status = 'completed'
+      block.interfaceId = attempt.networkId
+      this.loseRivals(block)
+      recomputeAggregates(this.runtime.state, this.runtime.blocks)
+      this.host.scheduleUpdate()
+      return 'continue'
+    }
+
+    self.lastBlockSpeed =
+      (attempt.networkReceived /
+        Math.max(1, (attempt.lastNetworkAt || Date.now()) - attempt.startedAt)) *
+      1000
+    const end = attempt.end ?? block.rangeEnd - block.rangeStart + 1
+    if ((attempt.startOffset ?? 0) > block.bytesDownloaded) {
+      // A split that got to the end of its part before the frontier got to it: its part waits
+      // there to be joined, and the stream is free for more.
+      this.keepAhead(attempt, end)
+    } else {
+      // Progress events can lag the final write, so square the block up to the end of this
+      // attempt's part and credit the shortfall to the network that fetched it.
+      this.advance(block, attempt.networkId, end, chunk)
+    }
+    this.settle(block, attempt.networkId)
+    // Its part is in, but the block may not be: it no longer holds it either way.
+    if ((block.status as HttpBlockState['status']) !== 'completed') this.goIdle(chunk)
     recomputeAggregates(this.runtime.state, this.runtime.blocks)
     this.host.scheduleUpdate()
     return 'continue'
@@ -1012,8 +1173,14 @@ export class HttpTransfer implements Transfer {
   ): void {
     this.endAttempt(self, attempt)
     const { block } = attempt
-    // A block another attempt has finished stays finished.
-    if (attempt.kind === 'primary' && block.status === 'downloading') block.status = 'pending'
+    // What a split got before it stopped stays usable.
+    this.keepAhead(attempt, this.attemptPosition(attempt))
+    if ((this.runtime.state.status as DownloadStatus) === 'downloading') {
+      this.settle(block, attempt.networkId)
+    } else if (attempt.kind === 'primary' && block.status === 'downloading') {
+      // Stopping: every block in flight goes back to the queue anyway.
+      block.status = 'pending'
+    }
     if (deliveredNothing) this.avoidNetworkByBlock.set(block.index, attempt.networkId)
     this.goIdle(chunk)
   }
@@ -1103,7 +1270,8 @@ export class HttpTransfer implements Transfer {
       nudge: new AbortController(),
       connection: new StreamConnection(() => this.host.networks.find(chunk.interfaceId), {
         timeoutMs: testKnobs.stallTimeoutMs,
-        connectTimeoutMs: testKnobs.connectTimeoutMs
+        connectTimeoutMs: testKnobs.connectTimeoutMs,
+        proxy: () => this.host.getProxyForInterface?.(chunk.interfaceId)
       }),
       attempt: null,
       warmSince: Date.now(),
@@ -1142,7 +1310,8 @@ export class HttpTransfer implements Transfer {
             attempts: this.attempts,
             avoid: this.avoidNetworkByBlock,
             hedgesUsed: this.hedgesByBlock,
-            diskBehind: this.disk.reading === 'behind'
+            diskBehind: this.disk.reading === 'behind',
+            segments: this.aheadByBlock
           },
           {
             id: chunk.id,

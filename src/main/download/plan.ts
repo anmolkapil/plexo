@@ -8,8 +8,9 @@ import type { HttpBlockState, TorrentPieceState } from '../../shared/types'
 const MIB = 1024 * 1024
 
 /** The largest block. However big the file, a block stays small enough for one stream to finish
- * soon: a racing second attempt re-fetches a block rather than splitting it (see scheduler.ts),
- * so the last block's size is how long the slowest connection can hold the download up. */
+ * soon: a racing second attempt re-fetches what is left of a block rather than splitting it (see
+ * scheduler.ts), so the last block's size is how long the slowest connection can hold the
+ * download up. Splits share out only what free streams can take over at the very end. */
 export const DEFAULT_MAX_BLOCK_BYTES = 8 * MIB
 
 /** No block is planned smaller than this: each block is its own request, and below about a

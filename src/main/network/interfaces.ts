@@ -1,4 +1,6 @@
 import { execFile } from 'node:child_process'
+import { existsSync } from 'node:fs'
+import { readdir, readlink } from 'node:fs/promises'
 import { networkInterfaces } from 'node:os'
 import { promisify } from 'node:util'
 import type { NetworkAddress, NetworkInterfaceInfo, NetworkInterfaceKind } from '../../shared/types'
@@ -11,6 +13,11 @@ interface WindowsAdapter {
   Name: string
   InterfaceDescription: string
   NdisPhysicalMedium: number
+}
+
+interface LinuxAdapter {
+  displayName: string
+  kind: NetworkInterfaceKind
 }
 
 /**
@@ -95,6 +102,98 @@ async function getWindowsAdapters(): Promise<Map<string, WindowsAdapter>> {
   }
 }
 
+/**
+ * Queries Linux sysfs and udev to detect hardware interfaces (PCI, USB, Wi-Fi, Ethernet)
+ * and filter out virtual host/container bridges (e.g. docker0, br-*, veth*).
+ */
+async function getLinuxAdapters(): Promise<Map<string, LinuxAdapter>> {
+  const adapters = new Map<string, LinuxAdapter>()
+  if (process.platform !== 'linux') return adapters
+
+  let devices: string[]
+  try {
+    devices = await readdir('/sys/class/net')
+  } catch {
+    return adapters
+  }
+
+  await Promise.all(
+    devices.map(async (device) => {
+      if (device === 'lo') return
+      // Filter out internal container, hypervisor, and dummy bridges/interfaces
+      if (/^(docker|br-|veth|virbr|vboxnet|vmnet|cni|flannel|cbr|dummy)/i.test(device)) return
+
+      const sysPath = `/sys/class/net/${device}`
+      let isVirtual = false
+      try {
+        const link = await readlink(sysPath)
+        isVirtual = link.includes('/devices/virtual/')
+      } catch {
+        /* ignore */
+      }
+
+      // Pure virtual devices with no hardware backing and no wireless/phy capabilities
+      if (
+        isVirtual &&
+        !existsSync(`${sysPath}/device`) &&
+        !existsSync(`${sysPath}/wireless`) &&
+        !existsSync(`${sysPath}/phy80211`)
+      ) {
+        return
+      }
+
+      let isWireless =
+        existsSync(`${sysPath}/wireless`) ||
+        existsSync(`${sysPath}/phy80211`) ||
+        /^wl/i.test(device)
+
+      let isUsb = /^usb|^rndis/i.test(device)
+      try {
+        const link = await readlink(sysPath)
+        if (link.includes('/usb')) isUsb = true
+      } catch {
+        /* ignore */
+      }
+
+      let udevModel = ''
+      try {
+        const { stdout } = await execFileAsync('udevadm', ['info', '-q', 'property', sysPath], {
+          timeout: 1000
+        })
+        for (const line of stdout.split('\n')) {
+          if (line.startsWith('ID_BUS=usb')) isUsb = true
+          if (line.startsWith('DEVTYPE=wlan')) isWireless = true
+          if (line.startsWith('ID_MODEL_FROM_DATABASE=')) {
+            udevModel = line.slice('ID_MODEL_FROM_DATABASE='.length).trim()
+          }
+        }
+      } catch {
+        /* ignore */
+      }
+
+      let kind: NetworkInterfaceKind = 'other'
+      if (isWireless) kind = 'wifi'
+      else if (isUsb) kind = 'usb'
+      else if (/^(eth|en)/i.test(device)) kind = 'ethernet'
+      else kind = classifyInterface(device)
+
+      const displayName =
+        udevModel ||
+        (kind === 'wifi'
+          ? 'Wi-Fi'
+          : kind === 'ethernet'
+            ? 'Ethernet'
+            : kind === 'usb'
+              ? 'USB Network'
+              : device)
+
+      adapters.set(device, { displayName, kind })
+    })
+  )
+
+  return adapters
+}
+
 /** Computes the CIDR subnet (e.g. "192.168.1.0/24") from an IPv4 address and netmask. */
 export function ipv4Subnet(address: string, netmask: string): string | null {
   const ipParts = address.split('.').map(Number)
@@ -119,7 +218,7 @@ export function ipv4Subnet(address: string, netmask: string): string | null {
  * takes a child process, while the addresses themselves are one cheap system call. */
 let labels: {
   devices: string
-  lookup: Promise<[Map<string, string>, Map<string, WindowsAdapter>]>
+  lookup: Promise<[Map<string, string>, Map<string, WindowsAdapter>, Map<string, LinuxAdapter>]>
 } | null = null
 
 /**
@@ -132,9 +231,12 @@ export async function listActiveInterfaces(): Promise<NetworkInterfaceInfo[]> {
   const all = networkInterfaces()
   const devices = Object.keys(all).sort().join('\n')
   if (labels?.devices !== devices) {
-    labels = { devices, lookup: Promise.all([getMacHardwarePortNames(), getWindowsAdapters()]) }
+    labels = {
+      devices,
+      lookup: Promise.all([getMacHardwarePortNames(), getWindowsAdapters(), getLinuxAdapters()])
+    }
   }
-  const [hardwarePorts, windowsAdapters] = await labels.lookup
+  const [hardwarePorts, windowsAdapters, linuxAdapters] = await labels.lookup
   const result: NetworkInterfaceInfo[] = []
 
   for (const [device, addresses] of Object.entries(all)) {
@@ -158,21 +260,30 @@ export async function listActiveInterfaces(): Promise<NetworkInterfaceInfo[]> {
       }))
     if (usable.length === 0) continue
 
+    // On Linux, skip internal/virtual bridge adapters that aren't recognized hardware/adapters
+    if (process.platform === 'linux' && linuxAdapters.size > 0 && !linuxAdapters.has(device)) {
+      continue
+    }
+
     const hardwareName = hardwarePorts.get(device)
     const adapter = windowsAdapters.get(device)
+    const linuxAdapter = linuxAdapters.get(device)
+
     let kind =
-      process.platform === 'linux'
+      linuxAdapter?.kind ??
+      (process.platform === 'linux'
         ? classifyLinuxDevice(device)
-        : classifyInterface(adapter?.InterfaceDescription ?? hardwareName ?? device)
+        : classifyInterface(adapter?.InterfaceDescription ?? hardwareName ?? device))
     // NDIS media: 1 = wireless LAN, 9 = native 802.11, 14 = Ethernet (802.3).
     if (adapter?.NdisPhysicalMedium === 1 || adapter?.NdisPhysicalMedium === 9) kind = 'wifi'
     else if (kind === 'other' && adapter?.NdisPhysicalMedium === 14) kind = 'ethernet'
+
+    const displayName = linuxAdapter?.displayName ?? hardwareName ?? device
+
     result.push({
       id: device,
       device,
-      // What the OS shows people: macOS's hardware port ("Wi-Fi", "iPhone USB"), else the device —
-      // on Windows its alias ("Wi-Fi", "Ethernet 2"), on Linux its name (wlp2s0).
-      displayName: hardwareName ?? device,
+      displayName,
       addresses: usable,
       kind,
       mac: addresses.find((addr) => addr.mac && addr.mac !== '00:00:00:00:00:00')?.mac
