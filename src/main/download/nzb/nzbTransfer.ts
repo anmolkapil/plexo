@@ -420,7 +420,8 @@ export class NzbTransfer implements Transfer {
       server.port,
       server.tls,
       Math.min(testKnobs.connectTimeoutMs, testKnobs.stallTimeoutMs),
-      signal
+      signal,
+      this.host.getProxyForInterface?.(networkId)
     ).catch((error: unknown) => {
       throw asConnectionError(error)
     })
