@@ -7,6 +7,7 @@ import { testKnobs } from '../testKnobs'
 import { requestHeaders } from './browserContext'
 import { parseContentDispositionFilename } from './contentDisposition'
 import { describeNzb, downloadNzbFile, indexerError, readNzbFile, sniffXml } from './nzb/nzbFile'
+import { USENET_OFF, usenetEnabled } from './nzb/usenetServer'
 import { normalizeEtag } from './fileVersion'
 import {
   describeTorrent,
@@ -181,6 +182,7 @@ export async function probeUrl(rawUrl: string, browser?: BrowserContext): Promis
     return describeTorrent(await readTorrentFile(rawUrl), rawUrl)
   }
   if (isAbsolute(rawUrl) && /\.nzb$/i.test(rawUrl)) {
+    if (!(await usenetEnabled())) throw new Error(USENET_OFF)
     return describeNzb(await readNzbFile(rawUrl), rawUrl, basename(rawUrl))
   }
 
@@ -221,7 +223,9 @@ export async function probeUrl(rawUrl: string, browser?: BrowserContext): Promis
   }
 
   const suggestedFileName = fileNameFromHeaders(response.headers, current)
-  if (isNzbLink(response.headers, current, suggestedFileName)) {
+  // Off, an NZB is a file like any other: for another newsreader to take.
+  const usenet = await usenetEnabled()
+  if (usenet && isNzbLink(response.headers, current, suggestedFileName)) {
     const finalUrl = current.toString()
     const nzbFile = await downloadNzbFile(
       finalUrl,
@@ -238,7 +242,7 @@ export async function probeUrl(rawUrl: string, browser?: BrowserContext): Promis
     const start = await sniffXml(finalUrl, PROBE_TIMEOUT_MS, headers)
     const refusal = indexerError(start)
     if (refusal) throw new Error(refusal)
-    if (/<(?:[\w-]+:)?nzb\b/i.test(start)) {
+    if (usenet && /<(?:[\w-]+:)?nzb\b/i.test(start)) {
       const nzbFile = await downloadNzbFile(finalUrl, PROBE_TIMEOUT_MS, headers)
       return describeNzb(nzbFile, finalUrl, suggestedFileName)
     }

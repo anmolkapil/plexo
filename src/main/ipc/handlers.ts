@@ -265,7 +265,11 @@ export function registerIpcHandlers(getWindow: () => BrowserWindow | null): Down
     const server = await loadUsenetServer()
     return server && viewOf(server)
   })
-  handle('saveUsenetServer', async (_event, input) => saveUsenetServer(input))
+  handle('saveUsenetServer', async (_event, input) => {
+    const server = await saveUsenetServer(input)
+    if (!server.enabled) manager.usenetTurnedOff()
+    return server
+  })
   handle('testUsenetServer', async (_event, input) =>
     testUsenetServer(await serverFromInput(input))
   )

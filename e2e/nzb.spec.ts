@@ -4,6 +4,7 @@ import { mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { NzbDownloadState, UsenetServerInput } from '../src/shared/types'
+import type { Locator } from '@playwright/test'
 import { expect, LAN_ADDRESS, test, type PlexoApp } from './fixtures'
 import { NewsServer, type NewsServerOptions } from './newsServer'
 import { seededBytes } from './origin'
@@ -383,6 +384,133 @@ test.describe('NZB downloads', () => {
     for (const network of done.networks.filter((network) => network.enabled)) {
       expect(network.bytesDownloaded).toBeGreaterThan(0)
     }
+  })
+})
+
+/** Speed & data limits, on its Usenet page. */
+async function openUsenetPage(plexo: PlexoApp): Promise<Locator> {
+  await plexo.page.getByRole('button', { name: /^\d+ networks?/ }).click()
+  await plexo.page.getByRole('button', { name: 'Speed & data limits', exact: true }).click()
+  const dialog = plexo.page.getByRole('dialog', { name: 'Speed & data limits' })
+  await dialog.getByRole('button', { name: /^Usenet/ }).click()
+  return dialog
+}
+
+/** An indexer answering every request with `server`'s NZB, as an NZB. */
+async function indexerFor(server: NewsServer): Promise<{ link: string; close: () => void }> {
+  const indexer: Server = createServer((_request, response) => {
+    response.writeHead(200, {
+      'Content-Type': 'application/x-nzb',
+      'Content-Disposition': 'attachment; filename="Indexer.Release.nzb"'
+    })
+    response.end(server.nzb())
+  })
+  await new Promise<void>((resolve) => indexer.listen(0, '127.0.0.1', resolve))
+  const { port } = indexer.address() as AddressInfo
+  return { link: `http://127.0.0.1:${port}/api?t=get&id=1`, close: () => indexer.close() }
+}
+
+test.describe('Usenet settings', () => {
+  test('the switch in Speed & data limits is saved with the server and kept on restart', async ({
+    plexo
+  }) => {
+    const server = await newsServer()
+    // Saved before there was a switch: on.
+    await writeFile(
+      join(plexo.dirs.userData, 'usenet-server.json'),
+      JSON.stringify({ host: '127.0.0.1', port: server.port, tls: false, connections: 3 })
+    )
+    await plexo.relaunch()
+    expect((await plexo.api.usenetServer())?.enabled).toBe(true)
+
+    let dialog = await openUsenetPage(plexo)
+    await expect(dialog.getByText(`127.0.0.1:${server.port}`)).toBeVisible()
+    await dialog.getByRole('switch', { name: 'Usenet downloads' }).click()
+    // Nothing changes until Save.
+    expect((await plexo.api.usenetServer())?.enabled).toBe(true)
+    await dialog.getByRole('button', { name: 'Save', exact: true }).click()
+    await expect(dialog).toBeHidden()
+    expect(await plexo.api.usenetServer()).toMatchObject({ enabled: false, connections: 3 })
+
+    await plexo.relaunch()
+    expect((await plexo.api.usenetServer())?.enabled).toBe(false)
+    dialog = await openUsenetPage(plexo)
+    await expect(dialog.getByRole('switch', { name: 'Usenet downloads' })).not.toBeChecked()
+    // Saving the server from its own form leaves the switch as it is.
+    await dialog.getByRole('button', { name: 'Change server' }).click()
+    const form = plexo.page.getByRole('dialog', { name: 'Usenet server' })
+    await form.getByLabel('Connections').fill('5')
+    await form.getByRole('button', { name: 'Save' }).click()
+    await expect(form).toBeHidden()
+    expect(await plexo.api.usenetServer()).toMatchObject({ enabled: false, connections: 5 })
+  })
+
+  test('off, an NZB is no Usenet download, and a running one stops connecting', async ({
+    plexo
+  }) => {
+    const server = await newsServer({ delayMs: 40 })
+    await useServer(plexo, server, { connections: 2 })
+    const nzb = await nzbOnDisk(server)
+    const id = await plexo.start(nzb, server.expectedSha())
+    await plexo.waitUntil((state) => state.kind === 'nzb' && countDone(state) >= 2)
+
+    await useServer(plexo, server, { connections: 2, enabled: false })
+    const failed = await plexo.waitForNzbStatus('error', 10_000)
+    expect(failed.error).toMatch(/Usenet downloads are off/)
+    expect(failed.resumable).toBe(true)
+    // Resumed while off, it fails again before it connects.
+    await new Promise((resolve) => setTimeout(resolve, 200))
+    const served = server.served.length
+    await plexo.api.resumeDownload(id)
+    await expect.poll(async () => (await plexo.byId(id))?.status, { timeout: 10_000 }).toBe('error')
+    expect((await plexo.byId(id))?.error).toMatch(/Usenet downloads are off/)
+    expect(server.served.length).toBe(served)
+
+    // An NZB file can't be downloaded; one by link is a plain file, for another newsreader.
+    await expect(plexo.api.probeUrl(nzb)).rejects.toThrow(/Usenet downloads are off/)
+    const indexer = await indexerFor(server)
+    try {
+      const probe = await plexo.api.probeUrl(indexer.link)
+      expect(probe.kind).toBe('http')
+      expect(probe.suggestedFileName).toBe('Indexer.Release.nzb')
+    } finally {
+      indexer.close()
+    }
+
+    // Back on, the download picks up where it stopped.
+    await useServer(plexo, server, { connections: 2, enabled: true })
+    await plexo.api.resumeDownload(id)
+    await plexo.waitForNzbStatus('completed', 30_000)
+  })
+
+  test('the news server is set up from Speed & data limits', async ({ plexo }) => {
+    const server = await newsServer()
+    const dialog = await openUsenetPage(plexo)
+    await expect(dialog.getByText('No news server set up')).toBeVisible()
+    await expect(dialog.getByRole('switch', { name: 'Usenet downloads' })).toBeDisabled()
+    await dialog.getByRole('button', { name: 'Set up server' }).click()
+
+    const form = plexo.page.getByRole('dialog', { name: 'Usenet server' })
+    await form.getByLabel('Server').fill('127.0.0.1')
+    await form.getByRole('switch').click()
+    await form.getByLabel('Port').fill(String(server.port))
+    await form.getByLabel('Connections').fill('2')
+    await form.getByRole('button', { name: 'Save' }).click()
+    await expect(form).toBeHidden()
+
+    await expect(dialog.getByText(`127.0.0.1:${server.port}`)).toBeVisible()
+    await expect(dialog.getByRole('switch', { name: 'Usenet downloads' })).toBeChecked()
+    // Saved already: the server's own Save is what counts, not Cancel here.
+    await dialog.getByRole('button', { name: 'Cancel' }).click()
+    expect(await plexo.api.usenetServer()).toMatchObject({
+      enabled: true,
+      host: '127.0.0.1',
+      port: server.port,
+      tls: false,
+      connections: 2
+    })
+    await plexo.start(await nzbOnDisk(server), server.expectedSha())
+    await plexo.waitForNzbStatus('completed', 30_000)
   })
 })
 

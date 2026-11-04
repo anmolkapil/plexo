@@ -70,7 +70,7 @@ import {
   type ParsedNzb
 } from './nzb/nzbFile'
 import { NzbTransfer } from './nzb/nzbTransfer'
-import { loadUsenetServer } from './nzb/usenetServer'
+import { loadUsenetServer, USENET_OFF } from './nzb/usenetServer'
 import {
   clearSpeeds,
   delay,
@@ -1202,6 +1202,7 @@ export class DownloadManager {
     if (!nzbFile) throw new Error('Add the NZB again to start downloading.')
     const server = await loadUsenetServer()
     if (!server) throw new Error('Set up a news server to download from Usenet.')
+    if (!server.enabled) throw new Error(USENET_OFF)
     const nzb = parseNzb(nzbFile)
     const usable = compatibleInterfaces(
       selected,
@@ -1606,6 +1607,14 @@ export class DownloadManager {
         (id) => moved.has(id)
       )
       this.scheduleUpdate(runtime)
+    }
+  }
+
+  /** Usenet downloads were switched off: the ones running stop rather than keep connecting.
+   * Paused and queued ones stop when they'd start (see NzbTransfer.reconcile). */
+  usenetTurnedOff(): void {
+    for (const runtime of this.runtimes.values()) {
+      if (runtime.kind === 'nzb') this.failDownload(runtime, USENET_OFF)
     }
   }
 

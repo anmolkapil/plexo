@@ -12,6 +12,8 @@ export interface UsenetServerConfig extends Omit<UsenetServer, 'hasPassword' | '
 export const MAX_CONNECTIONS = 100
 export const DEFAULT_CONNECTIONS = 8
 
+export const USENET_OFF = 'Usenet downloads are off. Turn them on in Speed & data limits.'
+
 function serverPath(): string {
   return join(app.getPath('userData'), 'usenet-server.json')
 }
@@ -42,6 +44,8 @@ export function checkedServer(value: unknown): Omit<UsenetServerConfig, 'passwor
   const username = typeof value.username === 'string' ? value.username.trim() : ''
   if (/[\r\n]/.test(username)) return null
   return {
+    // Saved before there was a switch: on.
+    enabled: value.enabled !== false,
     host: host.replace(/^\[|\]$/g, ''),
     port: Number.isInteger(port) && port > 0 && port < 65536 ? port : tls ? 563 : 119,
     tls,
@@ -75,15 +79,25 @@ export function viewOf(server: UsenetServerConfig): UsenetServer {
   return { ...rest, hasPassword: password !== '', ...(!canSeal() && { passwordInMemory: true }) }
 }
 
-/** The server as `input` sets it: the password it gives, or the one saved when it gives none. */
+/** Whether NZBs download from Usenet: on until switched off, which takes a server set up. */
+export async function usenetEnabled(): Promise<boolean> {
+  return (await loadUsenetServer())?.enabled !== false
+}
+
+/** The server as `input` sets it: the password and switch it gives, or the ones saved when it
+ * gives none. */
 export async function serverFromInput(input: UsenetServerInput): Promise<UsenetServerConfig> {
   const server = checkedServer(input)
   if (!server) throw new Error('Enter the news server’s address')
   if (input.password !== undefined && /[\r\n]/.test(input.password)) {
     throw new Error('A password can’t span lines')
   }
-  const password = input.password ?? (await loadUsenetServer())?.password ?? ''
-  return { ...server, password }
+  const saved = await loadUsenetServer()
+  return {
+    ...server,
+    enabled: input.enabled === undefined ? (saved?.enabled ?? true) : server.enabled,
+    password: input.password ?? saved?.password ?? ''
+  }
 }
 
 export async function saveUsenetServer(input: UsenetServerInput): Promise<UsenetServer> {

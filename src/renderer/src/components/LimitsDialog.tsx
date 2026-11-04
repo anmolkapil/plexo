@@ -6,7 +6,8 @@ import {
   DOWNLOADS_AT_ONCE,
   type AppSettings,
   type DataLimitPeriod,
-  type NetworkPreference
+  type NetworkPreference,
+  type UsenetServer
 } from '@shared/types'
 import { Minus, Plus } from 'lucide-react'
 import { useEffect, useId, useRef, useState } from 'react'
@@ -31,6 +32,10 @@ import { Dialog, DialogContent, DialogTitle } from './ui/dialog'
 import { Input } from './ui/input'
 import { Switch } from './ui/switch'
 import { ToggleGroup, ToggleGroupItem } from './ui/toggle-group'
+import { UsenetServerDialog } from './UsenetServerDialog'
+
+/** The page key for Usenet, beside networks' interface ids. */
+const USENET_PAGE = 'usenet'
 
 /** What the dialog edits: a copy taken when it opens, written back only on Save. */
 type Draft = Pick<
@@ -499,6 +504,92 @@ function NetworkPage({
   )
 }
 
+function UsenetPage({
+  server,
+  enabled,
+  onEnabledChange,
+  onServerSaved
+}: {
+  /** As saved; null when there's none, undefined until loaded. */
+  server: UsenetServer | null | undefined
+  enabled: boolean
+  onEnabledChange: (enabled: boolean) => void
+  onServerSaved: (server: UsenetServer) => void
+}): React.JSX.Element {
+  const [editing, setEditing] = useState(false)
+  const rows: [string, string][] = server
+    ? [
+        ['Server', `${server.host}:${server.port}`],
+        ['SSL', server.tls ? 'On' : 'Off'],
+        ['Username', server.username || 'None'],
+        ['Connections', String(server.connections)]
+      ]
+    : []
+  return (
+    <>
+      <div className="flex flex-col gap-1 pb-3">
+        <h3 className="font-sans text-[18px] leading-none font-semibold">Usenet</h3>
+        <div className="font-mono text-[12px] text-muted-foreground">
+          {server ? server.host : 'No news server set up'}
+        </div>
+      </div>
+
+      <section className={sectionClass}>
+        <h4 className={headingClass}>Usenet downloads</h4>
+        <p className={hintClass}>
+          {server === null
+            ? 'NZB links and files download from your news server, once it’s set up.'
+            : 'NZB links and files download from your news server. When off, an NZB link downloads as a plain file.'}
+        </p>
+        <label className="flex w-fit items-center gap-2 text-[13px]">
+          Enabled
+          <Switch
+            aria-label="Usenet downloads"
+            checked={enabled}
+            // Kept with the server: nothing to switch until there is one.
+            disabled={!server}
+            onCheckedChange={onEnabledChange}
+          />
+        </label>
+      </section>
+
+      <section className={sectionClass}>
+        <h4 className={headingClass}>News server</h4>
+        <p className={hintClass}>
+          Where NZB downloads come from, as your Usenet provider gives it. Saved in its own dialog.
+        </p>
+        {rows.length > 0 && (
+          <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1.5 text-[13px]">
+            {rows.map(([label, value]) => (
+              <div key={label} className="contents">
+                <dt className="text-[var(--text-secondary)]">{label}</dt>
+                <dd className="truncate font-mono">{value}</dd>
+              </div>
+            ))}
+          </dl>
+        )}
+        <div>
+          <Button
+            type="button"
+            variant="secondary"
+            size="sm"
+            disabled={server === undefined}
+            onClick={() => setEditing(true)}
+          >
+            {server ? 'Change server' : 'Set up server'}
+          </Button>
+        </div>
+      </section>
+      <UsenetServerDialog
+        open={editing}
+        server={server ?? null}
+        onOpenChange={setEditing}
+        onSaved={onServerSaved}
+      />
+    </>
+  )
+}
+
 /** "5.00 of 5 GB this month", with a bar that turns red once the limit is reached. */
 function UsageBar({
   used,
@@ -545,9 +636,9 @@ function describeLimits(
   return lines.length > 0 ? lines : ['No limit']
 }
 
-/** Speed & data limits: every download's together, and each network's. Nothing changes until
- * Save; Cancel (or Escape) leaves everything as it was. Resetting data usage is the exception:
- * it's an action, not a setting, so it happens once confirmed. */
+/** Speed & data limits: every download's together, Usenet's, and each network's. Nothing changes
+ * until Save; Cancel (or Escape) leaves everything as it was. Resetting data usage and the news
+ * server are the exceptions: each is saved once confirmed in its own dialog. */
 export function LimitsDialog({
   showSchedule = false,
   open,
@@ -558,7 +649,7 @@ export function LimitsDialog({
   showSchedule?: boolean
   open: boolean
   onOpenChange: (open: boolean) => void
-  /** The network shown, by interface id; null for General. */
+  /** The network shown, by interface id; USENET_PAGE for Usenet, null for General. */
   page: string | null
   onPageChange: (page: string | null) => void
 }): React.JSX.Element {
@@ -630,6 +721,16 @@ function LimitsEditor({
         [id]: { ...previous.networkPreferences[id], ...patch }
       }
     }))
+  const [usenet, setUsenet] = useState<UsenetServer | null | undefined>(undefined)
+  // The switch as drafted; the server's own until changed.
+  const [usenetEnabled, setUsenetEnabled] = useState<boolean | undefined>(undefined)
+  const shownUsenetEnabled = usenetEnabled ?? usenet?.enabled ?? true
+  useEffect(() => {
+    void window.plexo
+      .usenetServer()
+      .then(setUsenet)
+      .catch(() => setUsenet(null))
+  }, [])
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const valid = draft.downloadSchedule === undefined || validSchedule(draft.downloadSchedule)
@@ -653,6 +754,19 @@ function LimitsEditor({
       }
     }
     try {
+      if (usenet && usenetEnabled !== undefined && usenetEnabled !== usenet.enabled) {
+        const { host, port, tls, username, connections } = usenet
+        // No password given: the saved one stays.
+        const saved = await window.plexo.saveUsenetServer({
+          host,
+          port,
+          tls,
+          username,
+          connections,
+          enabled: usenetEnabled
+        })
+        setUsenet(saved)
+      }
       await window.plexo.updateSettings(patch)
       useAppStore.setState(patch)
       onClose()
@@ -721,6 +835,9 @@ function LimitsEditor({
                 ]
               : [])
           ])}
+          {navItem(USENET_PAGE, 'var(--text-secondary)', 'Usenet', [
+            usenet === null ? 'No server' : shownUsenetEnabled ? 'On' : 'Off'
+          ])}
           <div className={navLabelClass}>Networks</div>
           {interfaces.map((iface) => {
             const visual = networkVisual(iface.id, iface.kind, iface.displayName)
@@ -739,7 +856,14 @@ function LimitsEditor({
           })}
         </nav>
         <fieldset disabled={saving} className="min-h-0 min-w-0 flex-1 overflow-y-auto px-4 py-3">
-          {shown ? (
+          {page === USENET_PAGE ? (
+            <UsenetPage
+              server={usenet}
+              enabled={shownUsenetEnabled}
+              onEnabledChange={setUsenetEnabled}
+              onServerSaved={setUsenet}
+            />
+          ) : shown ? (
             <NetworkPage
               key={shown.id}
               id={shown.id}
