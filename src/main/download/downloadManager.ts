@@ -7,6 +7,7 @@ import type { BrowserWindow } from 'electron'
 import { app, Notification, powerSaveBlocker, safeStorage, shell } from 'electron'
 import { scheduleWindow } from '../../shared/downloadSchedule'
 import { IpcChannels } from '../../shared/ipc-channels'
+import { taskbarProgress, type TaskbarDownload } from '../../shared/taskbarProgress'
 import {
   DOWNLOADS_AT_ONCE,
   SPEED_HISTORY_SECONDS,
@@ -396,6 +397,8 @@ export class DownloadManager {
   private runtimes = new Map<string, DownloadRuntime>()
   /** Downloads whose new link is being checked: two at once could both pass and both resume. */
   private relinking = new Set<string>()
+  /** Downloads that were paused during this session (not restored as paused on startup). */
+  private pausedInSession = new Set<string>()
   private readonly initialization: Promise<void>
   private suspending = false
   private scheduleLoaded = false
@@ -428,6 +431,17 @@ export class DownloadManager {
   async applySettings(settings: AppSettings): Promise<void> {
     await this.initialization
     await this.configureSettings(settings)
+  }
+
+  /** How many downloads are currently downloading or queued. */
+  activeDownloadCount(): number {
+    let count = 0
+    for (const runtime of this.runtimes.values()) {
+      if (runtime.state.status === 'downloading' || runtime.state.status === 'queued') {
+        count++
+      }
+    }
+    return count
   }
 
   private async configureSettings(settings: AppSettings): Promise<void> {
@@ -831,7 +845,9 @@ export class DownloadManager {
       return
     }
     this.runtimes.delete(runtime.state.id)
+    this.pausedInSession.delete(runtime.state.id)
     await this.removePersistedDownload(runtime, false)
+    this.updateTaskbarProgress()
     this.historyChanged()
   }
 
@@ -1251,6 +1267,7 @@ export class DownloadManager {
       runtime.state.status = 'paused'
       runtime.state.queuedAt = undefined
       runtime.state.pausedAt ??= Date.now()
+      this.pausedInSession.add(id)
       this.pushUpdate(runtime)
       await runtime.runPromise
       await this.persistNow(runtime)
@@ -1264,6 +1281,7 @@ export class DownloadManager {
     } else {
       runtime.state.status = 'paused'
       runtime.state.scheduled = undefined
+      this.pausedInSession.add(id)
     }
     runtime.state.pausedAt = Date.now()
     clearSpeeds(runtime.state)
@@ -1469,6 +1487,7 @@ export class DownloadManager {
       void this.persistNow(runtime)
       return
     }
+    this.pausedInSession.delete(runtime.state.id)
     runtime.state.scheduled = this.downloadSchedule?.enabled || undefined
     const { networks } = runtime.state
     runtime.state.status = 'downloading'
@@ -1775,7 +1794,9 @@ export class DownloadManager {
         await trashDownload(runtime.state, owned)
       }
       this.runtimes.delete(id)
+      this.pausedInSession.delete(id)
       await this.removePersistedDownload(runtime)
+      this.updateTaskbarProgress()
       if (runtime.state.status === 'completed') {
         await removeFromHistory([id])
         this.historyChanged()
@@ -1837,6 +1858,7 @@ export class DownloadManager {
       })
     )
     await this.limits.save()
+    this.updateTaskbarProgress()
   }
 
   /**
@@ -1953,7 +1975,11 @@ export class DownloadManager {
         runtime.state.totalBytes - unwantedBytes(runtime.state) || runtime.state.bytesDownloaded
       await this.persistNow(runtime)
       await runtime.file.discardLeftover().catch(() => {})
-      this.notify('Download complete', `${runtime.state.fileName} has finished downloading.`)
+      this.notify(
+        'Download complete',
+        `${runtime.state.fileName} has finished downloading. Click to show in folder.`,
+        runtime.state.id
+      )
     } catch (error) {
       runtime.state.status = 'error'
       runtime.state.error = error instanceof Error ? error.message : String(error)
@@ -1978,6 +2004,7 @@ export class DownloadManager {
    * `discard`: bytes that are no use any more. */
   private failDownload(runtime: DownloadRuntime, message: string, discard = false): void {
     if (runtime.state.status !== 'downloading') return
+    this.pausedInSession.delete(runtime.state.id)
     runtime.state.status = 'error'
     runtime.state.error = message
     runtime.state.resumable = !discard
@@ -2073,21 +2100,49 @@ export class DownloadManager {
     runtime.transfer.reconcile()
   }
 
-  private notify(title: string, body: string): void {
+  private notify(title: string, body: string, downloadId?: string): void {
     if (testKnobs.userDataDir || !Notification.isSupported()) return
     try {
       const notification = new Notification({ title, body })
       notification.on('click', () => {
-        const window = this.getWindow()
-        if (window && !window.isDestroyed()) {
-          if (window.isMinimized()) window.restore()
-          window.show()
-          window.focus()
+        if (downloadId) {
+          void this.reveal(downloadId)
+        } else {
+          const window = this.getWindow()
+          if (window && !window.isDestroyed()) {
+            if (window.isMinimized()) window.restore()
+            window.show()
+            window.focus()
+          }
         }
       })
       notification.show()
     } catch {
       // Best-effort notification
+    }
+  }
+
+  private updateTaskbarProgress(): void {
+    if (testKnobs.userDataDir) return
+    const window = this.getWindow()
+    if (!window || window.isDestroyed()) return
+
+    const states: TaskbarDownload[] = []
+    for (const runtime of this.runtimes.values()) {
+      if (runtime.state.status === 'downloading') {
+        states.push(runtime.state)
+      } else if (runtime.state.status === 'paused' && this.pausedInSession.has(runtime.state.id)) {
+        states.push(runtime.state)
+      }
+    }
+
+    const { progress, mode } = taskbarProgress(states)
+    if (mode === 'indeterminate') {
+      window.setProgressBar(2, { mode: 'indeterminate' })
+    } else if (mode === 'none' || progress < 0) {
+      window.setProgressBar(-1, { mode: 'none' })
+    } else {
+      window.setProgressBar(progress, { mode })
     }
   }
 
@@ -2111,6 +2166,7 @@ export class DownloadManager {
     if (runtime.state.status === 'paused' || runtime.state.status === 'cancelled') {
       clearSpeeds(runtime.state)
     }
+    this.updateTaskbarProgress()
     window.webContents.send(IpcChannels.downloadUpdated, this.takeUpdate(runtime))
   }
 
