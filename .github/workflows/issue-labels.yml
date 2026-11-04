@@ -1,0 +1,150 @@
+name: Issue labels
+
+# Labels issues from the answers in the issue forms (.github/ISSUE_TEMPLATE), and moves an
+# issue from needs-info back to needs-triage when its author replies.
+on:
+  issues:
+    types: [opened, edited]
+  issue_comment:
+    types: [created]
+
+permissions:
+  issues: write
+
+jobs:
+  from-form:
+    name: Label from form answers
+    if: github.event_name == 'issues'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/github-script@v9
+        with:
+          script: |
+            // Form heading -> (answer -> label). The headings are the field labels in the forms.
+            const FIELDS = {
+              'Operating system': {
+                Windows: 'platform: windows',
+                macOS: 'platform: macos',
+                Linux: 'platform: linux'
+              },
+              'What were you downloading?': {
+                'Direct link': 'area: download-engine',
+                'Torrent / magnet': 'area: torrent',
+                'Captured by the browser extension': 'area: browser-extension'
+              },
+              'Which part of Plexo is this about?': {
+                'Using several networks together': 'area: networking',
+                'Downloading files (links, speed, resume)': 'area: download-engine',
+                'Torrents and magnet links': 'area: torrent',
+                'Browser extension': 'area: browser-extension',
+                'Installing and updating': 'area: install',
+                "The app's screens and settings": 'area: ui',
+                'A new kind of download (FTP, video sites, …)': 'area: new-source'
+              }
+            }
+
+            // Answers by heading, for the headings above only. A form's answer can contain
+            // "### " lines of its own (pasted logs), so skip code blocks and keep the first match.
+            function answers(body) {
+              const found = {}
+              let heading = null
+              let inCode = false
+              for (const line of (body ?? '').replace(/\r\n?/g, '\n').split('\n')) {
+                if (/^\s*(```|~~~)/.test(line)) inCode = !inCode
+                const match = !inCode && /^###\s+(.+?)\s*$/.exec(line)
+                if (match) {
+                  heading = match[1] in FIELDS && !(match[1] in found) ? match[1] : null
+                  if (heading) found[heading] = ''
+                } else if (heading) {
+                  found[heading] += line + '\n'
+                }
+              }
+              for (const key of Object.keys(found)) {
+                const text = found[key].trim()
+                found[key] = text === '_No response_' ? '' : text
+              }
+              return found
+            }
+
+            // The labels a body's answers ask for, or null if the body isn't from a form.
+            function labelsFor(body) {
+              const found = answers(body)
+              if (Object.keys(found).length === 0) return null
+              return new Set(
+                Object.entries(found)
+                  .map(([heading, answer]) => FIELDS[heading][answer])
+                  .filter(Boolean)
+              )
+            }
+
+            const { action, issue, changes } = context.payload
+            const wanted = labelsFor(issue.body)
+            if (!wanted) {
+              core.info('Not created from an issue form, nothing to do.')
+              return
+            }
+
+            let add = [...wanted]
+            let remove = []
+            if (action === 'edited') {
+              // Only answers that changed count, so a label a maintainer removed stays removed.
+              if (changes?.body?.from === undefined) {
+                core.info('The body did not change, nothing to do.')
+                return
+              }
+              const before = labelsFor(changes.body.from) ?? new Set()
+              add = add.filter((label) => !before.has(label))
+              // A new OS answer replaces the old platform label.
+              if (add.some((label) => label.startsWith('platform: '))) {
+                remove = [...before].filter(
+                  (label) => label.startsWith('platform: ') && !wanted.has(label)
+                )
+              }
+            }
+
+            const current = new Set(issue.labels.map((label) => label.name))
+            add = add.filter((label) => !current.has(label))
+            remove = remove.filter((label) => current.has(label))
+
+            const target = { owner: context.repo.owner, repo: context.repo.repo, issue_number: issue.number }
+            for (const name of remove) {
+              // Someone may have removed it already.
+              await github.rest.issues.removeLabel({ ...target, name }).catch((error) => {
+                if (error.status !== 404) throw error
+              })
+            }
+            if (add.length > 0) {
+              await github.rest.issues.addLabels({ ...target, labels: add })
+            }
+            core.info(`Added: ${add.join(', ') || 'none'}. Removed: ${remove.join(', ') || 'none'}.`)
+
+  author-replied:
+    name: Back to triage when the author replies
+    if: >-
+      github.event_name == 'issue_comment' &&
+      !github.event.issue.pull_request &&
+      github.event.comment.user.type != 'Bot' &&
+      github.event.comment.user.login == github.event.issue.user.login &&
+      contains(github.event.issue.labels.*.name, 'needs-info')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/github-script@v9
+        with:
+          script: |
+            const { issue } = context.payload
+            const target = { owner: context.repo.owner, repo: context.repo.repo, issue_number: issue.number }
+            const labels = new Set(issue.labels.map((label) => label.name))
+
+            for (const name of ['needs-info', 'stale']) {
+              if (!labels.has(name)) continue
+              await github.rest.issues.removeLabel({ ...target, name }).catch((error) => {
+                if (error.status !== 404) throw error
+              })
+            }
+            await github.rest.issues.addLabels({ ...target, labels: ['needs-triage'] })
+
+            // Closed by stale-needs-info.yml for lack of an answer: the answer is here now.
+            if (issue.state === 'closed' && labels.has('stale')) {
+              await github.rest.issues.update({ ...target, state: 'open' })
+            }
+            core.info(`Issue #${issue.number} is back in triage.`)

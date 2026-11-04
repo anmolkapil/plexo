@@ -1,0 +1,54 @@
+# The labels on the field headings are read by .github/workflows/issue-labels.yml.
+name: Feature request
+description: An idea to make Plexo better.
+labels: [enhancement, needs-triage]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the idea! Some ideas already have an issue, please add your 👍 and comments there:
+
+        - Speed up the whole computer or other apps, like Steam or games: [#25](https://github.com/anmolkapil/plexo/issues/25)
+        - Faster uploads: [#58](https://github.com/anmolkapil/plexo/issues/58)
+        - Phone app (Android, iOS): [#66](https://github.com/anmolkapil/plexo/issues/66)
+        - Plexo in your language: [#221](https://github.com/anmolkapil/plexo/issues/221)
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: What do you want to do?
+      description: Describe your problem or use case, not only the solution.
+    validations:
+      required: true
+
+  - type: textarea
+    id: idea
+    attributes:
+      label: Your idea
+      description: How could Plexo help? Examples from other apps are welcome.
+    validations:
+      required: true
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: Which part of Plexo is this about?
+      options:
+        - Using several networks together
+        - Downloading files (links, speed, resume)
+        - Torrents and magnet links
+        - Browser extension
+        - Installing and updating
+        - The app's screens and settings
+        - A new kind of download (FTP, video sites, …)
+        - Something else
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: searched
+    attributes:
+      label: Existing issues
+      options:
+        - label: I searched the existing issues and didn't find this idea.
+          required: true

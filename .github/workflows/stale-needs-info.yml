@@ -1,0 +1,37 @@
+name: Close unanswered needs-info issues
+
+# Only issues waiting on their reporter (needs-info): a reminder after 14 quiet days, closed 7
+# days later. When the author replies, issue-labels.yml takes needs-info off (and reopens the
+# issue if this closed it), so this stops looking at it. Pull requests are never touched.
+on:
+  schedule:
+    - cron: '30 4 * * *'
+  workflow_dispatch:
+
+permissions:
+  actions: write # the action keeps its progress between runs in the actions cache
+  issues: write
+
+jobs:
+  stale:
+    name: Remind, then close
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/stale@v11
+        with:
+          only-labels: needs-info
+          exempt-issue-labels: enhancement
+          stale-issue-label: stale
+          days-before-issue-stale: 14
+          days-before-issue-close: 7
+          days-before-pr-stale: -1
+          days-before-pr-close: -1
+          close-issue-reason: not_planned
+          operations-per-run: 60
+          stale-issue-message: >
+            Hi! We still need a few details to look into this (see the questions above).
+            If we don't hear back in 7 days, this issue will be closed. You can reply any time,
+            even after that.
+          close-issue-message: >
+            Closing this for now because we didn't get the details we need. No problem: just
+            comment here with them and the issue will open again.

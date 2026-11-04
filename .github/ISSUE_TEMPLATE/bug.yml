@@ -1,0 +1,111 @@
+# Field ids are used to prefill this form from a link
+# (issues/new?template=bug.yml&version=...), so keep them stable.
+# The labels on the field headings are read by .github/workflows/issue-labels.yml.
+name: Bug report
+description: Something in Plexo doesn't work as it should.
+labels: [bug, needs-triage]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to report this. Simple English is fine, and short answers are fine.
+
+        Please [search the existing issues](https://github.com/anmolkapil/plexo/issues?q=is%3Aissue) first: your problem may already have an answer.
+        If Plexo finds your second network on **Windows** but sends nothing through it, see [#65](https://github.com/anmolkapil/plexo/issues/65).
+
+  - type: input
+    id: version
+    attributes:
+      label: Plexo version
+      description: |
+        macOS: Plexo menu › About Plexo.
+        Windows and Linux: the name of the file you installed (for example `plexo-1.0.0-rc.15-setup.exe`), or the update button in the bottom bar › Check for Updates…
+      placeholder: 1.0.0-rc.15
+    validations:
+      required: true
+
+  - type: dropdown
+    id: os
+    attributes:
+      label: Operating system
+      options:
+        - Windows
+        - macOS
+        - Linux
+    validations:
+      required: true
+
+  - type: input
+    id: os-version
+    attributes:
+      label: OS version
+      description: Plexo needs macOS 13 or newer.
+      placeholder: Windows 11 24H2, macOS 15.5, Ubuntu 24.04…
+    validations:
+      required: true
+
+  - type: textarea
+    id: networks
+    attributes:
+      label: Your networks
+      description: |
+        List each network you're combining: Wi-Fi, Ethernet, phone over USB, phone hotspot…
+        For each one, say if it has **its own internet provider** (for example home fibre + mobile data), or if they all go through the same router.
+        Also write what Plexo shows next to each one (speed, ping, "Retrying", "Failed").
+      placeholder: |
+        1. Wi-Fi: home fibre. Plexo shows 4 MB/s, ping 20 ms
+        2. Phone over USB: mobile data, a different provider. Plexo shows "Retrying"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: download-type
+    attributes:
+      label: What were you downloading?
+      options:
+        - Direct link
+        - Torrent / magnet
+        - Captured by the browser extension
+        - Not download-related
+    validations:
+      required: true
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: What did you expect, and what happened instead? Copy any error message exactly as Plexo shows it.
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Open Plexo with Wi-Fi and phone USB connected
+        2. Paste a link from …
+        3. …
+    validations:
+      required: true
+
+  - type: input
+    id: site
+    attributes:
+      label: Website or server
+      description: Where the file comes from (for example `download.example.com`). You don't need to share a private link.
+
+  - type: textarea
+    id: screenshot
+    attributes:
+      label: Screenshot of the networks panel
+      description: Drag an image here. It helps a lot with network problems.
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs
+      description: |
+        Logs, if available. Remove anything private before pasting.
+        If you can, start Plexo from a terminal with `PLEXO_DEBUG=1` set and paste what it prints.
+      render: shell
