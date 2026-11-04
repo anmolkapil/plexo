@@ -46,6 +46,33 @@ const STREAMS_CHOICES: StreamsChoice[] = ['auto', 4, 8, 16, 32]
 
 const labelClass = 'w-16 shrink-0 text-[12.5px] text-[var(--text-secondary)]'
 
+function NetworkListNotice({
+  status,
+  error,
+  onScan
+}: {
+  status: 'idle' | 'loading' | 'ready' | 'error'
+  error: string | null
+  onScan: () => void
+}): React.JSX.Element {
+  if (status === 'idle' || status === 'loading') {
+    return (
+      <span className="font-mono text-[12px] text-muted-foreground">Looking for networks…</span>
+    )
+  }
+  const detail = error ? describeError(error) : ''
+  return (
+    <span className="flex flex-wrap items-center gap-2 text-[12.5px] leading-snug text-[var(--text-secondary)]">
+      {status === 'error'
+        ? `Plexo couldn’t list this computer’s networks.${detail ? ` ${detail}` : ''}`
+        : 'No networks connected. Join a Wi-Fi network, plug in Ethernet, or connect your phone using USB tethering.'}
+      <Button type="button" variant="secondary" size="xs" onClick={onScan}>
+        Scan again
+      </Button>
+    </span>
+  )
+}
+
 /** New download: a link, then only what differs from one download to the next — its name (or a
  * torrent's files), where it goes, over which networks, and how many streams each runs. Everything set once for every
  * download lives in Speed & data limits and the networks menu. */
@@ -72,6 +99,9 @@ function NewDownloadForm({ onDone }: { onDone: () => void }): React.JSX.Element 
   const { schedule, window: scheduleWindow } = useDownloadSchedule()
   const scheduledWait = schedule?.enabled && !scheduleWindow.allowed
   const interfaces = useAppStore((store) => store.interfaces)
+  const interfacesStatus = useAppStore((store) => store.interfacesStatus)
+  const interfacesError = useAppStore((store) => store.interfacesError)
+  const loadInterfaces = useAppStore((store) => store.loadInterfaces)
   const homeDir = useAppStore((store) => store.homeDir)
   const url = useAppStore((store) => store.draftUrl)
   const setUrl = useAppStore((store) => store.setDraftUrl)
@@ -545,6 +575,13 @@ function NewDownloadForm({ onDone }: { onDone: () => void }): React.JSX.Element 
             aria-labelledby="new-download-networks"
             className="flex min-w-0 flex-1 flex-wrap gap-1.5"
           >
+            {interfaces.length === 0 && (
+              <NetworkListNotice
+                status={interfacesStatus}
+                error={interfacesError}
+                onScan={() => void loadInterfaces()}
+              />
+            )}
             {interfaces.map((iface) => {
               const visual = networkVisual(iface.id, iface.kind, iface.displayName)
               const selected = selectedInterfaceIds.includes(iface.id)
