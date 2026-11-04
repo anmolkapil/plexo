@@ -156,7 +156,7 @@ function createWindow(): void {
       ensureTray()
       if (!hasShownTrayNotification && activeCount > 0) {
         hasShownTrayNotification = true
-        if (Notification.isSupported()) {
+        if (!testKnobs.userDataDir && Notification.isSupported()) {
           new Notification({
             title: 'Plexo is still downloading',
             body: 'Downloads will continue in the background. Open Plexo again, or use its tray icon, to quit.'
