@@ -53,6 +53,18 @@ test.describe('taskbar progress @smoke', () => {
     expect(taskbarProgress(mixed)).toEqual({ progress: 0.75, mode: 'normal' })
   })
 
+  test('NZB with missing articles reaches 100% using wanted bytes', () => {
+    const nzb: TaskbarDownload = {
+      status: 'downloading',
+      kind: 'nzb',
+      totalBytes: 1000,
+      missingBytes: 100,
+      bytesDownloaded: 900
+    }
+    expect(wantedBytes(nzb)).toBe(900)
+    expect(taskbarProgress([nzb])).toEqual({ progress: 1, mode: 'normal' })
+  })
+
   test('torrent with skipped files reaches 100% using wanted bytes', () => {
     const torrent: TaskbarDownload = {
       status: 'downloading',
