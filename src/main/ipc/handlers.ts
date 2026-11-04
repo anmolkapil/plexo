@@ -21,8 +21,10 @@ import { DownloadManager } from '../download/downloadManager'
 import { getDefaultDownloadsDir, getHomeDir } from '../download/paths'
 import { listHistory } from '../download/history'
 import { probeUrl } from '../download/probe'
-import { TelegramService } from '../telegram/service'
+import { FakeTelegramService } from '../telegram/fake'
+import { TelegramService, type TelegramServiceApi } from '../telegram/service'
 import { onMagnetCheckStatus } from '../download/torrent/metadata'
+import { testKnobs } from '../testKnobs'
 import { deviceBindingSupported } from '../network/deviceBinding'
 import { pendingLink, pendingLinks, releaseLink } from '../openLinks'
 import { NetworkMonitor } from '../network/interfaces'
@@ -80,7 +82,9 @@ export function registerIpcHandlers(getWindow: () => BrowserWindow | null): Down
   })
   // Telegram (Saved Messages): its sign-in state changes push to the window, and a stored
   // session reconnects in the background at startup.
-  const telegram = new TelegramService()
+  const telegram: TelegramServiceApi = testKnobs.telegramFake
+    ? new FakeTelegramService()
+    : new TelegramService()
   telegram.onChange = (state) => {
     const window = getWindow()
     if (window && !window.isDestroyed()) {

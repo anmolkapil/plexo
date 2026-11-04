@@ -117,16 +117,17 @@ const errorClass = 'text-[12px] leading-[1.4] text-[var(--color-danger)]'
  * power one exist — Plexo's own in a bundled release, else the user's from an earlier
  * sign-in), then the code or the two-step-verification password if those flows are used. */
 function TelegramLogin({ auth }: { auth: TelegramAuthState }): React.JSX.Element {
-  const canQr = auth.bundled === true || (auth.apiId !== undefined && !!auth.apiHash)
+  const canQr = auth.bundled === true || auth.hasOwnKeys === true
   const [mode, setMode] = useState<'qr' | 'form'>(canQr ? 'qr' : 'form')
   const [apiId, setApiId] = useState(auth.apiId ? String(auth.apiId) : '')
-  const [apiHash, setApiHash] = useState(auth.apiHash ?? '')
+  const [apiHash, setApiHash] = useState('')
   const [phone, setPhone] = useState(auth.phone ?? '')
   const [code, setCode] = useState('')
   const [password, setPassword] = useState('')
   const [busy, setBusy] = useState(false)
   // Bundled builds lead with Plexo's own credentials; the user's own api keys are one toggle
-  // away (and win over the bundled pair when given — see main's startLogin).
+  // away — the api_hash never comes prefilled (main never sends it), and stored own keys keep
+  // winning while the fields stay empty (see main's startLogin).
   const [showApi, setShowApi] = useState(auth.bundled !== true)
 
   const run = (work: () => Promise<void>): void => {
@@ -307,6 +308,7 @@ function TelegramLogin({ auth }: { auth: TelegramAuthState }): React.JSX.Element
               id="tg-api-hash"
               value={apiHash}
               onChange={(event) => setApiHash(event.target.value)}
+              placeholder={auth.hasOwnKeys ? 'stored — leave empty to keep it' : undefined}
             />
           </div>
         </>
@@ -324,7 +326,7 @@ function TelegramLogin({ auth }: { auth: TelegramAuthState }): React.JSX.Element
           autoFocus={!needsApiFields}
         />
       </div>
-      {auth.bundled === true && (
+      {(auth.bundled === true || auth.hasOwnKeys === true) && (
         <Button
           type="button"
           variant="ghost"

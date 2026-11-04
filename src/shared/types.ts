@@ -195,13 +195,17 @@ export interface TelegramCredentials {
 
 /** Where Telegram sign-in stands, as the login dialog shows it. Credentials are the user's own
  * api_id/api_hash from my.telegram.org — unless the release build bundles Plexo's own
- * (`bundled`), in which case the api form becomes an advanced fallback. */
+ * (`bundled`), in which case the api form becomes an advanced fallback. The api_hash itself
+ * never crosses to the window: it's the bundled secret in release builds, and the user's own
+ * is a stored secret either way. */
 export interface TelegramAuthState {
   signedIn: boolean
   /** The release build ships Plexo's own credentials: sign in with a phone (or the QR) alone. */
   bundled?: boolean
+  /** The stored api registration is the user's own (not the bundled pair) — its api_hash field
+   * can stay empty and the stored keys keep winning. */
+  hasOwnKeys?: boolean
   apiId?: number
-  apiHash?: string
   phone?: string
   /** A code was sent and not yet accepted: the dialog asks for it. */
   awaitingCode: boolean

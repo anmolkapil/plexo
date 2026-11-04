@@ -54,6 +54,9 @@ interface StoredAuth {
   credentials?: string
   /** Sealed (safeStorage) or plain GramJS session string. */
   session?: string
+  /** The stored credentials are the user's own, not the bundled pair: they keep winning over
+   * it until the fields are emptied or new keys are typed. */
+  ownKeys?: boolean
 }
 
 /** A message's media as a download needs it: its location, and its byte size when Telegram
@@ -282,12 +285,37 @@ const isAuthLossError = (error: unknown): boolean =>
       describeError(error)
   )
 
-export class TelegramService {
+/** What the window's handlers and the download manager need of the Telegram service — one
+ * interface, so the e2e double (fake.ts) can stand in for the real one. */
+export interface TelegramServiceApi {
+  /** Set by registerIpcHandlers: pushes state changes to the window. */
+  onChange: ((state: TelegramAuthState) => void) | undefined
+  authState(): TelegramAuthState
+  restore(): Promise<void>
+  startLogin(credentials: TelegramCredentials): Promise<void>
+  startQrLogin(): Promise<void>
+  submitCode(code: string): Promise<void>
+  submitPassword(password: string): Promise<void>
+  logout(): Promise<void>
+  listMediaPage(offsetId?: number, limit?: number): Promise<TelegramMediaPage>
+  mediaInfo(messageId: number): Promise<{
+    fileName: string
+    totalBytes: number
+    mimeType: string
+    mediaType: TelegramMediaType
+  }>
+  fileSource(messageId: number): Promise<TelegramFileSource>
+}
+
+export class TelegramService implements TelegramServiceApi {
   private client?: TelegramClient
   private credentials?: TelegramCredentials
   private phoneCodeHash?: string
   /** The live QR sign-in, so switching to the phone flow or signing out can stop its polling. */
   private qrAbort?: AbortController
+  /** Whether the credentials in play are the user's own, not the bundled pair — what
+   * `hasOwnKeys` in the state says, and what keeps them winning over the bundle. */
+  private usingOwnKeys = false
   private auth: TelegramAuthState = {
     signedIn: false,
     awaitingCode: false,
@@ -314,13 +342,14 @@ export class TelegramService {
       return
     }
     this.credentials = credentials
+    this.usingOwnKeys = stored.ownKeys === true
     this.auth = {
       signedIn: false,
       awaitingCode: false,
       awaitingPassword: false,
       bundled: BUNDLED_CREDENTIALS !== undefined,
+      hasOwnKeys: this.usingOwnKeys,
       apiId: credentials.apiId,
-      apiHash: credentials.apiHash,
       phone: credentials.phone
     }
     if (!stored.session) {
@@ -364,17 +393,23 @@ export class TelegramService {
    * any QR sign-in that was waiting. */
   async startLogin(input: TelegramCredentials): Promise<void> {
     this.qrAbort?.abort()
-    // The user's own credentials win when both are given — that's the advanced fallback in
-    // bundled builds — and Plexo's bundled pair covers everyone else.
+    // Priority: keys the user just typed, then his own stored pair, then the bundled one.
     const ownApiId = Math.floor(Number(input.apiId))
     const ownGiven = Number.isSafeInteger(ownApiId) && ownApiId > 0 && input.apiHash.trim() !== ''
-    const apiId = ownGiven ? ownApiId : BUNDLED_CREDENTIALS?.apiId
-    const apiHash = ownGiven ? input.apiHash.trim() : BUNDLED_CREDENTIALS?.apiHash
+    const storedOwn =
+      this.usingOwnKeys && this.credentials?.apiId && this.credentials.apiHash
+        ? this.credentials
+        : undefined
+    const apiId = ownGiven ? ownApiId : (storedOwn?.apiId ?? BUNDLED_CREDENTIALS?.apiId)
+    const apiHash = ownGiven
+      ? input.apiHash.trim()
+      : (storedOwn?.apiHash ?? BUNDLED_CREDENTIALS?.apiHash)
     const phone = input.phone.trim()
     if (apiId === undefined || !Number.isSafeInteger(apiId) || apiId <= 0)
       throw new Error('Enter the api_id from my.telegram.org.')
     if (!apiHash) throw new Error('Enter the api_hash from my.telegram.org.')
     if (!phone) throw new Error('Enter your phone number.')
+    this.usingOwnKeys = ownGiven || !!storedOwn
     this.credentials = { apiId, apiHash, phone }
     try {
       const client = await this.openWithSession('')
@@ -385,8 +420,8 @@ export class TelegramService {
         awaitingCode: true,
         awaitingPassword: false,
         bundled: BUNDLED_CREDENTIALS !== undefined,
+        hasOwnKeys: this.usingOwnKeys,
         apiId,
-        apiHash,
         phone
       }
       this.onChange?.(this.authState())
@@ -431,8 +466,8 @@ export class TelegramService {
         awaitingQr: true,
         qrDataUrl: dataUrl,
         bundled: BUNDLED_CREDENTIALS !== undefined,
+        hasOwnKeys: this.usingOwnKeys,
         apiId: credentials.apiId,
-        apiHash: credentials.apiHash,
         error: undefined
       }
       this.onChange?.(this.authState())
@@ -443,8 +478,8 @@ export class TelegramService {
       awaitingPassword: false,
       awaitingQr: true,
       bundled: BUNDLED_CREDENTIALS !== undefined,
-      apiId: credentials.apiId,
-      apiHash: credentials.apiHash
+      hasOwnKeys: this.usingOwnKeys,
+      apiId: credentials.apiId
     }
     this.onChange?.(this.authState())
     try {
@@ -549,15 +584,16 @@ export class TelegramService {
       awaitingCode: false,
       awaitingPassword: false,
       bundled: BUNDLED_CREDENTIALS !== undefined,
+      hasOwnKeys: this.usingOwnKeys,
       apiId: credentials.apiId,
-      apiHash: credentials.apiHash,
       phone: credentials.phone,
       userName,
       error: undefined
     }
     await saveStore({
       credentials: seal(JSON.stringify(credentials)),
-      session: seal(session)
+      session: seal(session),
+      ownKeys: this.usingOwnKeys === true || undefined
     })
     this.onChange?.(this.authState())
   }
@@ -587,10 +623,14 @@ export class TelegramService {
       awaitingCode: false,
       awaitingPassword: false,
       bundled: BUNDLED_CREDENTIALS !== undefined,
-      ...(credentials && { apiId: credentials.apiId, apiHash: credentials.apiHash })
+      hasOwnKeys: this.usingOwnKeys,
+      ...(credentials && { apiId: credentials.apiId })
     }
     if (credentials) {
-      await saveStore({ credentials: seal(JSON.stringify(credentials)) }).catch(() => {})
+      await saveStore({
+        credentials: seal(JSON.stringify(credentials)),
+        ownKeys: this.usingOwnKeys === true || undefined
+      }).catch(() => {})
     } else {
       await rm(STORE_PATH(), { force: true }).catch(() => {})
     }
@@ -868,14 +908,17 @@ export class TelegramService {
       awaitingCode: false,
       awaitingPassword: false,
       bundled: BUNDLED_CREDENTIALS !== undefined,
+      hasOwnKeys: this.usingOwnKeys,
       ...(credentials && {
         apiId: credentials.apiId,
-        apiHash: credentials.apiHash,
         phone: credentials.phone
       })
     }
     if (credentials) {
-      await saveStore({ credentials: seal(JSON.stringify(credentials)) }).catch(() => {})
+      await saveStore({
+        credentials: seal(JSON.stringify(credentials)),
+        ownKeys: this.usingOwnKeys === true || undefined
+      }).catch(() => {})
     } else {
       await rm(STORE_PATH(), { force: true }).catch(() => {})
     }

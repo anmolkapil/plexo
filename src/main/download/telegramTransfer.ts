@@ -99,6 +99,8 @@ export class TelegramTransfer implements Transfer {
    * the file (measured: 512 KiB fine at one offset, capped at 64 KiB a megabyte later), so it
    * starts at the full chunk and halves on LIMIT_INVALID (see asOutcome). */
   private maxChunkBytes = FILE_CHUNK_BYTES
+  /** When the cap last came down: concurrent failures share one halving (see asOutcome). */
+  private lastHalveAt = 0
 
   constructor(
     private readonly runtime: TelegramTransferTarget,
@@ -166,6 +168,7 @@ export class TelegramTransfer implements Transfer {
     this.stopped = false
     this.rateLimitedUntil = 0
     this.maxChunkBytes = FILE_CHUNK_BYTES
+    this.lastHalveAt = 0
     void this.disposeSource()
   }
 
@@ -439,8 +442,13 @@ export class TelegramTransfer implements Transfer {
       (error instanceof Error ? error.message : String(error))
     if (/LIMIT_INVALID/.test(code) && this.maxChunkBytes > 4096) {
       // Telegram caps how big a single request may be, per region of the file: halve and
-      // take the block again at a size it will answer.
-      this.maxChunkBytes = Math.max(4096, this.maxChunkBytes >> 1)
+      // take the block again at a size it will answer. One halving per short window — every
+      // reader failing on the same oversized wave must not multiply the cap down to the floor.
+      const now = Date.now()
+      if (now - this.lastHalveAt > 500) {
+        this.lastHalveAt = now
+        this.maxChunkBytes = Math.max(4096, this.maxChunkBytes >> 1)
+      }
       return { type: 'retry', waitMs: 50 }
     }
     if (error instanceof TelegramFileError) {

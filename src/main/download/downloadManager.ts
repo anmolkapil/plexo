@@ -42,7 +42,7 @@ import {
 } from '../../shared/types'
 import { Limits } from '../network/limits'
 import { loadSettings } from '../settings'
-import type { TelegramService } from '../telegram/service'
+import type { TelegramServiceApi } from '../telegram/service'
 import { addToHistory, findInHistory, removeFromHistory } from './history'
 import { testKnobs } from '../testKnobs'
 import { DownloadFile } from './downloadFile'
@@ -397,7 +397,7 @@ export class DownloadManager {
   constructor(
     private getWindow: () => BrowserWindow | null,
     private networks: NetworkMonitor,
-    private readonly telegram: TelegramService
+    private readonly telegram: TelegramServiceApi
   ) {
     this.initialization = Promise.all([this.restorePersistedDownloads(), this.limits.loaded]).then(
       async () => {
