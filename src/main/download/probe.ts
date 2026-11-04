@@ -99,8 +99,8 @@ async function requestFollowingRedirects(
   let response: ProbeResponse | null = null
   const deadline = Date.now() + PROBE_TIMEOUT_MS
 
-  let ranged = true
   for (let redirect = 0; redirect <= MAX_REDIRECTS; redirect += 1) {
+    let ranged = true
     response = await requestFirstBytes(current, deadline, browser, ranged)
     // Some servers refuse any Range request with 403 while serving the same URL in full (#131).
     // Ask once more without one: if that works, the file downloads as one stream from byte zero,
