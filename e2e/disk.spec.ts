@@ -1,6 +1,6 @@
 import { execFileSync } from 'node:child_process'
 import { existsSync } from 'node:fs'
-import { chmod, mkdir, mkdtemp, readdir, rm } from 'node:fs/promises'
+import { chmod, mkdir, mkdtemp, readdir, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { BLOCK, expect, PlexoApp, test } from './fixtures'
@@ -76,6 +76,35 @@ test.describe('disk space @disk', () => {
       expect(existsSync(downloads) ? await readdir(downloads) : []).toEqual([])
     } finally {
       await plexo.quit()
+      await volume!.dispose()
+    }
+  })
+
+  test('New download dialog warns and disables start when file exceeds free space', async ({
+    serve
+  }) => {
+    const volume = await smallVolume(10)
+    test.skip(!volume, 'cannot create a small volume on this machine')
+    const app = new PlexoApp({
+      userData: join(volume!.path, 'userData'),
+      dest: join(volume!.path, 'dest')
+    })
+    try {
+      await mkdir(app.dirs.userData)
+      await mkdir(app.dirs.dest)
+      await writeFile(
+        join(app.dirs.userData, 'app-settings.json'),
+        JSON.stringify({ destinationDir: app.dirs.dest })
+      )
+      await app.launch()
+      const origin = await serve({ size: 256 * BLOCK }) // 16 MB > 10 MB free
+      const link = await app.newDownload()
+      await link.fill(origin.url())
+      const dialog = app.page.getByRole('dialog', { name: 'New download' })
+      await expect(dialog.getByRole('alert')).toContainText(/Not enough disk space/)
+      await expect(dialog.locator('button[type="submit"]')).toBeDisabled()
+    } finally {
+      if (app.alive) await app.kill()
       await volume!.dispose()
     }
   })

@@ -272,6 +272,12 @@ test.describe('UI journeys @smoke', () => {
     await expect(page.getByRole('button', { name: 'Download' })).toBeDisabled()
   })
 
+  test('New download dialog shows free space on destination folder', async ({ plexo }) => {
+    await plexo.newDownload()
+    const dialog = plexo.page.getByRole('dialog', { name: 'New download' })
+    await expect(dialog.getByText(/\(\d+(\.\d+)?\s*(B|KB|MB|GB|TB)\s*free\)/)).toBeVisible()
+  })
+
   test('a completed download is shown again after a restart', async ({ plexo, serve }) => {
     const origin = await serve({ size: SIZE })
     await plexo.start(origin.url(), origin.sha256)
