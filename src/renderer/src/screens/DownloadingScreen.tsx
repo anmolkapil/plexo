@@ -17,6 +17,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '../components/ui/toolti
 import { useNetworkVisuals } from '../hooks/useNetworkVisuals'
 import { useDownloadSchedule } from '../hooks/useDownloadSchedule'
 import { useAppStore } from '../store/useAppStore'
+import { useDownloadActions } from '../components/downloadActionsContext'
 import { KIND_PALETTE, NETWORK_ROW_GRID_COLUMNS } from '../theme'
 import {
   describeError,
@@ -118,6 +119,7 @@ export const DownloadingScreen = memo(function DownloadingScreen({
   const peakSpeedBytesPerSec = download.peakSpeedBytesPerSec
   const networkVisual = useNetworkVisuals()
   const { window: scheduleWindow, message: scheduleMessage } = useDownloadSchedule()
+  const { perform } = useDownloadActions()
   const isQueued = download.status === 'queued'
   // Waiting in the queue looks like a pause: nothing moves.
   const isPaused = download.status === 'paused' || isQueued
@@ -369,6 +371,20 @@ export const DownloadingScreen = memo(function DownloadingScreen({
                     <span aria-hidden className="text-[7.5px] opacity-75">
                       {filesOpen ? '▲' : '▼'}
                     </span>
+                  </Button>
+                </>
+              )}
+              {download.kind === 'torrent' && (
+                <>
+                  <Dot />
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="xs"
+                    onClick={() => void perform('trackers', [download])}
+                    className="h-auto cursor-default rounded-[4px] border-[0.5px] bg-card px-[7px] py-[3px] font-mono text-[10.5px] leading-none font-medium text-[var(--text-secondary)] hover:bg-secondary dark:bg-card"
+                  >
+                    Trackers
                   </Button>
                 </>
               )}

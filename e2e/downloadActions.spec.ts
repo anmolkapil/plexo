@@ -103,7 +103,7 @@ test.describe('what each state offers', () => {
 
   test('a torrent from a .torrent file has no link to copy', () => {
     const torrent = download({ status: 'paused', kind: 'torrent', url: '/tmp/a.torrent' })
-    expect(ids([torrent])).toEqual(['resume', 'reveal', 'cancel'])
+    expect(ids([torrent])).toEqual(['resume', 'reveal', 'trackers', 'cancel'])
   })
 })
 

@@ -33,8 +33,10 @@ import {
   type TorrentDownloadState,
   type TorrentFileEntry,
   type TorrentInfo,
-  type TorrentPieceState
+  type TorrentPieceState,
+  type TorrentTrackersResult
 } from '../../shared/types'
+import { mergeTrackers } from '../../shared/torrentTrackers'
 import { Limits } from '../network/limits'
 import { loadSettings } from '../settings'
 import { addToHistory, findInHistory, removeFromHistory } from './history'
@@ -1500,6 +1502,43 @@ export class DownloadManager {
     runtime.transfer.filesChosen()
     // Sent now, ahead of the answer: the window shows the choice from the state it's sent.
     this.pushUpdate(runtime)
+  }
+
+  /** A torrent download's trackers: default trackers from the .torrent, and any custom trackers added. */
+  async torrentTrackers(id: string): Promise<TorrentTrackersResult> {
+    const runtime = this.runtimes.get(id)
+    if (runtime?.kind !== 'torrent') throw new Error('Not a torrent download')
+    const torrent = await this.torrentInfo(id)
+    if (!torrent) throw new Error('Not a torrent download')
+    const defaultTrackers = torrent.trackers ?? []
+    const customTrackers = runtime.requestPayload.trackers ?? []
+    return {
+      defaultTrackers,
+      customTrackers,
+      isPrivate: Boolean(torrent.isPrivate)
+    }
+  }
+
+  /** Adds custom trackers to a torrent download. */
+  async addTorrentTrackers(id: string, rawTrackers: string[]): Promise<TorrentTrackersResult> {
+    const runtime = this.runtimes.get(id)
+    if (runtime?.kind !== 'torrent') throw new Error('Not a torrent download')
+    const torrent = await this.torrentInfo(id)
+    if (!torrent) throw new Error('Not a torrent download')
+    if (torrent.isPrivate) throw new Error('Cannot add trackers to a private torrent')
+
+    const defaultTrackers = torrent.trackers ?? []
+    const existingCustom = runtime.requestPayload.trackers ?? []
+    const merged = mergeTrackers([...defaultTrackers, ...existingCustom], rawTrackers)
+    const newCustom = merged.filter((url) => !defaultTrackers.includes(url))
+    runtime.requestPayload.trackers = newCustom
+    runtime.transfer.trackersChanged()
+    await this.persistNow(runtime)
+    return {
+      defaultTrackers,
+      customTrackers: newCustom,
+      isPrivate: false
+    }
   }
 
   async cancel(id: string): Promise<void> {

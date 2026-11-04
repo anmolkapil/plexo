@@ -60,6 +60,16 @@ export interface TorrentInfo {
   /** Where each file will be written, relative to the destination folder, already checked to be
    * safe (see main/download/torrent/paths.ts). */
   files: { path: string; length: number }[]
+  /** Trackers listed in the torrent's metadata. */
+  trackers?: string[]
+  /** Whether the torrent is marked private (BEP 27). */
+  isPrivate?: boolean
+}
+
+export interface TorrentTrackersResult {
+  defaultTrackers: string[]
+  customTrackers: string[]
+  isPrivate: boolean
 }
 
 /** One of a torrent download's files, for listing them while it runs. */
@@ -461,6 +471,8 @@ export interface StartTorrentDownloadRequest extends StartDownloadRequestBase {
   infoHash: string
   /** For a torrent: the files to download, as indexes into its probe's `files`. Left out: all. */
   selectedFiles?: number[]
+  /** Custom tracker announce URLs added to the torrent. */
+  trackers?: string[]
 }
 
 export type StartDownloadRequest = StartHttpDownloadRequest | StartTorrentDownloadRequest

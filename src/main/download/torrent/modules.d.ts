@@ -131,6 +131,7 @@ declare module 'parse-torrent' {
     announce?: string[]
     peerAddresses?: string[]
     xs?: string | string[]
+    private?: boolean
   }
   export default function parseTorrent(torrentId: string | Uint8Array): Promise<ParsedTorrent>
 }

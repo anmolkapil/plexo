@@ -212,6 +212,21 @@ export class TorrentTransfer implements Transfer {
     if (this.torrent) this.selectFiles(this.torrent)
   }
 
+  /** The trackers changed (requestPayload.trackers). If running, the client is restarted
+   * so WebTorrent announces to the new trackers. */
+  trackersChanged(): void {
+    if (this.client) {
+      const restart = async (): Promise<void> => {
+        this.closeClient?.()
+        await this.ended
+        if (!this.runtime.stop.signal.aborted) {
+          this.reconcile()
+        }
+      }
+      void restart()
+    }
+  }
+
   /** Asks the engine for the chosen files' pieces only, all of them with no choice made. What it
    * fetched before stays: a deselected piece just isn't asked for. */
   private selectFiles(torrent: Torrent): void {
@@ -240,7 +255,8 @@ export class TorrentTransfer implements Transfer {
       // Trusted as done, bar a hash check of a piece or two per file (more if one fails).
       bitfield: bitfieldOf(this.runtime.pieces.map((block) => block.status === 'completed')),
       // Nothing until webtorrent is ready to be told which files (below), as on a change.
-      deselect: true
+      deselect: true,
+      announce: this.runtime.requestPayload.trackers
     })
     this.engineTorrent = torrent
     torrent.on('wire', (wire: Wire, address: string, key?: string) =>
