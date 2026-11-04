@@ -53,8 +53,8 @@ mac:
   entitlementsInherit: build/entitlements.mac.plist
   extendInfo:
     - NSDownloadsFolderUsageDescription: Plexo saves downloaded files to your Downloads folder.
-    # Magnet links and .torrent files can be opened with Plexo, as one choice among others: it's
-    # never made the default over a torrent client the user already has (LSHandlerRank).
+    # Magnet links, .torrent and .nzb files can be opened with Plexo, as one choice among others:
+    # it's never made the default over a client the user already has (LSHandlerRank).
     # plexo:// is Plexo's own scheme, so registering it takes nothing from another app.
     - CFBundleURLTypes:
         - CFBundleURLName: Magnet link
@@ -67,6 +67,10 @@ mac:
           LSHandlerRank: Alternate
           CFBundleTypeExtensions: [torrent]
           LSItemContentTypes: [org.bittorrent.torrent]
+        - CFBundleTypeName: NZB
+          CFBundleTypeRole: Viewer
+          LSHandlerRank: Alternate
+          CFBundleTypeExtensions: [nzb]
   # Signed when CSC_LINK/CSC_KEY_PASSWORD are set, and then notarized when APPLE_API_KEY,
   # APPLE_API_KEY_ID and APPLE_API_ISSUER are (see .github/workflows/release.yml). An unsigned
   # build still works, but can't update itself: macOS only installs signed updates.
@@ -90,8 +94,9 @@ linux:
   artifactName: ${name}-${version}-${arch}.${ext}
   maintainer: electronjs.org
   category: Utility
-  # Offered for magnet links and .torrent files ("Open with"), not made their default.
-  mimeTypes: [x-scheme-handler/magnet, application/x-bittorrent, x-scheme-handler/plexo]
+  # Offered for magnet links, .torrent and .nzb files ("Open with"), not made their default.
+  mimeTypes:
+    [x-scheme-handler/magnet, application/x-bittorrent, application/x-nzb, x-scheme-handler/plexo]
 appImage:
   artifactName: ${name}-${version}-${arch}.${ext}
 deb:

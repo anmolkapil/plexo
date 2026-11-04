@@ -14,6 +14,7 @@ import { networkStatusText } from '../components/NetworkRow'
 import { scheduleMessage, scheduleWindow } from '@shared/downloadSchedule'
 import { NetworksMenu } from '../components/NetworksMenu'
 import { TorrentBadge } from '../components/TorrentBadge'
+import { UsenetBadge } from '../components/UsenetBadge'
 import { Button } from '../components/ui/button'
 import { Checkbox } from '../components/ui/checkbox'
 import { Tooltip, TooltipContent, TooltipTrigger } from '../components/ui/tooltip'
@@ -396,7 +397,7 @@ function EmptyState(): React.JSX.Element {
         <>
           <div className="font-sans text-[16px] leading-[1.2] font-bold">No downloads yet</div>
           <div className="max-w-[380px] text-[12.5px] leading-[1.6] text-[var(--text-secondary)]">
-            Paste a link ({PASTE_SHORTCUT}) or drop a .torrent anywhere in this window.
+            Paste a link ({PASTE_SHORTCUT}) or drop a .torrent or .nzb anywhere in this window.
           </div>
           <Button type="button" className="mt-1" onClick={() => openNewDownload()}>
             <Plus data-icon="inline-start" />
@@ -574,6 +575,7 @@ const DownloadRow = memo(function DownloadRow({
               {item.fileName}
             </span>
             {item.kind === 'torrent' && <TorrentBadge />}
+            {item.kind === 'nzb' && <UsenetBadge />}
             {(dots || speed) && (
               <div className="ml-auto flex shrink-0 items-center gap-2.5 pl-2">
                 {dots && (

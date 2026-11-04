@@ -24,7 +24,7 @@ function isEntry(value: unknown): value is FinishedDownload {
   if (!isRecord(value)) return false
   return (
     typeof value.id === 'string' &&
-    (value.kind === 'http' || value.kind === 'torrent') &&
+    (value.kind === 'http' || value.kind === 'torrent' || value.kind === 'nzb') &&
     typeof value.url === 'string' &&
     typeof value.fileName === 'string' &&
     typeof value.destinationPath === 'string' &&

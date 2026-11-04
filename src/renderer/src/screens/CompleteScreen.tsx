@@ -1,4 +1,5 @@
-import type { DownloadState, FinishedDownload } from '@shared/types'
+import type { DownloadState, FinishedDownload, NzbFileState } from '@shared/types'
+import { AlertTriangle, Info } from 'lucide-react'
 import { HeroBand } from '../components/HeroBand'
 import { DetailHeader } from '../components/DetailHeader'
 import { ThroughputChart } from '../components/ThroughputChart'
@@ -16,6 +17,30 @@ import { useFormatSpeed } from '../hooks/useFormatSpeed'
 
 const sectionHeaderClass =
   'font-mono text-[10px] leading-none tracking-[0.16em] text-muted-foreground uppercase'
+
+/** What's left to do with an NZB download, which Plexo leaves to the user's tools: a repair
+ * where articles were missing, unpacking where it's an archive. Null when it's ready as it is. */
+function usenetNote(files: NzbFileState[]): { warning: boolean; text: string } | null {
+  const missing = files.reduce((sum, file) => sum + file.missing, 0)
+  const par2 = files.some((file) => /\.par2$/i.test(file.name))
+  const archive = files.some((file) => /\.(rar|r\d{2,3}|7z|zip|\d{3})$/i.test(file.name))
+  const articles = missing === 1 ? 'article wasn’t' : 'articles weren’t'
+  if (missing > 0) {
+    return {
+      warning: true,
+      text: par2
+        ? `${missing} ${articles} on the news server, so some files have gaps. Repair them with the download’s .par2 files${archive ? ' before unpacking' : ''}.`
+        : `${missing} ${articles} on the news server, so some files have gaps, and this download has no .par2 files to repair them with.`
+    }
+  }
+  if (archive) {
+    return {
+      warning: false,
+      text: 'The files are as posted: unpack the archive to get at what’s inside.'
+    }
+  }
+  return null
+}
 
 export function CompleteScreen({
   download
@@ -52,8 +77,16 @@ export function CompleteScreen({
       ? download.unitsWritten
       : download.kind === 'torrent'
         ? download.pieces.filter((piece) => piece.status !== 'skipped').length
-        : download.totalBlocks
-  const files = isTorrent && download.files.total > 1 ? download.files : null
+        : download.kind === 'nzb'
+          ? download.blocks.filter((block) => block.status === 'completed').length
+          : download.totalBlocks
+  const files =
+    isTorrent && download.files.total > 1
+      ? download.files
+      : download.kind === 'nzb'
+        ? { chosen: download.nzbFiles.length, total: download.nzbFiles.length }
+        : null
+  const note = download.kind === 'nzb' ? usenetNote(download.nzbFiles) : null
 
   return (
     <div className="flex h-full flex-col bg-background">
@@ -103,6 +136,20 @@ export function CompleteScreen({
         </div>
       </HeroBand>
 
+      {note && (
+        <div
+          role={note.warning ? 'alert' : undefined}
+          className={`mx-5 mt-[18px] flex items-start gap-2 rounded-[9px] border-[0.5px] border-border bg-card px-3 py-2.5 text-[12.5px] leading-snug ${note.warning ? 'text-[var(--color-danger)]' : 'text-[var(--text-secondary)]'}`}
+        >
+          {note.warning ? (
+            <AlertTriangle aria-hidden className="mt-0.5 size-3.5 shrink-0" />
+          ) : (
+            <Info aria-hidden className="mt-0.5 size-3.5 shrink-0" />
+          )}
+          {note.text}
+        </div>
+      )}
+
       <div className="mx-5 my-[18px] grid grid-cols-5 overflow-hidden rounded-[10px] border-[0.5px] border-border bg-card">
         {[
           { label: 'Size', value: formatBytes(finalSize) },
@@ -117,7 +164,7 @@ export function CompleteScreen({
           { label: 'Networks', value: String(groups.length) },
           // The most it ran at once: streams that didn't make it faster were closed along the way.
           {
-            label: isTorrent ? 'Peers' : 'Streams',
+            label: isTorrent ? 'Peers' : download.kind === 'nzb' ? 'Connections' : 'Streams',
             value: String(isTorrent ? download.peakPeers : download.peakStreams)
           }
         ].map((stat, index) => (
@@ -180,7 +227,7 @@ export function CompleteScreen({
         </div>
         <div className="mt-auto pt-3 font-mono text-[11px] leading-[1.4] text-muted-foreground">
           {[
-            `written in ${totalChunkCount} ${isTorrent ? 'pieces' : 'chunks'}`,
+            `written in ${totalChunkCount} ${isTorrent ? 'pieces' : download.kind === 'nzb' ? 'articles' : 'chunks'}`,
             // What its peers got from it while it downloaded.
             isTorrent && `uploaded ${formatBytes(download.bytesUploaded ?? 0)}`,
             `${totalRetries} ${totalRetries === 1 ? 'retry' : 'retries'}`

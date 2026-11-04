@@ -1,4 +1,4 @@
-import type { ProbeResult } from '@shared/types'
+import type { ProbeResult, UsenetServer } from '@shared/types'
 import { cn } from 'cn'
 import {
   AlertTriangle,
@@ -28,6 +28,7 @@ import { Button } from './ui/button'
 import { Dialog, DialogContent, DialogTitle } from './ui/dialog'
 import { ToggleGroup, ToggleGroupItem } from './ui/toggle-group'
 import { TorrentFileList } from './TorrentFiles'
+import { UsenetServerDialog } from './UsenetServerDialog'
 import { Tooltip, TooltipContent, TooltipTrigger } from './ui/tooltip'
 import { NetworkEditPopover } from './NetworkEditPopover'
 
@@ -141,6 +142,9 @@ function NewDownloadForm({ onDone }: { onDone: () => void }): React.JSX.Element 
   const [skippedFiles, setSkippedFiles] = useState<number[]>([])
   // For this download only: the next one starts on Auto again.
   const [streamsChoice, setStreamsChoice] = useState<StreamsChoice>('auto')
+  // The news server, for an NZB: undefined until it has been asked for, null when there's none.
+  const [server, setServer] = useState<UsenetServer | null | undefined>(undefined)
+  const [serverOpen, setServerOpen] = useState(false)
 
   // Opened with nothing in it: a link on the clipboard is most likely what it's for, as download
   // managers have long assumed. Anything else on the clipboard is left alone.
@@ -208,6 +212,17 @@ function NewDownloadForm({ onDone }: { onDone: () => void }): React.JSX.Element 
 
   const ready = probe.status === 'ready' ? probe.result : null
   const torrent = ready?.kind === 'torrent' ? ready.torrent : null
+  const nzb = ready?.kind === 'nzb' ? ready.nzb : null
+
+  // Asked for once an NZB turns up: no other download needs it.
+  const wantsServer = nzb !== null && server === undefined
+  useEffect(() => {
+    if (!wantsServer) return
+    void window.plexo
+      .usenetServer()
+      .then(setServer)
+      .catch(() => setServer(null))
+  }, [wantsServer])
   const chosenFiles = torrent
     ? torrent.files.flatMap((_, index) => (skippedFiles.includes(index) ? [] : [index]))
     : []
@@ -241,6 +256,7 @@ function NewDownloadForm({ onDone }: { onDone: () => void }): React.JSX.Element 
   const canStart =
     probe.status === 'ready' &&
     (!torrent || chosenFiles.length > 0) &&
+    (!nzb || !!server) &&
     selectedInterfaceIds.length > 0 &&
     Boolean(destinationDir) &&
     !starting
@@ -295,9 +311,9 @@ function NewDownloadForm({ onDone }: { onDone: () => void }): React.JSX.Element 
     if (chosen) setDestinationDir(chosen)
   }
 
-  // A .torrent file goes in the link field as its path; the probe reads it from there.
-  const handleOpenTorrent = async (): Promise<void> => {
-    const path = await window.plexo.chooseTorrentFile()
+  // A .torrent or .nzb file goes in the link field as its path; the probe reads it from there.
+  const handleOpenFile = async (): Promise<void> => {
+    const path = await window.plexo.chooseDownloadFile()
     if (path) setUrl(path)
   }
 
@@ -343,11 +359,13 @@ function NewDownloadForm({ onDone }: { onDone: () => void }): React.JSX.Element 
               infoHash: probe.result.torrent.infoHash,
               selectedFiles: skippedFiles.length > 0 ? chosenFiles : undefined
             }
-          : {
-              ...common,
-              kind: 'http',
-              streamsPerNetwork: streamsChoice === 'auto' ? undefined : streamsChoice
-            },
+          : probe.result.kind === 'nzb'
+            ? { ...common, kind: 'nzb', nzbHash: probe.result.nzb.hash }
+            : {
+                ...common,
+                kind: 'http',
+                streamsPerNetwork: streamsChoice === 'auto' ? undefined : streamsChoice
+              },
         linkId
       )
       // Remembered for the next download, like the folder. Not a single-stream pick: that's one
@@ -460,10 +478,17 @@ function NewDownloadForm({ onDone }: { onDone: () => void }): React.JSX.Element 
               </Tooltip>
             )}
           </div>
-          <Button type="button" variant="secondary" onClick={handleOpenTorrent} className="h-9">
-            <FolderOpen data-icon="inline-start" />
-            Open .torrent
-          </Button>
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <Button type="button" variant="secondary" onClick={handleOpenFile} className="h-9">
+                  <FolderOpen data-icon="inline-start" />
+                  Open file
+                </Button>
+              }
+            />
+            <TooltipContent>Open a .torrent or .nzb file</TooltipContent>
+          </Tooltip>
         </div>
 
         {shownLink?.from && (
@@ -515,7 +540,7 @@ function NewDownloadForm({ onDone }: { onDone: () => void }): React.JSX.Element 
         {ready && (
           <div className="flex items-center gap-3">
             <div className="flex size-10 shrink-0 items-center justify-center rounded-lg border-[0.5px] border-border bg-card font-mono text-[10px] font-semibold text-muted-foreground">
-              {torrent && torrent.files.length > 1 ? 'DIR' : fileExtensionBadge(fileName)}
+              {(torrent && torrent.files.length > 1) || nzb ? 'DIR' : fileExtensionBadge(fileName)}
             </div>
             <div className="flex min-w-0 flex-1 flex-col gap-1">
               {torrent ? (
@@ -533,8 +558,11 @@ function NewDownloadForm({ onDone }: { onDone: () => void }): React.JSX.Element 
               <div className="font-mono text-[11.5px] text-muted-foreground">
                 {[
                   torrent && describeFileCount(chosenFiles.length, torrent.files.length),
+                  nzb && describeFileCount(nzb.files.length, nzb.files.length),
                   sizeToFetch !== null ? formatBytes(sizeToFetch) : 'size unknown',
+                  nzb && 'from Usenet',
                   !torrent &&
+                    !nzb &&
                     (isSingleStreamOnly
                       ? ready.supportsRanges
                         ? 'Uses one connection. The file size is unknown.'
@@ -554,6 +582,29 @@ function NewDownloadForm({ onDone }: { onDone: () => void }): React.JSX.Element 
             skipped={skippedFiles}
             onChange={setSkippedFiles}
           />
+        )}
+
+        {nzb && server !== undefined && (
+          <div className="flex items-center gap-3">
+            <div className={labelClass}>Server</div>
+            {server ? (
+              <div className="min-w-0 flex-1 truncate font-mono text-[12.5px]">
+                {server.host}
+                <span className="text-muted-foreground">
+                  {' '}
+                  · {server.connections} {server.connections === 1 ? 'connection' : 'connections'}
+                </span>
+              </div>
+            ) : (
+              <div className="flex min-w-0 flex-1 items-center gap-2 text-[12.5px] text-[var(--color-usb-text)]">
+                <AlertTriangle aria-hidden className="size-3.5 shrink-0" />
+                Set up your news server to download this NZB.
+              </div>
+            )}
+            <Button type="button" variant="secondary" size="sm" onClick={() => setServerOpen(true)}>
+              {server ? 'Change' : 'Set up'}
+            </Button>
+          </div>
         )}
 
         <div className="flex items-center gap-3">
@@ -687,8 +738,9 @@ function NewDownloadForm({ onDone }: { onDone: () => void }): React.JSX.Element 
           </div>
         </div>
 
-        {/* A torrent's speed comes from its peers, and an unsplittable file has one stream. */}
-        {ready && !torrent && !isSingleStreamOnly && (
+        {/* A torrent's speed comes from its peers, an NZB's connections are the server's, and an
+            unsplittable file has one stream. */}
+        {ready && !torrent && !nzb && !isSingleStreamOnly && (
           <div className="flex items-center gap-3">
             <div className={labelClass} id="new-download-streams">
               Streams
@@ -761,6 +813,13 @@ function NewDownloadForm({ onDone }: { onDone: () => void }): React.JSX.Element 
           {startLabel}
         </Button>
       </div>
+      {/* Its form keeps its submit to itself: a portal's events still bubble up the React tree. */}
+      <UsenetServerDialog
+        open={serverOpen}
+        server={server ?? null}
+        onOpenChange={setServerOpen}
+        onSaved={setServer}
+      />
     </form>
   )
 }
