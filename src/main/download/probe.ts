@@ -80,13 +80,14 @@ function fileNameFromHeaders(headers: Headers, url: URL): string {
     const parsed = parseContentDispositionFilename(disposition)
     if (parsed) return parsed
   }
-  let pathname = url.pathname
+  // Only the last segment is decoded: a malformed %-escape in a folder doesn't keep the file's
+  // name escaped, and an escaped slash stays part of the name.
+  let base = url.pathname.split('/').filter(Boolean).pop()
   try {
-    pathname = decodeURIComponent(pathname)
+    if (base) base = decodeURIComponent(base)
   } catch {
-    // A malformed %-escape: the raw path still names the file well enough.
+    // A malformed %-escape: the raw name still names the file well enough.
   }
-  const base = pathname.split('/').filter(Boolean).pop()
   return base && base.length > 0 ? base : 'download'
 }
 
