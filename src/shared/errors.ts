@@ -2,7 +2,7 @@ const IPC_INVOKE_PREFIX = /^Error invoking remote method '[^']*':\s*/
 const NESTED_ERROR_PREFIX = /^Error:\s*/
 
 /** A link that worked and then stopped: signed links run out, and a server turns them away. */
-const LINK_REFUSED = /status (401|403|404|410) for range request/
+const LINK_REFUSED = /status (401|403|404|410|416) for range request/
 
 const ERROR_HINTS: Array<{ pattern: RegExp; message: string }> = [
   {
