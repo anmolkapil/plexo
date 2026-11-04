@@ -1,10 +1,10 @@
 import type { HttpBlockState, HttpStreamState, NetworkStatus, SpeedUnit } from '@shared/types'
 import { useState } from 'react'
+import { useAppStore } from '../store/useAppStore'
 import { DANGER, type NetworkVisual } from '../theme'
 import type { HttpNetworkGroup, NetworkGroup, TorrentNetworkGroup } from '../utils/format'
 import { describeError, formatBytes, formatSpeedOfLimit, networkActive } from '../utils/format'
 import { useFormatSpeed } from '../hooks/useFormatSpeed'
-import { useAppStore } from '../store/useAppStore'
 import { ColorBadge } from './ColorBadge'
 import { NetworkEditPopover } from './NetworkEditPopover'
 import { TruncatedText } from './TruncatedText'
@@ -145,7 +145,7 @@ function HttpStreamRows({
                 </span>
               )}
               {/* A lit dot and a speed say it's fetching; only what isn't the usual gets a word. */}
-              {active && stream.hedge ? (
+              {active && (stream.hedge || stream.split) ? (
                 <Tooltip>
                   <TooltipTrigger
                     render={
@@ -156,12 +156,14 @@ function HttpStreamRows({
                         tabIndex={0}
                         className="h-[13px] rounded-[3px] px-[5px] py-px text-[9px] font-semibold tracking-[0.04em] outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
                       >
-                        BACKUP
+                        {stream.hedge ? 'BACKUP' : 'SPLIT'}
                       </ColorBadge>
                     }
                   />
                   <TooltipContent>
-                    Racing another stream for this chunk, which was running slowly
+                    {stream.hedge
+                      ? 'Racing another stream for this chunk, which was running slowly'
+                      : 'Fetching the far part of this chunk, so another stream doesn’t have to'}
                   </TooltipContent>
                 </Tooltip>
               ) : (
@@ -380,6 +382,9 @@ export function NetworkRow({
   const connections = group.transfer === 'http' ? group.streams : group.peers
   const isActive = networkActive(group)
   const hasError = group.status === 'failed'
+  const preference = useAppStore((store) => store.networkPreferences[group.id])
+  const proxy = preference?.proxy
+  const isProxyActive = Boolean(proxy?.enabled && proxy.host)
   const rounded = Math.round(sharePercent)
   const shareLabel = group.bytesDownloaded === 0 ? '0%' : rounded === 0 ? '<1%' : `${rounded}%`
   const noun = group.transfer === 'http' ? 'stream' : 'peer'
@@ -416,6 +421,16 @@ export function NetworkRow({
             interfaceKind={group.kind}
             osName={group.label}
           />
+          {isProxyActive && (
+            <ColorBadge
+              bg={visual.bg}
+              border={visual.border}
+              text={visual.text}
+              className="h-[15px] rounded-[3px] px-[5px] py-px font-mono text-[8.5px] font-semibold tracking-[0.06em] uppercase"
+            >
+              PROXY · {proxy!.type}
+            </ColorBadge>
+          )}
           {connections.length > 0 && (
             <Button
               type="button"

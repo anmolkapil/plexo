@@ -9,8 +9,9 @@ import {
 import { Agent as HttpsAgent, request as httpsRequest } from 'node:https'
 import { isIP, type Socket } from 'node:net'
 import type { Duplex } from 'node:stream'
-import type { IpFamily, NetworkInterfaceInfo } from '../../shared/types'
+import type { IpFamily, NetworkInterfaceInfo, ProxyConfig } from '../../shared/types'
 import { connectRoute } from './deviceBinding'
+import { createProxyConnection } from './proxyTunnel'
 
 export interface NetworkRoute {
   device: string
@@ -142,6 +143,106 @@ function attemptOrder(routes: NetworkRoute[], preferred: string | undefined): Ne
   return ordered
 }
 
+async function connectThroughProxy(
+  iface: NetworkInterfaceInfo,
+  host: string,
+  port: number,
+  secure: ((socket: Socket) => Socket) | null,
+  timeoutMs: number,
+  signal: AbortSignal,
+  proxy: ProxyConfig
+): Promise<Socket> {
+  if (signal.aborted) throw abortError()
+
+  const isProxyIpv6 = proxy.host.includes(':')
+  const localAddress = isProxyIpv6
+    ? (iface.addresses.find((a) => a.family === 6)?.address ?? iface.addresses[0]?.address)
+    : (iface.addresses.find((a) => a.family === 4)?.address ?? iface.addresses[0]?.address)
+
+  const abortController = new AbortController()
+  const onSignalAbort = (): void => abortController.abort()
+  signal.addEventListener('abort', onSignalAbort, { once: true })
+
+  const timer = setTimeout(() => {
+    abortController.abort()
+  }, timeoutMs)
+
+  let rawSocket: Socket | undefined
+  try {
+    const tunnel = await createProxyConnection(
+      localAddress,
+      host,
+      port,
+      false,
+      proxy,
+      iface.device,
+      abortController.signal
+    )
+    rawSocket = tunnel as Socket
+
+    if (signal.aborted) {
+      rawSocket.destroy()
+      throw abortError()
+    }
+
+    if (!secure) {
+      clearTimeout(timer)
+      signal.removeEventListener('abort', onSignalAbort)
+      return rawSocket
+    }
+
+    return await new Promise<Socket>((resolve, reject) => {
+      const socket = secure(rawSocket!)
+      let settled = false
+
+      const finish = (error: Error | null, winner?: Socket): void => {
+        if (settled) return
+        settled = true
+        clearTimeout(timer)
+        signal.removeEventListener('abort', onSignalAbort)
+        abortController.signal.removeEventListener('abort', onTimeoutOrAbort)
+        socket.off('secureConnect', onConnected)
+        socket.off('error', onError)
+        rawSocket?.off('error', onError)
+        if (error) {
+          socket.destroy()
+          rawSocket?.destroy()
+          reject(error)
+        } else {
+          resolve(winner!)
+        }
+      }
+
+      const onConnected = (): void => finish(null, socket)
+      const onError = (err: Error): void => finish(asConnectionError(err))
+      const onTimeoutOrAbort = (): void => {
+        finish(
+          signal.aborted ? abortError() : new Error('Connection stalled: TLS handshake timed out')
+        )
+      }
+
+      if (abortController.signal.aborted) {
+        onTimeoutOrAbort()
+        return
+      }
+      abortController.signal.addEventListener('abort', onTimeoutOrAbort, { once: true })
+
+      socket.once('secureConnect', onConnected)
+      socket.once('error', onError)
+      rawSocket!.once('error', onError)
+    })
+  } catch (error) {
+    rawSocket?.destroy()
+    clearTimeout(timer)
+    signal.removeEventListener('abort', onSignalAbort)
+    if (signal.aborted) throw abortError()
+    if (abortController.signal.aborted && !signal.aborted) {
+      throw asConnectionError(new Error('Connection stalled: proxy connection timed out'))
+    }
+    throw asConnectionError(error)
+  }
+}
+
 /**
  * A socket to `host` through `iface`, racing its compatible routes as RFC 8305 does: whichever
  * completes its handshake first is kept, and the others are dropped. `secure` wraps the TCP
@@ -155,8 +256,19 @@ async function connectOnInterface(
   secure: ((socket: Socket) => Socket) | null,
   timeoutMs: number,
   signal: AbortSignal,
-  resolveHost?: ResolveHost
+  resolveHost?: ResolveHost,
+  proxy?: ProxyConfig
 ): Promise<Socket> {
+  if (proxy && proxy.enabled) {
+    if (!proxy.host || !proxy.host.trim()) {
+      throw asConnectionError(new Error('Proxy is enabled but no proxy host is configured'))
+    }
+    if (!proxy.port || proxy.port <= 0 || proxy.port > 65535) {
+      throw asConnectionError(new Error(`Invalid proxy port: ${proxy.port}`))
+    }
+    return connectThroughProxy(iface, host, port, secure, timeoutMs, signal, proxy)
+  }
+
   const deadline = Date.now() + timeoutMs
   const found = routesFor(iface, await resolveTargetWithin(host, timeoutMs, signal, resolveHost))
   if (found.length === 0) throw new NoCompatibleRouteError(host)
@@ -310,7 +422,8 @@ export class StreamConnection {
     {
       timeoutMs,
       connectTimeoutMs = timeoutMs,
-      resolveHost
+      resolveHost,
+      proxy
     }: {
       /** How long a request may take to get its response headers, connecting included. */
       timeoutMs: number
@@ -318,12 +431,14 @@ export class StreamConnection {
        * network that can't get through is found out before a slow server would be. */
       connectTimeoutMs?: number
       resolveHost?: ResolveHost
+      proxy?: () => ProxyConfig | undefined
     }
   ) {
     this.timeoutMs = timeoutMs
     const open: Open = async (options, secure) => {
       const iface = network()
       if (!iface) throw new Error('The network is not connected')
+      const proxyConfig = proxy?.()
       return connectOnInterface(
         iface,
         options.host ?? '',
@@ -335,7 +450,8 @@ export class StreamConnection {
         options.connectSignal
           ? AbortSignal.any([this.lifetime.signal, options.connectSignal])
           : this.lifetime.signal,
-        resolveHost
+        resolveHost,
+        proxyConfig
       )
     }
     this.http = new RoutedHttpAgent(open)

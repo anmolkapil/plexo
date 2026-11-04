@@ -4,6 +4,7 @@ import type {
   DownloadUnitState,
   HttpBlockState,
   HttpDownloadState,
+  ProxyConfig,
   StartHttpDownloadRequest,
   StartTorrentDownloadRequest,
   TorrentDownloadState,
@@ -80,6 +81,7 @@ export interface TransferHost {
   failDownload(message: string, discard?: boolean): void
   failNetwork(network: DownloadNetwork, message: string): void
   scheduleUpdate(): void
+  getProxyForInterface?(networkId: string): ProxyConfig | undefined
   /** The server turned the download's link away (401, 403, 410): asks the link it was given for
    * a fresh one to the same file and switches to it. Whether it did; undefined when there's no
    * other link to ask. */
