@@ -94,3 +94,52 @@ test('a link that no longer works itself still fails the download, asked once', 
   expect(failed.url).toBe(origin.url('/files/test.bin?sig=1'))
   expect(startRequests(origin)).toBe(2)
 })
+
+// At the end of a download, free streams split the last block (see scheduler.ts). The signed URL
+// running out just as one of them asks for its part: the holder, cut short at the split, carries
+// on with the response it already has, and the part is fetched again from the fresh URL, once.
+test.describe('a signed URL that expires while the last block is split', () => {
+  const MIB = 1024 * 1024
+  const SPLIT_SIZE = 5 * MIB
+  const LAST = 4 * MIB
+  test.use({ appEnv: { PLEXO_E2E_BLOCK_BYTES: String(MIB), PLEXO_E2E_SILENT_MS: '1000' } })
+
+  test('the split part is fetched from the fresh URL, and nothing twice', async ({
+    plexo,
+    serve
+  }) => {
+    const origin = await serve({ size: SPLIT_SIZE, bytesPerSecond: 128 * 1024 })
+    let refused: number | null = null
+    origin.setRule(({ path, range }) => {
+      if (path === '/start') return { redirect: `/files/test.bin?sig=${refused === null ? 1 : 2}` }
+      if (path !== '/files/test.bin?sig=1' || isProbe(range)) return 'ok'
+      // The first request to begin partway into the last block is a split's.
+      if (refused === null && range && range.start > LAST) refused = range.start
+      return refused === null ? 'ok' : { status: 403 }
+    })
+    await plexo.start(origin.url('/start'), origin.sha256, { connections: 4 })
+
+    const done = await plexo.waitForHttpStatus(['completed', 'error'], 60_000)
+    expect(refused, 'a split was refused').not.toBeNull()
+    expect(done.status).toBe('completed')
+    expect(done.url).toBe(origin.url('/files/test.bin?sig=2'))
+    expect(done.bytesDownloaded).toBe(SPLIT_SIZE)
+    expect(startRequests(origin)).toBe(2)
+
+    const served = origin.chunkRequests().filter((r) => r.status === 200 || r.status === 206)
+    expect(
+      served.some(
+        (r) =>
+          r.path === '/files/test.bin?sig=2' &&
+          r.range !== null &&
+          r.range.start <= refused! &&
+          (r.range.end === null || r.range.end >= refused!) &&
+          r.bytesSent > 0
+      ),
+      'the refused part came from the fresh URL'
+    ).toBe(true)
+    // A holder cut short leaves a little of its response unread, and the fresh URL's check
+    // samples a few bytes: nothing more is fetched twice.
+    expect(served.reduce((sum, r) => sum + r.bytesSent, 0)).toBeLessThan(SPLIT_SIZE + 256 * 1024)
+  })
+})
