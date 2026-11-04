@@ -1,4 +1,4 @@
-import type { DownloadState, FinishedDownload, NzbFileState } from '@shared/types'
+import type { DownloadState, FinishedDownload, NzbFileState, NzbPostProcess } from '@shared/types'
 import { AlertTriangle, Info } from 'lucide-react'
 import { HeroBand } from '../components/HeroBand'
 import { DetailHeader } from '../components/DetailHeader'
@@ -18,26 +18,40 @@ import { useFormatSpeed } from '../hooks/useFormatSpeed'
 const sectionHeaderClass =
   'font-mono text-[10px] leading-none tracking-[0.16em] text-muted-foreground uppercase'
 
-/** What's left to do with an NZB download, which Plexo leaves to the user's tools: a repair
- * where articles were missing, unpacking where it's an archive. Null when it's ready as it is. */
-function usenetNote(files: NzbFileState[]): { warning: boolean; text: string } | null {
+/** What came of an NZB download's repair and unpacking, and what's left to do by hand: a repair
+ * where articles were missing, unpacking where it's an archive. Null when there's nothing to say. */
+function usenetNote(
+  files: NzbFileState[],
+  done: NzbPostProcess = {}
+): { warning: boolean; text: string } | null {
   const missing = files.reduce((sum, file) => sum + file.missing, 0)
   const par2 = files.some((file) => /\.par2$/i.test(file.name))
   const archive = files.some((file) => /\.(rar|r\d{2,3}|7z|zip|\d{3})$/i.test(file.name))
   const articles = missing === 1 ? 'article wasn’t' : 'articles weren’t'
-  if (missing > 0) {
+  if (missing > 0 && !done.repaired) {
     return {
       warning: true,
       text: par2
-        ? `${missing} ${articles} on the news server, so some files have gaps. Repair them with the download’s .par2 files${archive ? ' before unpacking' : ''}.`
+        ? `${missing} ${articles} on the news server, so some files have gaps. Repair them with the download’s .par2 files${archive ? ' before unpacking' : ''}.${done.missingTool === 'par2' ? ' Install par2 (par2cmdline) and Plexo repairs downloads like this itself.' : ''}`
         : `${missing} ${articles} on the news server, so some files have gaps, and this download has no .par2 files to repair them with.`
     }
   }
-  if (archive) {
-    return {
-      warning: false,
-      text: 'The files are as posted: unpack the archive to get at what’s inside.'
-    }
+  if (archive && !done.unpacked) {
+    return done.note
+      ? { warning: true, text: done.note }
+      : {
+          warning: false,
+          text: `The files are as posted: unpack the archive to get at what’s inside.${done.missingTool === '7z' ? ' Install 7-Zip (7z) and Plexo unpacks downloads like this itself.' : ''}`
+        }
+  }
+  if (done.repaired || done.unpacked) {
+    const steps = [
+      done.repaired &&
+        `${missing} missing ${missing === 1 ? 'article' : 'articles'} repaired with the .par2 files`,
+      done.unpacked && 'unpacked'
+    ]
+    const text = steps.filter(Boolean).join(', then ')
+    return { warning: false, text: `${text[0].toUpperCase()}${text.slice(1)}.` }
   }
   return null
 }
@@ -86,7 +100,7 @@ export function CompleteScreen({
       : download.kind === 'nzb'
         ? { chosen: download.nzbFiles.length, total: download.nzbFiles.length }
         : null
-  const note = download.kind === 'nzb' ? usenetNote(download.nzbFiles) : null
+  const note = download.kind === 'nzb' ? usenetNote(download.nzbFiles, download.postProcess) : null
 
   return (
     <div className="flex h-full flex-col bg-background">

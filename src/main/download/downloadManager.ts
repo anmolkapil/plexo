@@ -70,6 +70,7 @@ import {
   type ParsedNzb
 } from './nzb/nzbFile'
 import { NzbTransfer } from './nzb/nzbTransfer'
+import { postProcess } from './nzb/postProcess'
 import { loadUsenetServer } from './nzb/usenetServer'
 import {
   clearSpeeds,
@@ -141,6 +142,8 @@ interface TorrentDownloadRuntime extends RuntimeFields, TorrentTransferTarget {
 interface NzbDownloadRuntime extends RuntimeFields, NzbTransferTarget {
   kind: 'nzb'
   transfer: NzbTransfer
+  /** While it repairs and unpacks: what stops the tool at work (see postProcess). */
+  postProcessing?: AbortController
 }
 
 type DownloadRuntime = HttpDownloadRuntime | TorrentDownloadRuntime | NzbDownloadRuntime
@@ -287,6 +290,11 @@ const isDone = (unit: DownloadUnitState): boolean =>
 
 const unitsOf = (runtime: DownloadRuntime): DownloadUnitState[] =>
   runtime.kind === 'torrent' ? runtime.pieces : runtime.blocks
+
+/** An NZB download's own files in its folder: its NZB's, and what unpacking added. */
+function nzbOwnedFiles(state: Pick<NzbDownloadState, 'nzbFiles' | 'postProcess'>): string[] {
+  return [...state.nzbFiles.map((file) => file.name), ...(state.postProcess?.unpackedFiles ?? [])]
+}
 
 /** An NZB download's missing articles, counted into its state: per file, and their bytes. */
 function countMissing(state: NzbDownloadState, articles: { file: number }[]): void {
@@ -821,7 +829,7 @@ export class DownloadManager {
       entry = {
         ...state,
         unitsWritten: blocks.filter((block) => block.status === 'completed').length,
-        downloadedFiles: state.nzbFiles.map((file) => file.name)
+        downloadedFiles: nzbOwnedFiles(state)
       }
     } else {
       const { pieces, peers: omittedPeers, ...state } = runtime.state
@@ -1709,7 +1717,7 @@ export class DownloadManager {
     if (runtime?.cancelPromise) return runtime.cancelPromise
     if (
       !runtime ||
-      runtime.publishing ||
+      (runtime.publishing && !(runtime.kind === 'nzb' && runtime.postProcessing)) ||
       (runtime.state.status !== 'downloading' &&
         runtime.state.status !== 'paused' &&
         runtime.state.status !== 'queued' &&
@@ -1789,7 +1797,7 @@ export class DownloadManager {
                 .filter((file) => file.chosen)
                 .map((file) => file.path.split(/[\\/]/).slice(1).join(sep))
             : runtime.kind === 'nzb'
-              ? runtime.state.nzbFiles.map((file) => file.name)
+              ? nzbOwnedFiles(runtime.state)
               : undefined
         await trashDownload(runtime.state, owned)
       }
@@ -1961,6 +1969,7 @@ export class DownloadManager {
       )
       runtime.state.destinationPath = publishedPath
       runtime.state.fileName = basename(publishedPath)
+      if (runtime.kind === 'nzb') await this.postProcess(runtime)
       runtime.state.status = 'completed'
       runtime.state.completedAt = Date.now()
       // Done before it downloaded for PEAK_SECONDS: its speed start to finish, pauses left out (the
@@ -1981,12 +1990,15 @@ export class DownloadManager {
         runtime.state.id
       )
     } catch (error) {
-      runtime.state.status = 'error'
-      runtime.state.error = error instanceof Error ? error.message : String(error)
-      this.notify(
-        'Download failed',
-        `${runtime.state.fileName}: ${describeError(runtime.state.error)}`
-      )
+      // Cancelled while it repaired or unpacked (see cancel): cancelRuntime takes it from here.
+      if ((runtime.state.status as DownloadStatus) !== 'paused') {
+        runtime.state.status = 'error'
+        runtime.state.error = error instanceof Error ? error.message : String(error)
+        this.notify(
+          'Download failed',
+          `${runtime.state.fileName}: ${describeError(runtime.state.error)}`
+        )
+      }
     }
     runtime.publishing = false
 
@@ -1998,6 +2010,29 @@ export class DownloadManager {
   private stopRun(runtime: DownloadRuntime): void {
     runtime.stop.abort()
     runtime.transfer.abort()
+    if (runtime.kind === 'nzb') runtime.postProcessing?.abort()
+  }
+
+  /** An NZB download's repair and unpacking, once its files are cut to size: the one part of
+   * publishing that can be cancelled, as it can take a while. */
+  private async postProcess(runtime: NzbDownloadRuntime): Promise<void> {
+    const { state } = runtime
+    const server = await loadUsenetServer().catch(() => null)
+    runtime.postProcessing = new AbortController()
+    state.postProcess = {}
+    try {
+      await postProcess({
+        folder: state.destinationPath,
+        files: state.nzbFiles.map((file) => file.name),
+        missing: state.nzbFiles.reduce((sum, file) => sum + file.missing, 0),
+        deleteArchives: server?.deleteArchives ?? true,
+        state: state.postProcess,
+        changed: () => this.scheduleUpdate(runtime),
+        signal: runtime.postProcessing.signal
+      })
+    } finally {
+      runtime.postProcessing = undefined
+    }
   }
 
   /** Ends the download in an error. What it has downloaded stays for a resume, unless

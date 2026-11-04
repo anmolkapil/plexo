@@ -1,0 +1,5 @@
+#!/bin/sh
+# Stands in for 7-Zip in nzb.spec.ts: says how far it got, then takes its time until killed.
+echo $$ > "$PLEXO_E2E_SLOW_TOOL_PID"
+printf ' 12%%'
+exec /bin/sleep 600

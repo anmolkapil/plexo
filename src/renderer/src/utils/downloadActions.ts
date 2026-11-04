@@ -48,7 +48,11 @@ export function failureAction(download: DownloadState): FailureAction {
 }
 
 const appliesTo: Record<ActionId, (item: DownloadItem) => boolean> = {
-  pause: (item) => !isFinished(item) && (item.status === 'downloading' || item.status === 'queued'),
+  pause: (item) =>
+    !isFinished(item) &&
+    (item.status === 'downloading' || item.status === 'queued') &&
+    // Repairing or unpacking runs to its end: it can only be cancelled.
+    !(item.kind === 'nzb' && item.postProcess?.stage),
   resume: (item) => !isFinished(item) && item.status === 'paused',
   retry: (item) => isFailed(item) && failureAction(item) === 'retry',
   fix: (item) => isFailed(item) && failureAction(item) === 'fix',

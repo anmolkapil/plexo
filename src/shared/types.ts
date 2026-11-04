@@ -317,6 +317,27 @@ export interface NzbDownloadState extends DownloadStateBase {
   missingBytes: number
   /** The news server it downloads from, by host name. */
   server: string
+  /** Once its articles are in: the repair and unpacking done with the user's own tools (see
+   * main/download/nzb/postProcess.ts). Unset until then. */
+  postProcess?: NzbPostProcess
+}
+
+/** Repairing an NZB download with its .par2 files, then unpacking its archives. */
+export interface NzbPostProcess {
+  /** While it runs: what it is at, and how far along, when the tool says. */
+  stage?: 'verifying' | 'repairing' | 'unpacking'
+  percent?: number
+  /** Its missing articles were restored from its .par2 files. */
+  repaired?: boolean
+  /** Its archives were unpacked into its folder. */
+  unpacked?: boolean
+  /** The files unpacking added, relative to its folder: its own, as its NZB's files are. */
+  unpackedFiles?: string[]
+  /** The tool it needed and didn't find installed: par2 to repair, 7-Zip (or unrar, or unar)
+   * to unpack. */
+  missingTool?: 'par2' | '7z'
+  /** Why unpacking failed: a password-protected archive, a damaged one. */
+  note?: string
 }
 
 export type DownloadState = HttpDownloadState | TorrentDownloadState | NzbDownloadState
@@ -544,6 +565,8 @@ export interface UsenetServer {
   username: string
   /** How many connections the server allows at once, for every network together. */
   connections: number
+  /** Once a download's archives are unpacked, its archives and .par2 files go. */
+  deleteArchives: boolean
   /** A password is set. */
   hasPassword: boolean
   /** Its password is kept only until Plexo quits: this computer offers no keychain to seal it
@@ -559,5 +582,7 @@ export interface UsenetServerInput {
   tls: boolean
   username: string
   connections: number
+  /** Left out: on. */
+  deleteArchives?: boolean
   password?: string
 }

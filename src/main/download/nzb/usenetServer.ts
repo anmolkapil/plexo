@@ -49,7 +49,8 @@ export function checkedServer(value: unknown): Omit<UsenetServerConfig, 'passwor
     connections:
       Number.isInteger(connections) && connections >= 1
         ? Math.min(connections, MAX_CONNECTIONS)
-        : DEFAULT_CONNECTIONS
+        : DEFAULT_CONNECTIONS,
+    deleteArchives: value.deleteArchives !== false
   }
 }
 
