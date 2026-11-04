@@ -75,10 +75,18 @@ test.describe('torrent paths', () => {
     refused(['Name/x', 'Name/x/y'])
     refused(['Name/::'])
     refused(['Name/CON.txt'], 'win32')
+    // Windows reserves COM¹/COM²/COM³ and LPT¹/LPT²/LPT³ the same way as COM1 (Win32 file names).
+    refused(['Name/COM\u00b9.txt'], 'win32')
+    refused(['Name/LPT\u00b2.txt'], 'win32')
+    refused(['COM\u00b3/file.txt'], 'win32')
     refused(['Name/a:b/file'], 'win32')
     refused([])
     // The same names are fine where nothing reserves them, as are names that only start with dots.
     expect(safeTorrentPaths([{ path: 'Name/CON.txt', length: 1 }], 'darwin')).toHaveLength(1)
+    expect(safeTorrentPaths([{ path: 'Name/COM\u00b9.txt', length: 1 }], 'darwin')).toHaveLength(1)
+    // COM10 and an ordinary name that only starts with COM are not device names.
+    expect(safeTorrentPaths([{ path: 'Name/COM10.txt', length: 1 }], 'win32')).toHaveLength(1)
+    expect(safeTorrentPaths([{ path: 'Name/COMPANY.txt', length: 1 }], 'win32')).toHaveLength(1)
     expect(safeTorrentPaths([{ path: '..notes.txt', length: 1 }], 'darwin')).toEqual([
       { path: '..notes.txt', length: 1 }
     ])
