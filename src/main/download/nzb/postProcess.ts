@@ -141,6 +141,9 @@ const articles = (count: number): string =>
  * archive, saying so. Damage its .par2 files can't repair throws. Every
  * article is already checked (CRC-32) as it comes, so a download missing none isn't verified
  * again.
+ *
+ * Stopped partway (a quit, a crash), it can run again from `state` as it was saved: a repair
+ * done is not done twice, and what an unpack cut short wrote goes before it starts over.
  */
 export async function postProcess(job: {
   folder: string
@@ -152,6 +155,8 @@ export async function postProcess(job: {
   /** Kept up to date as it goes; `changed` is called each time. */
   state: NzbPostProcess
   changed: () => void
+  /** Saves `state` now: a relaunch must know where it got to. */
+  checkpoint: () => Promise<void>
   signal: AbortSignal
 }): Promise<void> {
   const { folder, missing, state, signal } = job
@@ -163,7 +168,7 @@ export async function postProcess(job: {
   try {
     const saved = new Set(await readdir(folder))
     const par2Files = job.files.filter((name) => /\.par2$/i.test(name) && saved.has(name))
-    if (missing > 0 && par2Files.length > 0) {
+    if (missing > 0 && !state.repaired && par2Files.length > 0) {
       const par2 = await findTool('par2')
       if (!par2) {
         state.missingTool = 'par2'
@@ -171,8 +176,9 @@ export async function postProcess(job: {
       }
       // A set's index file, or its first volume when that's all there is.
       const sets = par2Files.filter((name) => !/\.vol\d+[+-]\d+\.par2$/i.test(name))
+      at('verifying')
+      await job.checkpoint()
       for (const set of sets.length > 0 ? sets : par2Files.slice(0, 1)) {
-        at('verifying')
         // -p: once repaired, the damaged originals par2 keeps (`name.1`) and the .par2 files go.
         const args = ['r', ...(job.deleteArchives ? ['-p'] : []), join(folder, set)]
         const { code, output } = await runTool(par2, args, folder, signal, (text) =>
@@ -189,14 +195,25 @@ export async function postProcess(job: {
         if (code !== 0) throw new Error(`par2 couldn’t repair the download: ${lastLine(output)}`)
       }
       state.repaired = true
+      await job.checkpoint()
     }
     // With gaps left in them, its archives can't be unpacked.
     if (missing > 0 && !state.repaired) return
     await unpack(job, at)
   } finally {
-    state.stage = undefined
-    state.percent = undefined
+    // Stopped by a quit or a cancel, the stage stays: it tells a relaunch it isn't done.
+    if (!signal.aborted) {
+      state.stage = undefined
+      state.percent = undefined
+    }
     job.changed()
+  }
+}
+
+/** Removes from `folder` what isn't in `kept`: what an unpack added. */
+async function removeAdded(folder: string, kept: ReadonlySet<string>): Promise<void> {
+  for (const name of await readdir(folder)) {
+    if (!kept.has(name)) await rm(join(folder, name), { recursive: true, force: true })
   }
 }
 
@@ -205,10 +222,15 @@ async function unpack(
   at: (stage: NzbPostProcess['stage'], percent?: number) => void
 ): Promise<void> {
   const { folder, state, signal } = job
+  // As the folder was before the first try: one cut short left more in it.
+  if (state.beforeUnpack) await removeAdded(folder, new Set(state.beforeUnpack))
   const names = await readdir(folder)
   const archives = names.filter(isFirstVolume)
   if (archives.length === 0) return
   const before = new Set(names)
+  state.beforeUnpack = names
+  at('unpacking')
+  await job.checkpoint()
   let unpacked = false
   try {
     for (const archive of archives) {
@@ -245,11 +267,7 @@ async function unpack(
     unpacked = true
   } finally {
     // Half unpacked, or stopped: what it added goes, the download as posted stays.
-    if (!unpacked) {
-      for (const name of await readdir(folder)) {
-        if (!before.has(name)) await rm(join(folder, name), { recursive: true, force: true })
-      }
-    }
+    if (!unpacked) await removeAdded(folder, before)
   }
   state.unpacked = true
   state.unpackedFiles = (await readdir(folder, { recursive: true, withFileTypes: true }))

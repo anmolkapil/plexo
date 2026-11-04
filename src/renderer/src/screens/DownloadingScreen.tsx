@@ -396,7 +396,7 @@ export const DownloadingScreen = memo(function DownloadingScreen({
                   </Tooltip>
                 </>
               )}
-              {download.kind === 'nzb' && download.postProcess?.stage && (
+              {download.kind === 'nzb' && download.postProcess?.stage && !isPaused && (
                 <>
                   <Dot />
                   <span role="status" className="text-foreground">

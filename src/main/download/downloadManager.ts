@@ -997,7 +997,9 @@ export class DownloadManager {
               .catch(() => false)
           : persisted.publicationIdentity?.dev === published.dev &&
             persisted.publicationIdentity?.ino === published.ino)
-      if (units.every(isDone) && publishedSize === expected && sameFile) {
+      // Unless it was still repairing or unpacking: that runs again on Resume.
+      const postProcessing = state.kind === 'nzb' && state.postProcess?.stage !== undefined
+      if (units.every(isDone) && publishedSize === expected && sameFile && !postProcessing) {
         state.status = 'completed'
         state.destinationPath = publishedPath
         state.fileName = basename(publishedPath)
@@ -1857,7 +1859,12 @@ export class DownloadManager {
     clearTimeout(this.scheduleTimer)
     await Promise.all(
       [...this.runtimes.values()].map(async (runtime) => {
-        if (runtime.state.status === 'downloading')
+        if (runtime.kind === 'nzb' && runtime.postProcessing) {
+          // The tool goes with Plexo; what it was doing runs again on Resume (see restore).
+          runtime.postProcessing.abort()
+          await runtime.runPromise
+          await this.persistNow(runtime)
+        } else if (runtime.state.status === 'downloading')
           await this.pause(runtime.state.id, runtime.state.scheduled === true)
         else {
           if (runtime.scheduleStopping) await runtime.runPromise
@@ -1991,7 +1998,8 @@ export class DownloadManager {
       )
     } catch (error) {
       // Cancelled while it repaired or unpacked (see cancel): cancelRuntime takes it from here.
-      if ((runtime.state.status as DownloadStatus) !== 'paused') {
+      // Stopped by a quit: it runs again after the relaunch (see suspendAll).
+      if ((runtime.state.status as DownloadStatus) !== 'paused' && !this.suspending) {
         runtime.state.status = 'error'
         runtime.state.error = error instanceof Error ? error.message : String(error)
         this.notify(
@@ -2019,7 +2027,9 @@ export class DownloadManager {
     const { state } = runtime
     const server = await loadUsenetServer().catch(() => null)
     runtime.postProcessing = new AbortController()
-    state.postProcess = {}
+    // Run again after a relaunch: from where it got to.
+    const { repaired, beforeUnpack } = state.postProcess ?? {}
+    state.postProcess = { repaired, beforeUnpack }
     try {
       await postProcess({
         folder: state.destinationPath,
@@ -2028,6 +2038,7 @@ export class DownloadManager {
         deleteArchives: server?.deleteArchives ?? true,
         state: state.postProcess,
         changed: () => this.scheduleUpdate(runtime),
+        checkpoint: () => this.persistNow(runtime),
         signal: runtime.postProcessing.signal
       })
     } finally {

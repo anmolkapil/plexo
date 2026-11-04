@@ -324,13 +324,17 @@ export interface NzbDownloadState extends DownloadStateBase {
 
 /** Repairing an NZB download with its .par2 files, then unpacking its archives. */
 export interface NzbPostProcess {
-  /** While it runs: what it is at, and how far along, when the tool says. */
+  /** While it runs: what it is at, and how far along, when the tool says. Saved set, it was
+   * stopped partway (a quit, a crash): it runs again when the download is resumed. */
   stage?: 'verifying' | 'repairing' | 'unpacking'
   percent?: number
   /** Its missing articles were restored from its .par2 files. */
   repaired?: boolean
   /** Its archives were unpacked into its folder. */
   unpacked?: boolean
+  /** What its folder held before unpacking began: a relaunch clears an unpack cut short back
+   * to this. */
+  beforeUnpack?: string[]
   /** The files unpacking added, relative to its folder: its own, as its NZB's files are. */
   unpackedFiles?: string[]
   /** The tool it needed and didn't find installed: par2 to repair, 7-Zip (or unrar, or unar)

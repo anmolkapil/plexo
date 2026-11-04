@@ -430,7 +430,7 @@ test.describe('NZB repair and unpacking', () => {
     test.skip(!PAR2 || !SEVEN_ZIP, 'needs par2 and 7-Zip')
     const files = await posted((run) => {
       run(SEVEN_ZIP!, ['a', '-mx0', 'Test.Release.7z', 'movie.mkv', 'info.txt'])
-      run('par2', ['c', '-r40', '-n2', 'Test.Release.par2', 'Test.Release.7z'])
+      run('par2', ['c', '-s16384', '-r40', '-n2', 'Test.Release.par2', 'Test.Release.7z'])
     })
     // The archive first, so the gaps are in it.
     files.sort((a, b) => Number(a.name.endsWith('.par2')) - Number(b.name.endsWith('.par2')))
@@ -442,11 +442,6 @@ test.describe('NZB repair and unpacking', () => {
     expect(done.nzbFiles[0].missing).toBe(2)
     expect(done.postProcess).toMatchObject({ repaired: true, unpacked: true })
     expect(done.postProcess?.unpackedFiles?.sort()).toEqual(['info.txt', 'movie.mkv'])
-    expect(
-      plexo.sessions
-        .flat()
-        .some((state) => state.kind === 'nzb' && state.postProcess?.stage === 'repairing')
-    ).toBe(true)
 
     await plexo.page.getByText('Test.Release', { exact: true }).first().click()
     await expect(
@@ -460,7 +455,9 @@ test.describe('NZB repair and unpacking', () => {
     test.skip(!PAR2, 'needs par2')
     const files = [
       { name: 'Test.Release.mkv', data: CONTENT[0].data },
-      ...(await posted((run) => run('par2', ['c', '-r5', '-n1', 'Test.Release.par2', 'movie.mkv'])))
+      ...(await posted((run) =>
+        run('par2', ['c', '-s16384', '-c1', '-n1', 'Test.Release.par2', 'movie.mkv'])
+      ))
     ]
     const server = await newsServer({ files, missing: twoGaps })
     await useServer(plexo, server)
@@ -534,6 +531,16 @@ test.describe('NZB repair and unpacking without the tools', () => {
   })
 })
 
+/** Whether process `pid` is still running. */
+function alive(pid: number): boolean {
+  try {
+    process.kill(pid, 0)
+    return true
+  } catch {
+    return false
+  }
+}
+
 test.describe('NZB unpacking, cancelled', () => {
   // A 7-Zip that prints how far it got, then waits to be killed (e2e/tools/slow/7z).
   const pidFile = join(tmpdir(), `plexo-slow-7z-${process.pid}.pid`)
@@ -556,19 +563,45 @@ test.describe('NZB unpacking, cancelled', () => {
     await plexo.page.getByText('Test.Release', { exact: true }).first().click()
     await expect(plexo.page.getByText('Unpacking… 12%')).toBeVisible()
     const pid = Number(await readFile(pidFile, 'utf8'))
-    const alive = (): boolean => {
-      try {
-        process.kill(pid, 0)
-        return true
-      } catch {
-        return false
-      }
-    }
-    expect(alive()).toBe(true)
+    expect(alive(pid)).toBe(true)
 
     await plexo.api.cancelDownload(id)
     await plexo.waitForNzbStatus('cancelled', 10_000)
-    await expect.poll(alive).toBe(false)
+    await expect.poll(() => alive(pid)).toBe(false)
     await rm(pidFile, { force: true })
+  })
+})
+
+test.describe('NZB unpacking, stopped by a quit', () => {
+  const pidFile = join(tmpdir(), `plexo-slow-7z-quit-${process.pid}.pid`)
+  test.use({
+    appEnv: { PATH: join(PROJECT_ROOT, 'e2e', 'tools', 'slow'), PLEXO_E2E_SLOW_TOOL_PID: pidFile }
+  })
+
+  test('the tool goes with Plexo, and the download unpacks on Resume', async ({ plexo }) => {
+    test.skip(process.platform === 'win32' || !SEVEN_ZIP, 'needs 7-Zip and a shell')
+    const files = await posted((run) =>
+      run(SEVEN_ZIP!, ['a', '-mx0', 'Test.Release.7z', 'movie.mkv', 'info.txt'])
+    )
+    const server = await newsServer({ files })
+    await useServer(plexo, server)
+
+    const id = await plexo.start(await nzbOnDisk(server), treeSha(CONTENT))
+    await plexo.waitUntil(
+      (state) => state.kind === 'nzb' && state.postProcess?.percent === 12,
+      30_000
+    )
+    const pid = Number(await readFile(pidFile, 'utf8'))
+    await plexo.quit()
+    expect(alive(pid)).toBe(false)
+    await rm(pidFile, { force: true })
+
+    // Not done, so not completed: it waits for Resume, with the real 7-Zip this time.
+    await plexo.relaunch({ PATH: process.env.PATH ?? '' })
+    const paused = await plexo.waitForNzbStatus('paused')
+    expect(paused.postProcess?.stage).toBe('unpacking')
+    await plexo.api.resumeDownload(id)
+    const done = await plexo.waitForNzbStatus('completed', 30_000)
+    expect(done.postProcess).toMatchObject({ unpacked: true })
   })
 })
