@@ -1,5 +1,5 @@
 import { createServer, type Server } from 'node:http'
-import type { AddressInfo } from 'node:net'
+import { connect as netConnect, createServer as createTcpServer, type AddressInfo } from 'node:net'
 import { mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -330,6 +330,45 @@ test.describe('NZB downloads', () => {
     expect(server.served.length - servedBefore).toBeLessThanOrEqual(
       server.articleCount - doneBefore + 2
     )
+  })
+
+  test('goes through the proxy set on the network', async ({ plexo }) => {
+    const server = await newsServer()
+    await useServer(plexo, server, { connections: 2 })
+    // SOCKS5 without auth, IPv4 targets only: greeting, then CONNECT.
+    const targets: string[] = []
+    const proxy = createTcpServer((client) => {
+      client.once('data', () => {
+        client.write(Buffer.from([0x05, 0x00]))
+        client.once('data', (request: Buffer) => {
+          const host = [...request.subarray(4, 8)].join('.')
+          const port = request.readUInt16BE(8)
+          targets.push(`${host}:${port}`)
+          const upstream = netConnect(port, host, () => {
+            client.write(Buffer.from([0x05, 0x00, 0x00, 0x01, 0, 0, 0, 0, 0, 0]))
+            upstream.pipe(client)
+            client.pipe(upstream)
+          })
+          upstream.on('error', () => client.destroy())
+          client.on('error', () => upstream.destroy())
+        })
+      })
+    })
+    await new Promise<void>((resolve) => proxy.listen(0, '127.0.0.1', resolve))
+    try {
+      const port = (proxy.address() as AddressInfo).port
+      await plexo.api.updateSettings({
+        networkPreferences: {
+          a: { proxy: { enabled: true, type: 'socks5', host: '127.0.0.1', port } }
+        }
+      })
+      await plexo.start(await nzbOnDisk(server), server.expectedSha())
+      await plexo.waitForNzbStatus('completed', 30_000)
+      expect(targets.length).toBeGreaterThan(0)
+      expect(new Set(targets)).toEqual(new Set([`127.0.0.1:${server.port}`]))
+    } finally {
+      await new Promise<void>((resolve) => proxy.close(() => resolve()))
+    }
   })
 
   test('shares the connections across both networks', async ({ plexo }) => {

@@ -712,7 +712,8 @@ export class DownloadManager {
       reconcile: () => this.reconcile(runtime),
       failDownload: (message, discard) => this.failDownload(runtime, message, discard),
       failNetwork: (network, message) => this.failNetwork(runtime, network, message),
-      scheduleUpdate: () => this.scheduleUpdate(runtime)
+      scheduleUpdate: () => this.scheduleUpdate(runtime),
+      getProxyForInterface: (networkId) => this.networkPreferences[networkId]?.proxy
     }
     const runtime: NzbDownloadRuntime = Object.assign(target, this.runtimeFields(), {
       kind: 'nzb' as const,
