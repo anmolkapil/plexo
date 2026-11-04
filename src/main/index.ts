@@ -15,21 +15,6 @@ import type { DownloadManager } from './download/downloadManager'
 // this from electron-builder's productName, but setting it here keeps dev and packaged in sync.
 app.setName('Plexo')
 
-// Crash breadcrumbs: a window that vanishes without a trace is undiagnosable after the fact,
-// so every kind of process death says so in the terminal while it happens.
-process.on('uncaughtException', (error) => {
-  console.error('[plexo] uncaughtException:', error)
-})
-process.on('unhandledRejection', (reason) => {
-  console.error('[plexo] unhandledRejection:', reason)
-})
-app.on('render-process-gone', (_event, _webContents, details) => {
-  console.error('[plexo] renderer gone:', details.reason, details.exitCode)
-})
-app.on('child-process-gone', (_event, details) => {
-  console.error('[plexo] child gone:', details.type, details.reason, details.exitCode)
-})
-
 // Each e2e test runs against its own throwaway userData folder (downloads, manifests, settings).
 if (testKnobs.userDataDir) app.setPath('userData', testKnobs.userDataDir)
 

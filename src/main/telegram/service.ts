@@ -70,6 +70,12 @@ interface LocatedMedia {
 
 function seal(value: string): string | undefined {
   if (!safeStorage.isEncryptionAvailable()) return undefined
+  // Linux without a keyring reports itself as available but stores basic_text — close to
+  // plain text. A full-account session (or its api registration) isn't saved at all there,
+  // the same call sealBrowser makes for cookies: keep it in memory only.
+  if (process.platform === 'linux' && safeStorage.getSelectedStorageBackend() === 'basic_text') {
+    return undefined
+  }
   try {
     return safeStorage.encryptString(value).toString('base64')
   } catch {
@@ -95,7 +101,8 @@ async function loadStore(): Promise<StoredAuth> {
 }
 
 async function saveStore(update: StoredAuth): Promise<void> {
-  await writeFile(STORE_PATH(), JSON.stringify(update), 'utf-8')
+  // 0o600: the session is full account access — other local users read nothing.
+  await writeFile(STORE_PATH(), JSON.stringify(update), { encoding: 'utf-8', mode: 0o600 })
 }
 
 /** The message's media as Telegram files name themselves: the file attribute's name when there
@@ -337,7 +344,6 @@ export class TelegramService {
 
   private async openWithSession(session: string): Promise<TelegramClient> {
     if (!this.credentials) throw new Error('Telegram credentials are missing.')
-    console.error('[plexo-tg] client.connect…')
     const client = new TelegramClient(
       new StringSession(session),
       this.credentials.apiId,
@@ -349,7 +355,6 @@ export class TelegramService {
     )
     client.setLogLevel(LogLevel.ERROR)
     await client.connect()
-    console.error('[plexo-tg] client connected')
     this.client = client
     return client
   }
@@ -359,20 +364,21 @@ export class TelegramService {
    * any QR sign-in that was waiting. */
   async startLogin(input: TelegramCredentials): Promise<void> {
     this.qrAbort?.abort()
-    const apiId = BUNDLED_CREDENTIALS?.apiId ?? Math.floor(Number(input.apiId))
-    const apiHash = BUNDLED_CREDENTIALS?.apiHash ?? input.apiHash.trim()
+    // The user's own credentials win when both are given — that's the advanced fallback in
+    // bundled builds — and Plexo's bundled pair covers everyone else.
+    const ownApiId = Math.floor(Number(input.apiId))
+    const ownGiven = Number.isSafeInteger(ownApiId) && ownApiId > 0 && input.apiHash.trim() !== ''
+    const apiId = ownGiven ? ownApiId : BUNDLED_CREDENTIALS?.apiId
+    const apiHash = ownGiven ? input.apiHash.trim() : BUNDLED_CREDENTIALS?.apiHash
     const phone = input.phone.trim()
-    if (!Number.isSafeInteger(apiId) || apiId <= 0)
+    if (apiId === undefined || !Number.isSafeInteger(apiId) || apiId <= 0)
       throw new Error('Enter the api_id from my.telegram.org.')
     if (!apiHash) throw new Error('Enter the api_hash from my.telegram.org.')
     if (!phone) throw new Error('Enter your phone number.')
     this.credentials = { apiId, apiHash, phone }
     try {
-      console.error('[plexo-tg] startLogin: connecting with api_id', apiId, 'phone', phone)
       const client = await this.openWithSession('')
-      console.error('[plexo-tg] startLogin: connected; sending code…')
       const { phoneCodeHash } = await sendCode(client, { apiId, apiHash }, phone)
-      console.error('[plexo-tg] startLogin: code sent')
       this.phoneCodeHash = phoneCodeHash
       this.auth = {
         signedIn: false,

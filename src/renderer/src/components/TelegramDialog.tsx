@@ -125,6 +125,9 @@ function TelegramLogin({ auth }: { auth: TelegramAuthState }): React.JSX.Element
   const [code, setCode] = useState('')
   const [password, setPassword] = useState('')
   const [busy, setBusy] = useState(false)
+  // Bundled builds lead with Plexo's own credentials; the user's own api keys are one toggle
+  // away (and win over the bundled pair when given — see main's startLogin).
+  const [showApi, setShowApi] = useState(auth.bundled !== true)
 
   const run = (work: () => Promise<void>): void => {
     setBusy(true)
@@ -256,7 +259,7 @@ function TelegramLogin({ auth }: { auth: TelegramAuthState }): React.JSX.Element
     )
   }
 
-  const needsApiFields = auth.bundled !== true
+  const needsApiFields = showApi
   return (
     <form
       className="flex flex-col gap-3 px-5 py-4"
@@ -321,6 +324,16 @@ function TelegramLogin({ auth }: { auth: TelegramAuthState }): React.JSX.Element
           autoFocus={!needsApiFields}
         />
       </div>
+      {auth.bundled === true && (
+        <Button
+          type="button"
+          variant="ghost"
+          size="xs"
+          onClick={() => setShowApi((shown) => !shown)}
+        >
+          {showApi ? 'Use Plexo’s api keys instead' : 'Use your own api keys (advanced)'}
+        </Button>
+      )}
       {auth.error && (
         <p role="alert" className={errorClass}>
           {auth.error}
