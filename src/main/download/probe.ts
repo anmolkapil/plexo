@@ -6,6 +6,7 @@ import type { BrowserContext, ProbeResult } from '../../shared/types'
 import { testKnobs } from '../testKnobs'
 import { requestHeaders } from './browserContext'
 import { parseContentDispositionFilename } from './contentDisposition'
+import { normalizeEtag } from './fileVersion'
 import {
   describeTorrent,
   downloadTorrentFile,
@@ -40,7 +41,8 @@ function requestFirstBytes(
   url: URL,
   deadline: number,
   browser: BrowserContext | undefined,
-  ranged: boolean
+  ranged: boolean,
+  range = 'bytes=0-1023'
 ): Promise<ProbeResponse> {
   return new Promise((resolve, reject) => {
     const requester = url.protocol === 'https:' ? httpsRequest : httpRequest
@@ -51,7 +53,7 @@ function requestFirstBytes(
         port: url.port || undefined,
         path: `${url.pathname}${url.search}`,
         headers: ranged
-          ? { ...requestHeaders(url, browser), Range: 'bytes=0-1023' }
+          ? { ...requestHeaders(url, browser), Range: range }
           : requestHeaders(url, browser)
       },
       (res) => {
@@ -78,13 +80,14 @@ function fileNameFromHeaders(headers: Headers, url: URL): string {
     const parsed = parseContentDispositionFilename(disposition)
     if (parsed) return parsed
   }
-  let pathname = url.pathname
+  // Only the last segment is decoded: a malformed %-escape in a folder doesn't keep the file's
+  // name escaped, and an escaped slash stays part of the name.
+  let base = url.pathname.split('/').filter(Boolean).pop()
   try {
-    pathname = decodeURIComponent(pathname)
+    if (base) base = decodeURIComponent(base)
   } catch {
-    // A malformed %-escape: the raw path still names the file well enough.
+    // A malformed %-escape: the raw name still names the file well enough.
   }
-  const base = pathname.split('/').filter(Boolean).pop()
   return base && base.length > 0 ? base : 'download'
 }
 
@@ -119,6 +122,35 @@ async function requestFollowingRedirects(
   }
 
   return { current, response }
+}
+
+/** Whether the server labels each byte range with an ETag of its own (pCloud does, #156): then
+ * no chunk's ETag ever matches the probe's, and every one would be taken for a changed file.
+ * The first range asked again keeps its ETag while the next range gets another. A load balancer
+ * alternating labels per request changes it on the repeat instead, and keeps its ETag checked. */
+async function etagIsPerRange(
+  url: URL,
+  browser: BrowserContext | undefined,
+  first: ProbeResponse
+): Promise<boolean> {
+  const etag = headerValue(first.headers, 'etag')
+  const total = /\/(\d+)$/.exec(headerValue(first.headers, 'content-range') ?? '')?.[1]
+  if (first.statusCode !== 206 || !etag || !total || Number(total) <= 2048) return false
+  const deadline = Date.now() + PROBE_TIMEOUT_MS
+  try {
+    const again = await requestFirstBytes(url, deadline, browser, true)
+    const next = await requestFirstBytes(url, deadline, browser, true, 'bytes=1024-2047')
+    const etagOf = (r: ProbeResponse): string => normalizeEtag(headerValue(r.headers, 'etag') ?? '')
+    return (
+      again.statusCode === 206 &&
+      next.statusCode === 206 &&
+      etagOf(again) === normalizeEtag(etag) &&
+      etagOf(next) !== '' &&
+      etagOf(next) !== normalizeEtag(etag)
+    )
+  } catch {
+    return false
+  }
 }
 
 /** A link the server says is a torrent, or that is named like one. */
@@ -157,7 +189,8 @@ export async function probeUrl(rawUrl: string, browser?: BrowserContext): Promis
     }
   }
 
-  if (!response || response.statusCode === 0 || response.statusCode >= 400) {
+  // A redirect still standing here had no Location to follow: it isn't the file.
+  if (!response || response.statusCode === 0 || response.statusCode >= 300) {
     throw new Error(`Server responded with status ${response?.statusCode || 'unknown'}`)
   }
 
@@ -189,6 +222,8 @@ export async function probeUrl(rawUrl: string, browser?: BrowserContext): Promis
     if (contentLength) totalBytes = Number(contentLength)
   }
 
+  const perRange = await etagIsPerRange(current, browser, response)
+
   return {
     kind: 'http',
     requestedUrl: rawUrl,
@@ -197,7 +232,7 @@ export async function probeUrl(rawUrl: string, browser?: BrowserContext): Promis
     totalBytes,
     suggestedFileName: fileNameFromHeaders(response.headers, current),
     contentType: headerValue(response.headers, 'content-type') ?? null,
-    etag: headerValue(response.headers, 'etag') ?? null,
+    etag: perRange ? null : (headerValue(response.headers, 'etag') ?? null),
     lastModified: headerValue(response.headers, 'last-modified') ?? null
   }
 }

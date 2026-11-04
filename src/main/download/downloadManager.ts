@@ -24,6 +24,7 @@ import {
   type HttpDownloadState,
   type HttpDownloadUpdate,
   type NetworkInterfaceInfo,
+  type NetworkPreferences,
   type NetworkStatus,
   type HttpProbeResult,
   type StartDownloadRequest,
@@ -385,6 +386,7 @@ export class DownloadManager {
   private scheduleTimer?: NodeJS.Timeout
   /** Each network's addresses as last seen, by id: what tells a network that has changed. */
   private seenAddresses = new Map<string, string[]>()
+  private networkPreferences: NetworkPreferences = {}
   /** The powerSaveBlocker keeping the computer awake while a download runs (see keepAwake). */
   private awakeBlocker: number | null = null
   /** How many downloads may run at once; the rest wait, queued (see pump). */
@@ -413,6 +415,8 @@ export class DownloadManager {
   }
 
   private async configureSettings(settings: AppSettings): Promise<void> {
+    const previousPreferences = this.networkPreferences
+    this.networkPreferences = settings.networkPreferences ?? {}
     this.downloadSchedule = settings.downloadSchedule
     this.scheduleLoaded = true
     const enrollmentChanged: DownloadRuntime[] = []
@@ -433,6 +437,31 @@ export class DownloadManager {
     this.limitsChanged()
     await Promise.all(enrollmentChanged.map((runtime) => this.persistNow(runtime)))
     this.armScheduleTimer()
+
+    // If proxy settings changed, wake and reconnect the affected streams
+    const changedProxies = new Set<string>()
+    for (const [id, pref] of Object.entries(this.networkPreferences)) {
+      const prev = previousPreferences[id]?.proxy
+      const curr = pref.proxy
+      if (JSON.stringify(prev) !== JSON.stringify(curr)) {
+        changedProxies.add(id)
+      }
+    }
+    for (const [id, pref] of Object.entries(previousPreferences)) {
+      if (!this.networkPreferences[id] && pref.proxy) {
+        changedProxies.add(id)
+      }
+    }
+    if (changedProxies.size > 0) {
+      for (const runtime of this.runtimes.values()) {
+        if (runtime.state.status === 'downloading') {
+          runtime.transfer.wake(
+            (id) => changedProxies.has(id),
+            (id) => changedProxies.has(id)
+          )
+        }
+      }
+    }
   }
 
   /** A network ran out of data, or a limit changed: each download's networks are looked at
@@ -597,7 +626,8 @@ export class DownloadManager {
       reconcile: () => this.reconcile(runtime),
       failDownload: (message, discard) => this.failDownload(runtime, message, discard),
       failNetwork: (network, message) => this.failNetwork(runtime, network, message),
-      scheduleUpdate: () => this.scheduleUpdate(runtime)
+      scheduleUpdate: () => this.scheduleUpdate(runtime),
+      getProxyForInterface: (networkId) => this.networkPreferences[networkId]?.proxy
     }
     const runtime: HttpDownloadRuntime = Object.assign(target, this.runtimeFields(), {
       kind: 'http' as const,
@@ -1175,6 +1205,7 @@ export class DownloadManager {
         }
         stream.currentBlockIndex = undefined
         stream.hedge = undefined
+        stream.split = undefined
       }
     }
     if (runtime.kind === 'telegram') {
@@ -1288,7 +1319,8 @@ export class DownloadManager {
     if (!network) return 'unknown'
     const connection = new StreamConnection(() => network, {
       timeoutMs: testKnobs.stallTimeoutMs,
-      connectTimeoutMs: testKnobs.connectTimeoutMs
+      connectTimeoutMs: testKnobs.connectTimeoutMs,
+      proxy: () => this.networkPreferences[network.id]?.proxy
     })
     try {
       return await compareSamples(runtime, url, browser, connection)

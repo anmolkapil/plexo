@@ -46,6 +46,14 @@ export interface TorrentProbeResult extends ProbeResultBase {
 
 export type ProbeResult = HttpProbeResult | TorrentProbeResult
 
+/** How the check of a magnet link is going, while it's still going: `noPeersYet` once its first
+ * search came back empty and it's looking a little longer. */
+export interface MagnetCheckStatus {
+  /** The link as it was given to probeUrl. */
+  link: string
+  noPeersYet: boolean
+}
+
 export interface TorrentInfo {
   infoHash: string
   pieceLength: number
@@ -93,6 +101,9 @@ export interface HttpStreamState {
   /** True while this stream is racing another stream for `currentBlockIndex`, because that one
    * was too slow — see main/download/scheduler.ts. Whichever finishes first wins. */
   hedge?: boolean
+  /** True while this stream is fetching the back part of `currentBlockIndex`, split off from what
+   * another stream had left of it — see main/download/scheduler.ts. Each fetches its own part. */
+  split?: boolean
 }
 
 /** A live BitTorrent peer connection. A peer does not own a piece: it may contribute blocks to
@@ -386,6 +397,17 @@ export type DownloadUpdate = HttpDownloadUpdate | TorrentDownloadUpdate | Telegr
 /** User customization for one physical network, keyed by NetworkInterfaceInfo.id — lets a
  * cryptic OS device name (e.g. "feth0") get a real label, and a color distinct from its
  * kind's default. Persisted in the main process, independent of any single download. */
+export type ProxyType = 'http' | 'https' | 'socks4' | 'socks5'
+
+export interface ProxyConfig {
+  enabled: boolean
+  type: ProxyType
+  host: string
+  port: number
+  username?: string
+  password?: string
+}
+
 export type DataLimitPeriod = 'day' | 'week' | 'month'
 
 export interface NetworkPreference {
@@ -393,6 +415,8 @@ export interface NetworkPreference {
   /** One of the app's curated swatch ids (see NETWORK_COLOR_SWATCHES) — not a raw hex, so every
    * swatch is guaranteed to have a legible on-solid text color already picked out for it. */
   colorId?: string
+  /** Optional per-interface proxy configuration. */
+  proxy?: ProxyConfig
   /** Left out of the last download started, so New download starts without it too (it remembers
    * the last pick, like the folder). A click there puts it back. */
   off?: boolean

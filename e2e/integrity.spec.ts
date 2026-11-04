@@ -221,6 +221,16 @@ test.describe('servers that label the same file differently @smoke', () => {
     expect(origin.log.filter((entry) => entry.n % 2 === 0).length).toBeGreaterThan(0)
   })
 
+  test('every byte range labelled with an ETag of its own (pCloud)', async ({ plexo, serve }) => {
+    const origin = await serve({ size: SIZE, etag: '"whole"' })
+    origin.setVersionRule(({ range }) => ({
+      content: origin.content,
+      etag: range ? `"r${range.start}-${range.end ?? 'end'}"` : '"whole"'
+    }))
+    await plexo.start(origin.url(), origin.sha256, { connections: 2 })
+    await plexo.waitForStatus('completed')
+  })
+
   test('the same ETag, differing only by W/ or a -gzip suffix', async ({ plexo, serve }) => {
     const origin = await serve({ size: SIZE, etag: '"v1"' })
     const variants = ['W/"v1"', '"v1-gzip"', '"v1"']

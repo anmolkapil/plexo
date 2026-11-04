@@ -74,7 +74,10 @@ export async function createClient(
     natUpnp: false,
     natPmp: false,
     lsd: false,
-    dht: testKnobs.torrentDht,
+    dht:
+      testKnobs.torrentDht && testKnobs.torrentDhtBootstrap
+        ? { bootstrap: testKnobs.torrentDhtBootstrap }
+        : testKnobs.torrentDht,
     ...options
   })
 }

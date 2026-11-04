@@ -6,6 +6,8 @@ import {
   type AppSettings,
   type NetworkPreference,
   type NetworkPreferences,
+  type ProxyConfig,
+  type ProxyType,
   type ThemeSource
 } from '../shared/types'
 import { readJson, updateJson } from './jsonFile'
@@ -17,6 +19,38 @@ function settingsPath(): string {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
+const VALID_PROXY_TYPES: readonly ProxyType[] = ['http', 'https', 'socks4', 'socks5']
+
+function sanitizeProxyConfig(value: unknown): ProxyConfig | undefined {
+  if (!isRecord(value)) return undefined
+  const enabled = typeof value.enabled === 'boolean' ? value.enabled : false
+  const type =
+    typeof value.type === 'string' && (VALID_PROXY_TYPES as readonly string[]).includes(value.type)
+      ? (value.type as ProxyType)
+      : 'http'
+  const host = typeof value.host === 'string' ? value.host.trim() : ''
+  const port =
+    typeof value.port === 'number' &&
+    Number.isInteger(value.port) &&
+    value.port >= 1 &&
+    value.port <= 65535
+      ? value.port
+      : 8080
+  const username =
+    typeof value.username === 'string' && value.username.length > 0 ? value.username : undefined
+  const password =
+    typeof value.password === 'string' && value.password.length > 0 ? value.password : undefined
+
+  return {
+    enabled,
+    type,
+    host,
+    port,
+    ...(username ? { username } : {}),
+    ...(password ? { password } : {})
+  }
 }
 
 /** A rate or an amount of bytes: a positive whole number, or nothing. */
@@ -37,6 +71,8 @@ function sanitizeNetworkPreferences(parsed: unknown): NetworkPreferences {
     const preference: NetworkPreference = {}
     if (typeof value.customName === 'string') preference.customName = value.customName
     if (typeof value.colorId === 'string') preference.colorId = value.colorId
+    const proxy = sanitizeProxyConfig(value.proxy)
+    if (proxy) preference.proxy = proxy
     if (value.off === true) preference.off = true
     preference.speedLimit = byteCount(value.speedLimit)
     preference.dataLimit = byteCount(value.dataLimit)

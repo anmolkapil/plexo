@@ -28,6 +28,7 @@ export const IpcChannels = {
   removeDownload: 'download:remove',
   downloadUpdated: 'download:updated',
   networksChanged: 'network:changed',
+  magnetCheckStatus: 'download:magnet-check-status',
   linkReceived: 'app:link-received',
   pendingLinks: 'app:pending-links',
   resumeFromLink: 'app:resume-from-link',

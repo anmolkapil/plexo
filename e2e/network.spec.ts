@@ -1,7 +1,7 @@
 import { expect, test } from '@playwright/test'
 import { createServer, type IncomingMessage } from 'node:http'
-import type { AddressInfo } from 'node:net'
-import type { NetworkInterfaceInfo } from '../src/shared/types'
+import { connect as netConnect, type AddressInfo } from 'node:net'
+import type { NetworkInterfaceInfo, ProxyConfig } from '../src/shared/types'
 import { StreamConnection } from '../src/main/network/routes'
 
 const iface: NetworkInterfaceInfo = {
@@ -166,5 +166,190 @@ test('reconnect drops its sockets, and the next request opens a new one @smoke',
   } finally {
     connection.close()
     await new Promise<void>((resolve) => server.close(() => resolve()))
+  }
+})
+
+test('invalid proxy details fail and never fall back to direct download @smoke', async () => {
+  let directServerHit = false
+  const targetServer = createServer((_req, res) => {
+    directServerHit = true
+    res.end('direct hit')
+  })
+  await new Promise<void>((resolve) => targetServer.listen(0, '127.0.0.1', resolve))
+  const targetPort = (targetServer.address() as AddressInfo).port
+
+  // Proxy pointing to an unused port that will fail connection
+  const proxyConfig: ProxyConfig = {
+    enabled: true,
+    type: 'http',
+    host: '127.0.0.1',
+    port: 59998
+  }
+
+  const connection = new StreamConnection(() => loopback, {
+    timeoutMs: 1500,
+    proxy: () => proxyConfig
+  })
+
+  try {
+    const url = new URL(`http://127.0.0.1:${targetPort}/download`)
+    await expect(connection.request(url, {})).rejects.toThrow()
+    // CRITICAL: The direct server must NOT be contacted! Direct fallback is strictly forbidden!
+    expect(directServerHit).toBe(false)
+  } finally {
+    connection.close()
+    await new Promise<void>((resolve) => targetServer.close(() => resolve()))
+  }
+})
+
+test('proxy authentication failure fails and never falls back to direct download @smoke', async () => {
+  let targetServerHit = false
+  const targetServer = createServer((_req, res) => {
+    targetServerHit = true
+    res.end('target payload')
+  })
+  await new Promise<void>((resolve) => targetServer.listen(0, '127.0.0.1', resolve))
+  const targetPort = (targetServer.address() as AddressInfo).port
+
+  // Proxy requiring auth and rejecting wrong credentials with HTTP 407
+  const proxyServer = createServer()
+  proxyServer.on('connect', (_req, clientSocket) => {
+    clientSocket.write('HTTP/1.1 407 Proxy Authentication Required\r\n\r\n')
+    clientSocket.end()
+  })
+  await new Promise<void>((resolve) => proxyServer.listen(0, '127.0.0.1', resolve))
+  const proxyPort = (proxyServer.address() as AddressInfo).port
+
+  const proxyConfig: ProxyConfig = {
+    enabled: true,
+    type: 'http',
+    host: '127.0.0.1',
+    port: proxyPort,
+    username: 'invalidUser',
+    password: 'wrongPassword'
+  }
+
+  const connection = new StreamConnection(() => loopback, {
+    timeoutMs: 2000,
+    proxy: () => proxyConfig
+  })
+
+  try {
+    const url = new URL(`http://127.0.0.1:${targetPort}/download`)
+    await expect(connection.request(url, {})).rejects.toThrow(
+      /Proxy authentication required|HTTP 407/i
+    )
+    expect(targetServerHit).toBe(false)
+  } finally {
+    connection.close()
+    await new Promise<void>((resolve) => proxyServer.close(() => resolve()))
+    await new Promise<void>((resolve) => targetServer.close(() => resolve()))
+  }
+})
+
+test('valid HTTP proxy tunnels requests through the proxy @smoke', async () => {
+  let proxyConnectCount = 0
+  const targetServer = createServer((_req, res) => {
+    res.end('proxied data')
+  })
+  await new Promise<void>((resolve) => targetServer.listen(0, '127.0.0.1', resolve))
+  const targetPort = (targetServer.address() as AddressInfo).port
+
+  const proxyServer = createServer()
+  proxyServer.on('connect', (req, clientSocket, head) => {
+    proxyConnectCount++
+    const [tHost, tPort] = req.url!.split(':')
+    const targetSocket = netConnect(Number(tPort), tHost, () => {
+      clientSocket.write('HTTP/1.1 200 Connection Established\r\n\r\n')
+      if (head && head.length > 0) targetSocket.write(head)
+      targetSocket.pipe(clientSocket)
+      clientSocket.pipe(targetSocket)
+    })
+    targetSocket.on('error', () => clientSocket.destroy())
+    clientSocket.on('error', () => targetSocket.destroy())
+  })
+  await new Promise<void>((resolve) => proxyServer.listen(0, '127.0.0.1', resolve))
+  const proxyPort = (proxyServer.address() as AddressInfo).port
+
+  const proxyConfig: ProxyConfig = {
+    enabled: true,
+    type: 'http',
+    host: '127.0.0.1',
+    port: proxyPort
+  }
+
+  const connection = new StreamConnection(() => loopback, {
+    timeoutMs: 2000,
+    proxy: () => proxyConfig
+  })
+
+  try {
+    const url = new URL(`http://127.0.0.1:${targetPort}/download`)
+    const { res } = await connection.request(url, {})
+    expect(await body(res)).toBe('proxied data')
+    expect(proxyConnectCount).toBe(1)
+  } finally {
+    connection.close()
+    await new Promise<void>((resolve) => proxyServer.close(() => resolve()))
+    await new Promise<void>((resolve) => targetServer.close(() => resolve()))
+  }
+})
+
+test('proxy settings update dynamically on reconnect @smoke', async () => {
+  const targetServer = createServer((_req, res) => {
+    res.end('dynamic ok')
+  })
+  await new Promise<void>((resolve) => targetServer.listen(0, '127.0.0.1', resolve))
+  const targetPort = (targetServer.address() as AddressInfo).port
+
+  const proxyServer = createServer()
+  proxyServer.on('connect', (req, clientSocket, head) => {
+    const [tHost, tPort] = req.url!.split(':')
+    const targetSocket = netConnect(Number(tPort), tHost, () => {
+      clientSocket.write('HTTP/1.1 200 Connection Established\r\n\r\n')
+      if (head && head.length > 0) targetSocket.write(head)
+      targetSocket.pipe(clientSocket)
+      clientSocket.pipe(targetSocket)
+    })
+    targetSocket.on('error', () => clientSocket.destroy())
+    clientSocket.on('error', () => targetSocket.destroy())
+  })
+  await new Promise<void>((resolve) => proxyServer.listen(0, '127.0.0.1', resolve))
+  const proxyPort = (proxyServer.address() as AddressInfo).port
+
+  // Initially wrong proxy
+  let activeProxy: ProxyConfig = {
+    enabled: true,
+    type: 'http',
+    host: '127.0.0.1',
+    port: 59997
+  }
+
+  const connection = new StreamConnection(() => loopback, {
+    timeoutMs: 1500,
+    proxy: () => activeProxy
+  })
+
+  try {
+    const url = new URL(`http://127.0.0.1:${targetPort}/download`)
+    // Fails with invalid proxy
+    await expect(connection.request(url, {})).rejects.toThrow()
+
+    // Switch to working proxy and reconnect
+    activeProxy = {
+      enabled: true,
+      type: 'http',
+      host: '127.0.0.1',
+      port: proxyPort
+    }
+    connection.reconnect()
+
+    // Succeeds through working proxy
+    const { res } = await connection.request(url, {})
+    expect(await body(res)).toBe('dynamic ok')
+  } finally {
+    connection.close()
+    await new Promise<void>((resolve) => proxyServer.close(() => resolve()))
+    await new Promise<void>((resolve) => targetServer.close(() => resolve()))
   }
 })

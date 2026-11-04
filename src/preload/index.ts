@@ -5,6 +5,7 @@ import type {
   AppSettings,
   DownloadUpdate,
   InitialState,
+  MagnetCheckStatus,
   NetworkInterfaceInfo,
   TelegramAuthState,
   TelegramCredentials,
@@ -112,6 +113,12 @@ const plexoApi = {
       callback(networks)
     ipcRenderer.on(IpcChannels.networksChanged, listener)
     return () => ipcRenderer.removeListener(IpcChannels.networksChanged, listener)
+  },
+
+  onMagnetCheckStatus: (callback: (status: MagnetCheckStatus) => void): (() => void) => {
+    const listener = (_event: IpcRendererEvent, status: MagnetCheckStatus): void => callback(status)
+    ipcRenderer.on(IpcChannels.magnetCheckStatus, listener)
+    return () => ipcRenderer.removeListener(IpcChannels.magnetCheckStatus, listener)
   }
 }
 

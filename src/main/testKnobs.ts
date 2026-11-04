@@ -28,8 +28,14 @@ export const testKnobs = {
   hedgeAfterMs: positiveNumber('PLEXO_E2E_HEDGE_MS', 2_000),
   /** How long a magnet link may take to find peers that send its metadata. */
   magnetTimeoutMs: positiveNumber('PLEXO_E2E_MAGNET_MS', 3 * 60_000),
+  /** How long a magnet link only the DHT can help keeps looking once its first search finds no
+   * one (Deluge's magnet prefetch also waits 30 s). */
+  magnetGraceMs: positiveNumber('PLEXO_E2E_MAGNET_GRACE_MS', 30_000),
   /** Tests turn the DHT off, so a run never reaches out to the internet's DHT nodes. */
-  torrentDht: env['PLEXO_E2E_DHT'] !== '0'
+  torrentDht: env['PLEXO_E2E_DHT'] !== '0',
+  /** `PLEXO_E2E_DHT_BOOTSTRAP=127.0.0.1:9` starts the DHT from these nodes instead of the
+   * internet's, so a test can have a DHT that reaches no one. */
+  torrentDhtBootstrap: env['PLEXO_E2E_DHT_BOOTSTRAP']?.split(',').filter(Boolean)
 }
 
 /** `PLEXO_E2E_STREAMS=2` fixes how many streams each network runs and turns the automatic

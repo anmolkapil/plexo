@@ -33,6 +33,11 @@ export interface ChunkDownloadOptions {
   onResponse?: (info: { ttfbMs: number; reusedSocket: boolean }) => void
   /** Told of every body byte received; answers how many ms to stop reading for (see Limits). */
   throttle?: (bytes: number) => number
+  /** How many bytes of the range are still wanted, from rangeStart: it can drop while the
+   * request runs, when another stream takes over the rest of the range (see scheduler.ts). Once
+   * that many are in, the rest of the body is left unread and the request ends as if the range
+   * had ended there. */
+  wanted?: () => number
 }
 
 /** A response whose version doesn't match the download's. Nothing from it was written; the
@@ -83,6 +88,15 @@ const STALL_TIMEOUT_MS = testKnobs.stallTimeoutMs
 // redirect mid-download (e.g. a signed URL rotates), a chunk needs to be
 // able to follow it too instead of failing outright.
 const MAX_REDIRECTS = 5
+
+// A socket hands over what it has as it arrives — often 16 KiB at a time — and each write is a
+// trip through libuv's thread pool and back to the main thread. Body chunks are gathered into
+// one write (one writev) of up to WRITE_COALESCE_BYTES, and held no longer than
+// WRITE_COALESCE_MS, so a slow connection's bytes still reach the disk (and count) promptly.
+// A batch in flight plus the next one gathering stay under half the writer's buffer
+// (downloadFile.ts): a full writer still means the disk is behind (see DiskWatch), not batching.
+const WRITE_COALESCE_BYTES = 128 * 1024
+const WRITE_COALESCE_MS = 20
 
 interface ServedRange {
   start: number
@@ -143,7 +157,8 @@ export function downloadChunk(options: ChunkDownloadOptions): Promise<void> {
     acceptedVersions,
     onResponse,
     throttle,
-    onWriteWait
+    onWriteWait,
+    wanted
   } = options
 
   return new Promise((resolve, reject) => {
@@ -159,6 +174,7 @@ export function downloadChunk(options: ChunkDownloadOptions): Promise<void> {
     let currentReq: ClientRequest | null = null
     let currentFileStream: Writable | null = null
     let stallWatchdog: NodeJS.Timeout | null = null
+    let coalesceTimer: NodeJS.Timeout | null = null
 
     const clearWatchdog = (): void => {
       if (stallWatchdog) {
@@ -178,6 +194,7 @@ export function downloadChunk(options: ChunkDownloadOptions): Promise<void> {
       if (settled) return
       settled = true
       clearWatchdog()
+      if (coalesceTimer) clearTimeout(coalesceTimer)
       signal.removeEventListener('abort', onAbort)
       fn()
     }
@@ -223,8 +240,12 @@ export function downloadChunk(options: ChunkDownloadOptions): Promise<void> {
             return
           }
           currentReq = req
-          // The connection dropping mid-answer; one the server answered wrongly fails below.
-          const dropped = (error: Error): void => fail(asConnectionError(error))
+          // The connection dropping mid-answer; one the server answered wrongly fails below. Once
+          // the body has ended — or been cut short on purpose — only the writer can still fail.
+          let bodyEnded = false
+          const dropped = (error: Error): void => {
+            if (!bodyEnded) fail(asConnectionError(error))
+          }
           req.on('error', dropped)
           const status = res.statusCode ?? 0
 
@@ -305,7 +326,6 @@ export function downloadChunk(options: ChunkDownloadOptions): Promise<void> {
           // once neither holds it. Neither says anything about the network: the watchdog stops
           // until then.
           let holds = 0
-          let bodyEnded = false
           const hold = (): void => {
             if (holds++ === 0) {
               clearWatchdog()
@@ -318,29 +338,65 @@ export function downloadChunk(options: ChunkDownloadOptions): Promise<void> {
             res.resume()
           }
 
+          // Corked between flushes; see WRITE_COALESCE_BYTES. end() uncorks, so the end and
+          // fail paths write out what is gathered like any other buffered bytes.
+          let corked = false
+          let gathered = 0
+          const flushWrites = (): void => {
+            if (!corked) return
+            corked = false
+            gathered = 0
+            fileStream.uncork()
+          }
+          const gather = (): void => {
+            if (corked) return
+            corked = true
+            fileStream.cork()
+            // One timer, re-armed per batch; firing with nothing gathered does nothing.
+            if (coalesceTimer) coalesceTimer.refresh()
+            else coalesceTimer = setTimeout(() => flushWrites(), WRITE_COALESCE_MS)
+          }
+
+          const endBody = (): void => {
+            bodyEnded = true
+            clearWatchdog()
+            flushWrites()
+            // Held until its last bytes are written; closing the file isn't the disk falling
+            // behind.
+            onWriteWait?.(true)
+            fileStream.once('finish', () => onWriteWait?.(false))
+            // Windows cannot reliably reopen/remove a file until its handle closes.
+            fileStream.once('close', () => finish(resolve))
+            fileStream.end()
+          }
+
           // Written by hand rather than piped so an overlong body can be cut off
           // at the range boundary: an overlong response could overwrite the next block.
           res.on('data', (chunk: Buffer) => {
-            if (settled) return
+            if (settled || bodyEnded) return
             resetWatchdog()
 
             const remaining =
               expectedBytes === null ? chunk.length : expectedBytes - bytesDownloaded
-            const usable =
-              chunk.length <= remaining ? chunk : chunk.subarray(0, Math.max(remaining, 0))
+            // Bytes past what is still wanted aren't an overlong body: they are left unread.
+            const keep = Math.min(remaining, (wanted?.() ?? Infinity) - bytesDownloaded)
+            const usable = chunk.length <= keep ? chunk : chunk.subarray(0, Math.max(keep, 0))
 
             if (usable.length > 0) {
               bytesDownloaded += usable.length
               const progress = bytesDownloaded
               onNetworkProgress(progress)
-              if (
-                // Every write's callback comes before the writer closes, and this only
-                // settles once it has, stopped or not.
-                !fileStream.write(usable, (error) => {
-                  if (error) fail(error)
-                  else onProgress(progress)
-                })
-              ) {
+              gather()
+              // Every write's callback comes before the writer closes, and this only
+              // settles once it has, stopped or not.
+              const accepted = fileStream.write(usable, (error) => {
+                if (error) fail(error)
+                else onProgress(progress)
+              })
+              gathered += usable.length
+              // A full writer only drains once what it holds is let go.
+              if (!accepted || gathered >= WRITE_COALESCE_BYTES) flushWrites()
+              if (!accepted) {
                 onWriteWait?.(true)
                 hold()
                 fileStream.once('drain', () => {
@@ -350,18 +406,26 @@ export function downloadChunk(options: ChunkDownloadOptions): Promise<void> {
               }
               const wait = throttle?.(usable.length) ?? 0
               if (wait > 0) {
+                flushWrites()
                 hold()
                 setTimeout(release, wait)
               }
             }
 
-            if (usable.length < chunk.length) {
+            const rangeLeft = expectedBytes === null ? Infinity : expectedBytes - bytesDownloaded
+            if (wanted && rangeLeft > 0 && bytesDownloaded >= wanted()) {
+              // The rest of the range is another stream's now. The socket still has it coming,
+              // so it can't carry another request: it goes, and the writer finishes as at the
+              // end of a body.
+              endBody()
+              currentReq?.destroy()
+            } else if (usable.length < chunk.length) {
               fail(new Error('Server sent more data than the requested range'))
             }
           })
 
           res.on('end', () => {
-            if (settled) return
+            if (settled || bodyEnded) return
             clearWatchdog()
             if (expectedBytes !== null && bytesDownloaded !== expectedBytes) {
               fail(
@@ -371,14 +435,7 @@ export function downloadChunk(options: ChunkDownloadOptions): Promise<void> {
               )
               return
             }
-            bodyEnded = true
-            // Held until its last bytes are written; closing the file isn't the disk falling
-            // behind.
-            onWriteWait?.(true)
-            fileStream.once('finish', () => onWriteWait?.(false))
-            // Windows cannot reliably reopen/remove a file until its handle closes.
-            fileStream.once('close', () => finish(resolve))
-            fileStream.end()
+            endBody()
           })
         })
         .catch(fail)

@@ -2,7 +2,7 @@ import { open } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type WebTorrent from 'webtorrent'
-import type { ProbeResult } from '../../../shared/types'
+import type { MagnetCheckStatus, ProbeResult } from '../../../shared/types'
 import { testKnobs } from '../../testKnobs'
 import { createClient } from './engine'
 import { safeTorrentPaths } from './paths'
@@ -12,6 +12,9 @@ const MAX_TORRENT_FILE_BYTES = 10 * 1024 * 1024
 const TOO_LARGE = 'Plexo supports .torrent files up to 10 MB.'
 const V2_ONLY = 'This torrent uses BitTorrent v2 only, which Plexo doesn’t support yet'
 const NO_PEERS = 'No peers responded to this magnet link. Try again later or open a .torrent file.'
+const NO_ONE_FOUND =
+  'Couldn’t find anyone sharing this magnet link. A VPN or firewall may be blocking BitTorrent; ' +
+  'otherwise try again later or open a .torrent file.'
 
 /** The .torrent of each torrent probed lately, by info hash: what a download of it starts from,
  * so the window never has to hold or send it. */
@@ -93,12 +96,26 @@ let probeClient: Promise<WebTorrent> | null = null
 /** The magnet link being looked up. A newer one replaces it: the window only shows the latest. */
 let current: { infoHash: string; metadata: Promise<Uint8Array>; cancel: () => void } | null = null
 
+const statusListeners = new Set<(status: MagnetCheckStatus) => void>()
+
+/** Hears how each magnet link's check is going, for the window to show while it waits. */
+export function onMagnetCheckStatus(listener: (status: MagnetCheckStatus) => void): () => void {
+  statusListeners.add(listener)
+  return () => statusListeners.delete(listener)
+}
+
+function tellStatus(status: MagnetCheckStatus): void {
+  for (const listener of statusListeners) listener(status)
+}
+
 /** A magnet link's .torrent, from whichever of its peers answers first. */
 export async function fetchMagnetMetadata(magnet: string): Promise<Uint8Array> {
   const { default: parseTorrent } = await import('parse-torrent')
-  const { infoHash } = await parseTorrent(magnet).catch(() => {
+  const { infoHash, announce, peerAddresses, xs } = await parseTorrent(magnet).catch(() => {
     throw new Error('This magnet link isn’t valid')
   })
+  // Only the DHT can help a link that names no tracker, no peer and no .torrent to fetch (xs).
+  const dhtOnly = !announce?.length && !peerAddresses?.length && !xs?.length
   if (current?.infoHash === infoHash) return current.metadata
   current?.cancel()
 
@@ -111,16 +128,57 @@ export async function fetchMagnetMetadata(magnet: string): Promise<Uint8Array> {
     // Deselected: only the metadata is wanted, none of the files.
     const torrent = client.add(magnet, { path: join(tmpdir(), 'plexo-magnet'), deselect: true })
     let done = false
+    // Set while it keeps looking after a first search that found no one.
+    let lookingLonger: { giveUp: NodeJS.Timeout; searchAgain: NodeJS.Timeout } | null = null
+    let stopSearch = (): void => {}
+    const stopLookingLonger = (): void => {
+      if (!lookingLonger) return
+      clearTimeout(lookingLonger.giveUp)
+      clearTimeout(lookingLonger.searchAgain)
+      lookingLonger = null
+    }
     const finish = (error: Error | null, torrentFile?: Uint8Array): void => {
       if (done) return
       done = true
       clearTimeout(timer)
+      stopLookingLonger()
+      stopSearch()
       if (current === lookup) current = null
       torrent.destroy({ destroyStore: true })
       if (error) reject(error)
       else resolve(torrentFile!)
     }
     const timer = setTimeout(() => finish(new Error(NO_PEERS)), testKnobs.magnetTimeoutMs)
+
+    // A link only the DHT can help: when its first search comes back empty, its next is 15
+    // minutes off, so waiting out the timeout would only delay the same answer. It looks a little
+    // longer instead: the first search after launch can miss peers while the DHT's table is still
+    // filling, so it searches once more, and a peer that found this one through its announce can
+    // still connect. Anyone turning up puts it back on the usual wait.
+    let found = 0
+    const foundSomeone = (): void => {
+      found++
+      if (!lookingLonger) return
+      stopLookingLonger()
+      tellStatus({ link: magnet, noPeersYet: false })
+    }
+    torrent.on('peer', foundSomeone)
+    torrent.on('wire', foundSomeone)
+    const firstSearchDone = (): void => {
+      if (!dhtOnly || found > 0 || done) return
+      const dht = client.dht
+      // No DHT: nothing at all can find a peer for it.
+      if (!dht) return finish(new Error(NO_ONE_FOUND))
+      tellStatus({ link: magnet, noPeersYet: true })
+      lookingLonger = {
+        giveUp: setTimeout(() => finish(new Error(NO_ONE_FOUND)), testKnobs.magnetGraceMs),
+        searchAgain: setTimeout(() => {
+          stopSearch = dht.lookup(infoHash)
+        }, testKnobs.magnetGraceMs / 3)
+      }
+    }
+    if (client.dht) torrent.once('dhtAnnounce', firstSearchDone)
+    else setImmediate(firstSearchDone)
     torrent.once('metadata', () => finish(null, torrent.torrentFile))
     torrent.once('error', (error: Error) => finish(error))
     lookup.cancel = () => finish(new Error('Replaced by a newer link'))
