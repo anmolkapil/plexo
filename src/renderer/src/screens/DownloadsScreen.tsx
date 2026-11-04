@@ -1,7 +1,7 @@
 import type { DownloadState, FinishedDownload } from '@shared/types'
-import { ChevronRight, Plus, X } from 'lucide-react'
+import { ChevronRight, Plus, Search, X } from 'lucide-react'
 import { cn } from 'cn'
-import { Fragment, memo, useCallback, useEffect, useState } from 'react'
+import { Fragment, memo, useCallback, useEffect, useRef, useState } from 'react'
 import { DownloadContextMenu } from '../components/DownloadContextMenu'
 import { useDownloadActions, useDownloadActionsState } from '../components/downloadActionsContext'
 import { ACTION_META, toolbarLabel } from '../components/downloadActionMeta'
@@ -12,10 +12,17 @@ import { LimitsDialog } from '../components/LimitsDialog'
 import { ScheduleIndicator } from '../components/ScheduleIndicator'
 import { networkStatusText } from '../components/NetworkRow'
 import { scheduleMessage, scheduleWindow } from '@shared/downloadSchedule'
+import { matchesSearch } from '@shared/downloadSearch'
 import { NetworksMenu } from '../components/NetworksMenu'
 import { TorrentBadge } from '../components/TorrentBadge'
 import { Button } from '../components/ui/button'
 import { Checkbox } from '../components/ui/checkbox'
+import {
+  InputGroup,
+  InputGroupAddon,
+  InputGroupButton,
+  InputGroupInput
+} from '../components/ui/input-group'
 import { Tooltip, TooltipContent, TooltipTrigger } from '../components/ui/tooltip'
 import { useNetworkVisuals, type ResolveNetworkVisual } from '../hooks/useNetworkVisuals'
 import { useAppStore, type DownloadFilter } from '../store/useAppStore'
@@ -98,6 +105,10 @@ export function DownloadsScreen(): React.JSX.Element {
   const [limitsOpen, setLimitsOpen] = useState(false)
   const [showSchedule, setShowSchedule] = useState(false)
   const [limitsPage, setLimitsPage] = useState<string | null>(null)
+  const [searchQuery, setSearchQuery] = useState('')
+  const searchInputRef = useRef<HTMLInputElement>(null)
+  const isMac = window.plexo.platform === 'darwin'
+  const isSearching = searchQuery.trim().length > 0
   const [now, setNow] = useState(() => Date.now())
 
   useEffect(() => {
@@ -117,9 +128,16 @@ export function DownloadsScreen(): React.JSX.Element {
     failed: 0
   }
   for (const item of allItems) counts[filterOf(item)]++
-  const groups = allGroups.filter(
-    (group) => filter === 'all' || filterOf(group.items[0]) === filter
-  )
+  const groups = allGroups
+    .map((group) => ({
+      ...group,
+      items: isSearching
+        ? group.items.filter((item) => matchesSearch(item, searchQuery))
+        : group.items
+    }))
+    .filter(
+      (group) => (filter === 'all' || filterOf(group.items[0]) === filter) && group.items.length > 0
+    )
   const items = groups.flatMap((group) => group.items)
   // Only what's still listed counts: one that finished or went is no longer selected.
   const chosen = items.filter((item) => selected.has(item.id))
@@ -144,6 +162,20 @@ export function DownloadsScreen(): React.JSX.Element {
   // the selected off the list (with Cmd/Ctrl, moves their files to the Trash), each asking first.
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent): void => {
+      const command = isMac ? event.metaKey : event.ctrlKey
+      if (command && event.key.toLowerCase() === 'f') {
+        event.preventDefault()
+        searchInputRef.current?.focus()
+        searchInputRef.current?.select()
+        return
+      }
+      if (event.key === 'Escape' && searchQuery) {
+        event.preventDefault()
+        setSearchQuery('')
+        searchInputRef.current?.blur()
+        return
+      }
+
       const target = event.target
       if (
         event.defaultPrevented ||
@@ -152,7 +184,7 @@ export function DownloadsScreen(): React.JSX.Element {
         document.querySelector('[role="dialog"], [role="alertdialog"], [role="menu"]')
       )
         return
-      const command = window.plexo.platform === 'darwin' ? event.metaKey : event.ctrlKey
+
       if (event.key === 'Escape') setSelected(new Set())
       else if (command && event.key.toLowerCase() === 'a') {
         event.preventDefault()
@@ -169,7 +201,7 @@ export function DownloadsScreen(): React.JSX.Element {
     }
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
-  }, [items, chosen, perform])
+  }, [items, chosen, perform, isMac, searchQuery])
 
   // What the toolbar offers: the two actions most needed for what's selected as buttons, and
   // the rest of what the menu does for the selection behind More, so six never need more room.
@@ -200,6 +232,36 @@ export function DownloadsScreen(): React.JSX.Element {
             </div>
           )}
           <div className="flex-1" />
+          <div className="relative w-44 sm:w-56">
+            <InputGroup className="h-7 w-full border-border/70 bg-secondary/30">
+              <InputGroupAddon align="inline-start">
+                <Search className="size-3.5 text-muted-foreground" />
+              </InputGroupAddon>
+              <InputGroupInput
+                ref={searchInputRef}
+                type="text"
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                placeholder={`Search downloads (${isMac ? '⌘F' : 'Ctrl+F'})`}
+                className="h-7 text-xs placeholder:text-muted-foreground/70"
+                aria-label="Search downloads"
+              />
+              {searchQuery && (
+                <InputGroupAddon align="inline-end">
+                  <InputGroupButton
+                    size="icon-xs"
+                    onClick={() => {
+                      setSearchQuery('')
+                      searchInputRef.current?.focus()
+                    }}
+                    aria-label="Clear search"
+                  >
+                    <X className="size-3" />
+                  </InputGroupButton>
+                </InputGroupAddon>
+              )}
+            </InputGroup>
+          </div>
           <ScheduleIndicator onClick={openSchedule} />
           <NetworksMenu
             onOpenLimits={(page) => {
@@ -271,7 +333,17 @@ export function DownloadsScreen(): React.JSX.Element {
 
       <div className="min-h-0 flex-1 overflow-y-auto px-5 pb-5">
         {groups.length === 0 &&
-          (filter === 'all' ? (
+          (isSearching ? (
+            <div role="status" className="flex flex-col items-center gap-2 px-5 py-16 text-center">
+              <Search className="size-8 stroke-[1.5] text-muted-foreground opacity-40" />
+              <p className="text-[16px] font-semibold">
+                No downloads matching &ldquo;{searchQuery.trim()}&rdquo;
+              </p>
+              <Button type="button" variant="secondary" onClick={() => setSearchQuery('')}>
+                Clear search
+              </Button>
+            </div>
+          ) : filter === 'all' ? (
             <EmptyState />
           ) : (
             <div role="status" className="flex flex-col items-center gap-2 px-5 py-16 text-center">
