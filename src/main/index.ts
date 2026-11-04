@@ -137,8 +137,15 @@ function createWindow(): void {
     if (!testKnobs.hideWindow) mainWindow?.show()
   })
 
+  mainWindow.on('session-end', () => {
+    isQuitting = true
+  })
+  mainWindow.on('query-session-end', () => {
+    isQuitting = true
+  })
+
   mainWindow.on('close', (event) => {
-    if (isQuitting || testKnobs.userDataDir) return
+    if (isQuitting || process.platform === 'darwin') return
 
     const activeCount = downloadManager?.activeDownloadCount() ?? 0
     const runsForBrowser = keepsRunningForBrowser()
@@ -146,18 +153,13 @@ function createWindow(): void {
     if (activeCount > 0 || runsForBrowser) {
       event.preventDefault()
       mainWindow?.hide()
-      const currentTray = ensureTray()
-      if (activeCount > 0) {
-        currentTray.setToolTip(
-          `Plexo - ${activeCount} active download${activeCount > 1 ? 's' : ''}`
-        )
-      }
+      ensureTray()
       if (!hasShownTrayNotification && activeCount > 0) {
         hasShownTrayNotification = true
         if (Notification.isSupported()) {
           new Notification({
             title: 'Plexo is still downloading',
-            body: 'Downloads will continue in the background. Right-click the tray icon to quit.'
+            body: 'Downloads will continue in the background. Open Plexo again, or use its tray icon, to quit.'
           }).show()
         }
       }
@@ -240,7 +242,13 @@ app.whenReady().then(async () => {
   startUpdater(() => mainWindow, (await loadSettings()).autoUpdate !== false)
 
   app.on('activate', function () {
-    if (BrowserWindow.getAllWindows().length === 0) createWindow()
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      if (mainWindow.isMinimized()) mainWindow.restore()
+      mainWindow.show()
+      mainWindow.focus()
+    } else if (BrowserWindow.getAllWindows().length === 0) {
+      createWindow()
+    }
   })
 })
 
