@@ -2105,15 +2105,20 @@ export class DownloadManager {
     try {
       const notification = new Notification({ title, body })
       notification.on('click', () => {
-        if (downloadId) {
-          void this.reveal(downloadId)
-        } else {
+        const showWindow = (): void => {
           const window = this.getWindow()
           if (window && !window.isDestroyed()) {
             if (window.isMinimized()) window.restore()
             window.show()
             window.focus()
           }
+        }
+        if (downloadId) {
+          void this.reveal(downloadId).then((revealed) => {
+            if (!revealed) showWindow()
+          })
+        } else {
+          showWindow()
         }
       })
       notification.show()
