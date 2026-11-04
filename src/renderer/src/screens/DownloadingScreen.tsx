@@ -383,10 +383,19 @@ export const DownloadingScreen = memo(function DownloadingScreen({
                     />
                     <TooltipContent>
                       The news server doesn’t have{' '}
-                      {missingArticles === 1 ? 'this article' : 'these articles'}. Once the download
-                      is done, repair its files with their .par2 files.
+                      {missingArticles === 1 ? 'this article' : 'these articles'}.{' '}
+                      {download.kind === 'nzb' &&
+                        download.backupError &&
+                        `${download.backupError} `}
+                      Once the download is done, repair its files with their .par2 files.
                     </TooltipContent>
                   </Tooltip>
+                </>
+              )}
+              {download.kind === 'nzb' && !!download.fromBackup && (
+                <>
+                  <Dot />
+                  <span>{download.fromBackup} from backup</span>
                 </>
               )}
               {/* Several files: they open below. One is the name above. */}

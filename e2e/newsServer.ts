@@ -150,7 +150,8 @@ export class NewsServer {
   private readonly byId = new Map<string, Article>()
   private readonly requests = new Map<string, number>()
   private readonly sockets = new Set<Socket>()
-  private connections = 0
+  /** Connections it has taken, turned away or not. */
+  connections = 0
   readonly served: ServedArticle[] = []
   /** Connections turned away for going over maxConnections. */
   refused = 0

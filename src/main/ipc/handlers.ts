@@ -24,6 +24,7 @@ import { probeUrl } from '../download/probe'
 import { testUsenetServer } from '../download/nzb/nntp'
 import {
   loadUsenetServer,
+  saveUsenetBackup,
   saveUsenetServer,
   serverFromInput,
   viewOf
@@ -270,8 +271,9 @@ export function registerIpcHandlers(getWindow: () => BrowserWindow | null): Down
     if (!server.enabled) manager.usenetTurnedOff()
     return server
   })
-  handle('testUsenetServer', async (_event, input) =>
-    testUsenetServer(await serverFromInput(input))
+  handle('saveUsenetBackup', async (_event, input) => saveUsenetBackup(input))
+  handle('testUsenetServer', async (_event, input, backup) =>
+    testUsenetServer(await serverFromInput(input, backup === true))
   )
 
   handle('updateState', () => updateState())

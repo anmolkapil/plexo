@@ -38,5 +38,6 @@ export const IpcChannels = {
   showUpdateMenu: 'update:show-menu',
   usenetServer: 'usenet:server',
   saveUsenetServer: 'usenet:save-server',
+  saveUsenetBackup: 'usenet:save-backup',
   testUsenetServer: 'usenet:test-server'
 } as const

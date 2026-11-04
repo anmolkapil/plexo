@@ -387,6 +387,117 @@ test.describe('NZB downloads', () => {
   })
 })
 
+async function useBackup(
+  plexo: PlexoApp,
+  server: NewsServer,
+  settings: Partial<UsenetServerInput> = {}
+): Promise<void> {
+  await plexo.api.saveUsenetBackup({
+    host: '127.0.0.1',
+    port: server.port,
+    tls: false,
+    username: '',
+    password: '',
+    connections: 2,
+    ...settings
+  })
+}
+
+/** The articles a server was asked for, by message ID. */
+const askedFor = (server: NewsServer): Set<string> =>
+  new Set(server.served.map((article) => article.messageId))
+
+test.describe('Backup news server', () => {
+  const lacking = (article: { file: number; number: number }): boolean =>
+    article.file === 0 && (article.number === 3 || article.number === 7)
+
+  test('articles the news server doesn’t have come from the backup server', async ({ plexo }) => {
+    const main = await newsServer({ missing: lacking })
+    const backup = await newsServer()
+    await useServer(plexo, main)
+    await useBackup(plexo, backup)
+
+    // Nothing missing in the end: the backup server filled the gaps.
+    await plexo.start(
+      await nzbOnDisk(main),
+      main.expectedSha(() => false)
+    )
+    const done = await plexo.waitForNzbStatus('completed', 30_000)
+    expect(done.missingBytes).toBe(0)
+    expect(done.fromBackup).toBe(2)
+    expect(done.backupError).toBeUndefined()
+    // Only what the news server lacked was asked of the backup.
+    expect(backup.served.every((article) => article.fault === 'ok')).toBe(true)
+    expect(askedFor(backup).size).toBe(2)
+  })
+
+  test('an article neither server has counts as missing', async ({ plexo }) => {
+    const main = await newsServer({ missing: lacking })
+    const backup = await newsServer({
+      missing: (article) => article.file === 0 && article.number === 7
+    })
+    await useServer(plexo, main)
+    await useBackup(plexo, backup)
+
+    const expected = main.expectedSha((article) => article.file === 0 && article.number === 7)
+    await plexo.start(await nzbOnDisk(main), expected)
+    const done = await plexo.waitForNzbStatus('completed', 30_000)
+    expect(done.nzbFiles[0].missing).toBe(1)
+    expect(done.fromBackup).toBe(1)
+    expect(done.blocks.filter((block) => block.status === 'missing')).toHaveLength(1)
+  })
+
+  test('the backup server isn’t connected to while nothing is missing', async ({ plexo }) => {
+    const main = await newsServer()
+    const backup = await newsServer()
+    await useServer(plexo, main)
+    await useBackup(plexo, backup)
+
+    await plexo.start(await nzbOnDisk(main), main.expectedSha())
+    const done = await plexo.waitForNzbStatus('completed', 30_000)
+    expect(done.fromBackup).toBeUndefined()
+    expect(backup.connections).toBe(0)
+  })
+
+  test('a backup server out of reach leaves the articles missing, and the download finishes', async ({
+    plexo
+  }) => {
+    const main = await newsServer({ missing: lacking })
+    const backup = await newsServer()
+    const { port } = backup
+    await backup.stop()
+    servers = servers.filter((server) => server !== backup)
+    await useServer(plexo, main)
+    await useBackup(plexo, backup, { port })
+
+    await plexo.start(await nzbOnDisk(main), main.expectedSha())
+    const done = await plexo.waitForNzbStatus('completed', 30_000)
+    expect(done.nzbFiles[0].missing).toBe(2)
+    expect(done.backupError).toMatch(/backup server couldn’t be reached/)
+  })
+
+  test('a backup server that turns the sign-in down leaves the articles missing', async ({
+    plexo
+  }) => {
+    const main = await newsServer({ missing: lacking })
+    const backup = await newsServer({ username: 'reader', password: 'right' })
+    await useServer(plexo, main)
+    await useBackup(plexo, backup, { username: 'reader', password: 'right' })
+    // Tested with the backup's saved password, not the news server's.
+    const input = { host: '127.0.0.1', port: backup.port, tls: false, username: 'reader' }
+    await plexo.api.testUsenetServer({ ...input, connections: 2 }, true)
+    await expect(plexo.api.testUsenetServer({ ...input, connections: 2 })).rejects.toThrow(
+      /username or password/
+    )
+
+    await useBackup(plexo, backup, { username: 'reader', password: 'wrong' })
+    await plexo.start(await nzbOnDisk(main), main.expectedSha())
+    const done = await plexo.waitForNzbStatus('completed', 30_000)
+    expect(done.nzbFiles[0].missing).toBe(2)
+    expect(done.backupError).toMatch(/didn’t accept the username or password/)
+  })
+})
+
 /** Speed & data limits, on its Usenet page. */
 async function openUsenetPage(plexo: PlexoApp): Promise<Locator> {
   await plexo.page.getByRole('button', { name: /^\d+ networks?/ }).click()
@@ -511,6 +622,72 @@ test.describe('Usenet settings', () => {
     })
     await plexo.start(await nzbOnDisk(server), server.expectedSha())
     await plexo.waitForNzbStatus('completed', 30_000)
+  })
+})
+
+test.describe('Backup server settings', () => {
+  test('set up from the Usenet page, kept on restart, and an older file still loads', async ({
+    plexo
+  }) => {
+    const main = await newsServer()
+    const backup = await newsServer()
+    const file = join(plexo.dirs.userData, 'usenet-server.json')
+    // Saved before there was a backup server.
+    await writeFile(
+      file,
+      JSON.stringify({ host: '127.0.0.1', port: main.port, tls: false, connections: 3 })
+    )
+    await plexo.relaunch()
+    expect(await plexo.api.usenetServer()).toMatchObject({ host: '127.0.0.1', connections: 3 })
+    expect((await plexo.api.usenetServer())?.backup).toBeUndefined()
+
+    const dialog = await openUsenetPage(plexo)
+    await dialog.getByRole('button', { name: 'Set up backup server' }).click()
+    const form = plexo.page.getByRole('dialog', { name: 'Backup server' })
+    await form.getByLabel('Server').fill('127.0.0.1')
+    await form.getByRole('switch').click()
+    await form.getByLabel('Port').fill(String(backup.port))
+    await form.getByLabel('Connections').fill('2')
+    await form.getByRole('button', { name: 'Test' }).click()
+    await expect(form.getByText('Connected and signed in.')).toBeVisible()
+    await form.getByRole('button', { name: 'Save' }).click()
+    await expect(form).toBeHidden()
+    await expect(dialog.getByText(`127.0.0.1:${backup.port}`)).toBeVisible()
+
+    // Saving the news server from its own form keeps the backup.
+    await dialog.getByRole('button', { name: 'Change server' }).click()
+    const mainForm = plexo.page.getByRole('dialog', { name: 'Usenet server' })
+    await mainForm.getByLabel('Connections').fill('5')
+    await mainForm.getByRole('button', { name: 'Save' }).click()
+    await expect(mainForm).toBeHidden()
+    await dialog.getByRole('button', { name: 'Cancel' }).click()
+
+    await plexo.relaunch()
+    expect(await plexo.api.usenetServer()).toMatchObject({
+      enabled: true,
+      port: main.port,
+      connections: 5,
+      backup: { host: '127.0.0.1', port: backup.port, tls: false, connections: 2 }
+    })
+  })
+
+  test('the backup server is removed from the Usenet page', async ({ plexo }) => {
+    const main = await newsServer()
+    const backup = await newsServer()
+    await useServer(plexo, main)
+    await useBackup(plexo, backup)
+
+    const dialog = await openUsenetPage(plexo)
+    await expect(dialog.getByText(`127.0.0.1:${backup.port}`)).toBeVisible()
+    await dialog.getByRole('button', { name: 'Remove', exact: true }).click()
+    await plexo.page
+      .getByRole('alertdialog', { name: 'Remove the backup server?' })
+      .getByRole('button', { name: 'Remove' })
+      .click()
+    await expect(dialog.getByText(`127.0.0.1:${backup.port}`)).toBeHidden()
+    await expect(dialog.getByRole('button', { name: 'Set up backup server' })).toBeVisible()
+    expect((await plexo.api.usenetServer())?.backup).toBeUndefined()
+    expect(await plexo.api.usenetServer()).toMatchObject({ port: main.port })
   })
 })
 
