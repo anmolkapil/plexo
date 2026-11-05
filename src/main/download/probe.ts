@@ -224,8 +224,7 @@ export async function probeUrl(rawUrl: string, browser?: BrowserContext): Promis
 
   const suggestedFileName = fileNameFromHeaders(response.headers, current)
   // Off, an NZB is a file like any other: for another newsreader to take.
-  const usenet = await usenetEnabled()
-  if (usenet && isNzbLink(response.headers, current, suggestedFileName)) {
+  if (isNzbLink(response.headers, current, suggestedFileName) && (await usenetEnabled())) {
     const finalUrl = current.toString()
     const nzbFile = await downloadNzbFile(
       finalUrl,
@@ -242,7 +241,7 @@ export async function probeUrl(rawUrl: string, browser?: BrowserContext): Promis
     const start = await sniffXml(finalUrl, PROBE_TIMEOUT_MS, headers)
     const refusal = indexerError(start)
     if (refusal) throw new Error(refusal)
-    if (usenet && /<(?:[\w-]+:)?nzb\b/i.test(start)) {
+    if (/<(?:[\w-]+:)?nzb\b/i.test(start) && (await usenetEnabled())) {
       const nzbFile = await downloadNzbFile(finalUrl, PROBE_TIMEOUT_MS, headers)
       return describeNzb(nzbFile, finalUrl, suggestedFileName)
     }

@@ -81,7 +81,8 @@ export function viewOf(server: UsenetServerConfig): UsenetServer {
 
 /** Whether NZBs download from Usenet: on until switched off, which takes a server set up. */
 export async function usenetEnabled(): Promise<boolean> {
-  return (await loadUsenetServer())?.enabled !== false
+  // Only the switch: no password to unseal for it.
+  return checkedServer(await readJson(serverPath()).catch(() => undefined))?.enabled !== false
 }
 
 /** The server as `input` sets it: the password and switch it gives, or the ones saved when it
