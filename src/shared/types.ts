@@ -678,6 +678,9 @@ export interface UsenetServer {
   /** Its password is kept only until Plexo quits: this computer offers no keychain to seal it
    * with (see main/download/nzb/usenetServer.ts). */
   passwordInMemory?: boolean
+  /** Its password is saved, but sealed by a keychain this session can't open (a profile from
+   * another computer, say): kept, but it has to be entered again to sign in. */
+  passwordUnread?: boolean
   /** A second server, for the articles this one doesn't have; unset when there's none. */
   backup?: Omit<UsenetServer, 'enabled' | 'backup'>
 }

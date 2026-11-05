@@ -6,7 +6,7 @@ import { readJson, updateJson } from '../../jsonFile'
 /** A news server, with what only the main process may see: its password. */
 export type NewsServerConfig = Omit<
   UsenetServer,
-  'enabled' | 'backup' | 'hasPassword' | 'passwordInMemory'
+  'enabled' | 'backup' | 'hasPassword' | 'passwordInMemory' | 'passwordUnread'
 > & {
   password: string
   /** Its password as sealed, when this session can't unseal it (no keyring yet, another
@@ -105,6 +105,7 @@ export function viewOf(server: UsenetServerConfig): UsenetServer {
     ...rest,
     // One this session can't unseal is still saved: left blank, it stays.
     hasPassword: password !== '' || unread !== undefined,
+    ...(password === '' && unread !== undefined && { passwordUnread: true }),
     ...(!canSeal() && { passwordInMemory: true })
   })
   const { enabled, backup, ...main } = server
@@ -119,17 +120,18 @@ export async function usenetEnabled(): Promise<boolean> {
 }
 
 /** The server (or the backup) as `input` sets it: the password it gives, or, when it gives none,
- * the one saved for the same host and username. */
+ * the one saved for the same host and username. `saved` is the file as already loaded. */
 export async function serverFromInput(
   input: UsenetServerInput,
-  backup = false
+  backup = false,
+  saved?: UsenetServerConfig | null
 ): Promise<NewsServerConfig> {
   const server = checkedServer(input)
   if (!server) throw new Error('Enter the news server’s address')
   if (input.password !== undefined && /[\r\n]/.test(input.password)) {
     throw new Error('A password can’t span lines')
   }
-  const saved = await loadUsenetServer()
+  if (saved === undefined) saved = await loadUsenetServer()
   const kept = backup ? saved?.backup : saved
   // A password never goes to another server or account. Port and SSL may change: the same
   // provider takes the same login on each of its ports.
@@ -140,8 +142,8 @@ export async function serverFromInput(
 
 /** Sets the news server, keeping its backup; its switch as `input` gives it, or as saved. */
 export async function saveUsenetServer(input: UsenetServerInput): Promise<UsenetServer> {
-  const server = await serverFromInput(input)
   const saved = await loadUsenetServer()
+  const server = await serverFromInput(input, false, saved)
   return write({
     ...server,
     enabled: input.enabled ?? saved?.enabled ?? true,
@@ -153,7 +155,7 @@ export async function saveUsenetServer(input: UsenetServerInput): Promise<Usenet
 export async function saveUsenetBackup(input: UsenetServerInput | null): Promise<UsenetServer> {
   const saved = await loadUsenetServer()
   if (!saved) throw new Error('Set up the news server first')
-  return write({ ...saved, backup: input ? await serverFromInput(input, true) : undefined })
+  return write({ ...saved, backup: input ? await serverFromInput(input, true, saved) : undefined })
 }
 
 async function write(server: UsenetServerConfig): Promise<UsenetServer> {

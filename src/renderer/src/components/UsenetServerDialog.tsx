@@ -240,6 +240,11 @@ function UsenetServerForm({
             Enter the password: the saved one only goes to the server and username it was saved for.
           </p>
         )}
+        {server?.passwordUnread && keepsPassword && password === '' && (
+          <p className={hintClass}>
+            Saved, but this computer’s keychain can’t open it: enter it again.
+          </p>
+        )}
         <div className="flex items-center gap-3">
           <label htmlFor={`${id}-connections`} className={labelClass}>
             Connections

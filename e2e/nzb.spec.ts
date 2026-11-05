@@ -722,7 +722,7 @@ test.describe('Usenet settings', () => {
     const server = await newsServer()
     const file = join(plexo.dirs.userData, 'usenet-server.json')
     // Saved before there was a switch: on. Its password sealed by a keychain this session can't
-    // open (another login's, say), so it reads as none.
+    // open (another login's, say).
     const password = Buffer.from('sealed elsewhere').toString('base64')
     await writeFile(
       file,
@@ -963,6 +963,47 @@ test.describe('Backup server settings', () => {
     await expect(dialog.getByRole('button', { name: 'Set up backup server' })).toBeVisible()
     expect((await plexo.api.usenetServer())?.backup).toBeUndefined()
     expect(await plexo.api.usenetServer()).toMatchObject({ port: main.port })
+  })
+
+  test('passwords sealed by a keychain this session can’t open stay saved, for either server', async ({
+    plexo
+  }) => {
+    const main = await newsServer()
+    const backup = await newsServer()
+    const file = join(plexo.dirs.userData, 'usenet-server.json')
+    const mainPassword = Buffer.from('main, sealed elsewhere').toString('base64')
+    const backupPassword = Buffer.from('backup, sealed elsewhere').toString('base64')
+    const at = (port: number): object => ({ host: '127.0.0.1', port, tls: false, connections: 2 })
+    await writeFile(
+      file,
+      JSON.stringify({
+        ...at(main.port),
+        password: mainPassword,
+        backup: { ...at(backup.port), password: backupPassword }
+      })
+    )
+    await plexo.relaunch()
+    expect(await plexo.api.usenetServer()).toMatchObject({
+      hasPassword: true,
+      passwordUnread: true,
+      backup: { hasPassword: true, passwordUnread: true }
+    })
+
+    // Saving either server without a password typed keeps both as they were.
+    const dialog = await openUsenetPage(plexo)
+    for (const [button, name] of [
+      ['Change backup server', 'Backup server'],
+      ['Change server', 'Usenet server']
+    ]) {
+      await dialog.getByRole('button', { name: button }).click()
+      const form = plexo.page.getByRole('dialog', { name })
+      await expect(form.getByText(/keychain can’t open it/)).toBeVisible()
+      await form.getByLabel('Connections').fill('3')
+      await form.getByRole('button', { name: 'Save' }).click()
+      await expect(form).toBeHidden()
+      const saved = JSON.parse(await readFile(file, 'utf-8'))
+      expect([saved.password, saved.backup.password]).toEqual([mainPassword, backupPassword])
+    }
   })
 })
 
