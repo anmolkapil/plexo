@@ -113,6 +113,12 @@ export async function saveUsenetServer(input: UsenetServerInput): Promise<Usenet
     }
   }
   inMemory = sealed === undefined ? password || undefined : undefined
-  await updateJson(serverPath(), () => ({ ...rest, ...(sealed && { password: sealed }) }))
+  await updateJson(serverPath(), (current) => {
+    // No password given and none to seal: the stored one stays, for a session that can unseal it
+    // (one with the keyring this one lacks).
+    const stored = input.password === undefined && isRecord(current) ? current.password : undefined
+    const kept = sealed ?? (typeof stored === 'string' ? stored : undefined)
+    return { ...rest, ...(kept && { password: kept }) }
+  })
   return viewOf(server)
 }
