@@ -28,17 +28,19 @@ export function TrackersDialog({
 }): React.JSX.Element {
   const [data, setData] = useState<TorrentTrackersResult | null>(null)
   const [input, setInput] = useState('')
-  const [loading, setLoading] = useState(false)
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [warning, setWarning] = useState<string | null>(null)
 
   const isOpen = download !== null && download.kind === 'torrent'
   const downloadId = isOpen ? download.id : null
+  const loading = data === null && error === null
 
   const close = (): void => {
     setData(null)
     setInput('')
     setError(null)
+    setWarning(null)
     onClose()
   }
 
@@ -54,9 +56,6 @@ export function TrackersDialog({
       .catch((failure) => {
         if (active) setError(describeError(failure))
       })
-      .finally(() => {
-        if (active) setLoading(false)
-      })
 
     return () => {
       active = false
@@ -65,18 +64,29 @@ export function TrackersDialog({
 
   const handleAdd = async (): Promise<void> => {
     if (!download || !input.trim()) return
-    const parsed = parseTrackerList(input)
-    if (parsed.length === 0) {
-      setError('Please enter at least one valid tracker URL (e.g. udp://... or http://...)')
+    const { valid, invalidCount } = parseTrackerList(input)
+    if (valid.length === 0) {
+      setError(
+        invalidCount > 0
+          ? `${invalidCount} ${invalidCount === 1 ? "line wasn't a tracker link" : "lines weren't tracker links"}`
+          : 'Please enter at least one valid tracker URL (e.g. udp://... or http://...)'
+      )
+      setWarning(null)
       return
     }
 
     setSubmitting(true)
     setError(null)
+    setWarning(null)
     try {
-      const updated = await window.plexo.addTorrentTrackers(download.id, parsed)
+      const updated = await window.plexo.addTorrentTrackers(download.id, valid)
       setData(updated)
       setInput('')
+      if (invalidCount > 0) {
+        setWarning(
+          `${invalidCount} ${invalidCount === 1 ? "line wasn't a tracker link" : "lines weren't tracker links"} and was ignored`
+        )
+      }
     } catch (failure) {
       setError(describeError(failure))
     } finally {
@@ -93,7 +103,7 @@ export function TrackersDialog({
     <Dialog open={isOpen} onOpenChange={(open) => !open && close()} disablePointerDismissal>
       <DialogContent showCloseButton={false} className="sm:max-w-[480px]">
         <DialogHeader>
-          <DialogTitle>Torrent Trackers</DialogTitle>
+          <DialogTitle>Trackers</DialogTitle>
           <DialogDescription>
             {download?.fileName
               ? `Trackers for ${download.fileName}.`
@@ -174,6 +184,9 @@ export function TrackersDialog({
             </form>
           )}
 
+          {warning && (
+            <div className="text-[12px] text-amber-600 dark:text-amber-400">{warning}</div>
+          )}
           {error && <div className="text-[12px] text-[var(--color-danger)]">{error}</div>}
         </div>
 

@@ -36,7 +36,7 @@ import {
   type TorrentPieceState,
   type TorrentTrackersResult
 } from '../../shared/types'
-import { mergeTrackers } from '../../shared/torrentTrackers'
+import { mergeTrackers, normalizeTrackerUrl } from '../../shared/torrentTrackers'
 import { Limits } from '../network/limits'
 import { loadSettings } from '../settings'
 import { addToHistory, findInHistory, removeFromHistory } from './history'
@@ -128,6 +128,7 @@ interface PersistedDownloadBase {
   requestPayload: StartDownloadRequest
   /** Kept apart from requestPayload, sealed (see sealBrowser). */
   browser?: string
+  customTrackers?: string[]
 }
 
 type PersistedState =
@@ -617,7 +618,8 @@ export class DownloadManager {
     requestPayload: StartTorrentDownloadRequest,
     file: TorrentDestination,
     pieces: TorrentDownloadState['pieces'],
-    torrentFile: Uint8Array
+    torrentFile: Uint8Array,
+    customTrackers: string[] = []
   ): TorrentDownloadRuntime {
     const target: TorrentTransferTarget = {
       state,
@@ -626,7 +628,8 @@ export class DownloadManager {
       file,
       pieces,
       meters: new Meters(),
-      uploadMeters: new Meters()
+      uploadMeters: new Meters(),
+      customTrackers
     }
     const host: TransferHost = {
       networks: this.networks,
@@ -814,7 +817,8 @@ export class DownloadManager {
           torrent.files.map((file) => file.path)
         ),
         pieces,
-        torrentFile
+        torrentFile,
+        persisted.customTrackers
       )
     } else if (persisted.state.kind === 'http' && requestPayload.kind === 'http') {
       const old = persisted.state
@@ -944,6 +948,7 @@ export class DownloadManager {
     const id = randomUUID()
     let runtime: DownloadRuntime
     if (requestPayload.kind === 'torrent') {
+      delete (requestPayload as { trackers?: unknown }).trackers
       const torrentFile = probedTorrentFile(requestPayload.infoHash)
       if (!torrentFile) throw new Error('Add the torrent again to start downloading.')
       const torrentProbe = await describeTorrent(torrentFile, requestPayload.url)
@@ -1511,7 +1516,7 @@ export class DownloadManager {
     const torrent = await this.torrentInfo(id)
     if (!torrent) throw new Error('Not a torrent download')
     const defaultTrackers = torrent.trackers ?? []
-    const customTrackers = runtime.requestPayload.trackers ?? []
+    const customTrackers = runtime.customTrackers ?? []
     return {
       defaultTrackers,
       customTrackers,
@@ -1520,18 +1525,49 @@ export class DownloadManager {
   }
 
   /** Adds custom trackers to a torrent download. */
-  async addTorrentTrackers(id: string, rawTrackers: string[]): Promise<TorrentTrackersResult> {
+  async addTorrentTrackers(id: string, rawTrackers: unknown): Promise<TorrentTrackersResult> {
+    if (!Array.isArray(rawTrackers) || rawTrackers.some((t) => typeof t !== 'string')) {
+      throw new Error("That doesn't look like a tracker link")
+    }
+    if (rawTrackers.length === 0) {
+      throw new Error("That doesn't look like a tracker link")
+    }
+    if (rawTrackers.length > 100) {
+      throw new Error('Too many trackers (maximum 100)')
+    }
+    for (const tracker of rawTrackers) {
+      if (tracker.length > 2048) {
+        throw new Error("That doesn't look like a tracker link")
+      }
+    }
+
     const runtime = this.runtimes.get(id)
     if (runtime?.kind !== 'torrent') throw new Error('Not a torrent download')
     const torrent = await this.torrentInfo(id)
     if (!torrent) throw new Error('Not a torrent download')
     if (torrent.isPrivate) throw new Error('Cannot add trackers to a private torrent')
 
+    const settled =
+      runtime.publishing ||
+      runtime.state.status === 'completed' ||
+      runtime.state.status === 'cancelled' ||
+      this.runtimes.get(id) !== runtime
+    if (settled) throw new Error('This download’s trackers can’t change now')
+
     const defaultTrackers = torrent.trackers ?? []
-    const existingCustom = runtime.requestPayload.trackers ?? []
+    const existingCustom = runtime.customTrackers ?? []
     const merged = mergeTrackers([...defaultTrackers, ...existingCustom], rawTrackers)
     const newCustom = merged.filter((url) => !defaultTrackers.includes(url))
-    runtime.requestPayload.trackers = newCustom
+    if (newCustom.length > 100) {
+      throw new Error('Too many trackers (maximum 100)')
+    }
+
+    const validTrackers = rawTrackers.map(normalizeTrackerUrl).filter(Boolean)
+    if (validTrackers.length === 0) {
+      throw new Error("That doesn't look like a tracker link")
+    }
+
+    runtime.customTrackers = newCustom
     runtime.transfer.trackersChanged()
     await this.persistNow(runtime)
     return {
@@ -2059,7 +2095,8 @@ export class DownloadManager {
           partialPath: runtime.file.path,
           publicationPath: runtime.publicationPath,
           publicationIdentity: runtime.publicationIdentity,
-          ...savedRequest(runtime)
+          ...savedRequest(runtime),
+          customTrackers: runtime.kind === 'torrent' ? runtime.customTrackers : undefined
         }
         if (['downloading', 'paused', 'queued'].includes(runtime.state.status)) {
           await runtime.file.sync()

@@ -15,10 +15,6 @@ test.describe('torrent tracker helpers', () => {
     expect(normalizeTrackerUrl('http://tracker.example.com:8080/announce/')).toBe(
       'http://tracker.example.com:8080/announce'
     )
-    expect(normalizeTrackerUrl('wss://tracker.btorrent.xyz')).toBe('wss://tracker.btorrent.xyz')
-    expect(normalizeTrackerUrl('ws://tracker.openwebtorrent.com/')).toBe(
-      'ws://tracker.openwebtorrent.com'
-    )
   })
 
   test('normalizeTrackerUrl rejects invalid schemes and malformed URLs', () => {
@@ -26,27 +22,33 @@ test.describe('torrent tracker helpers', () => {
     expect(normalizeTrackerUrl('   ')).toBeNull()
     expect(normalizeTrackerUrl('ftp://tracker.example.com/announce')).toBeNull()
     expect(normalizeTrackerUrl('file:///path/to/file')).toBeNull()
+    expect(normalizeTrackerUrl('wss://tracker.btorrent.xyz')).toBeNull()
+    expect(normalizeTrackerUrl('ws://tracker.openwebtorrent.com/')).toBeNull()
     expect(normalizeTrackerUrl('not-a-url')).toBeNull()
     expect(normalizeTrackerUrl('udp://')).toBeNull()
     expect(normalizeTrackerUrl('javascript:alert(1)')).toBeNull()
+    expect(normalizeTrackerUrl(null)).toBeNull()
+    expect(normalizeTrackerUrl(42)).toBeNull()
+    expect(normalizeTrackerUrl('http://tracker.example.com/' + 'a'.repeat(2050))).toBeNull()
   })
 
-  test('parseTrackerList parses multi-line or comma-separated trackers and deduplicates', () => {
+  test('parseTrackerList parses multi-line or comma-separated trackers, counts invalid lines, and deduplicates', () => {
     const input = `
       udp://tracker.opentrackr.org:1337/announce
       http://tracker.example.com/announce/
 
       invalid-url
       udp://tracker.opentrackr.org:1337/announce
-      wss://tracker.btorrent.xyz, ws://tracker.openwebtorrent.com/
+      https://tracker.tamersunion.org/announce, ws://tracker.openwebtorrent.com/
     `
-    const parsed = parseTrackerList(input)
-    expect(parsed).toEqual([
+    const { valid, invalidCount } = parseTrackerList(input)
+    expect(valid).toEqual([
       'udp://tracker.opentrackr.org:1337/announce',
       'http://tracker.example.com/announce',
-      'wss://tracker.btorrent.xyz',
-      'ws://tracker.openwebtorrent.com'
+      'https://tracker.tamersunion.org/announce'
     ])
+    // invalid-url and ws://tracker.openwebtorrent.com/ are invalid
+    expect(invalidCount).toBe(2)
   })
 
   test('parseTrackerList supports Windows (CRLF), Linux (LF), and macOS (CR) line breaks', () => {
@@ -61,9 +63,9 @@ test.describe('torrent tracker helpers', () => {
       'udp://tracker.opentrackr.org:1337/announce',
       'http://tracker.example.com/announce'
     ]
-    expect(parseTrackerList(windowsCrlf)).toEqual(expected)
-    expect(parseTrackerList(linuxLf)).toEqual(expected)
-    expect(parseTrackerList(macCr)).toEqual(expected)
+    expect(parseTrackerList(windowsCrlf)).toEqual({ valid: expected, invalidCount: 0 })
+    expect(parseTrackerList(linuxLf)).toEqual({ valid: expected, invalidCount: 0 })
+    expect(parseTrackerList(macCr)).toEqual({ valid: expected, invalidCount: 0 })
   })
 
   test('mergeTrackers appends only unique new trackers', () => {
@@ -73,14 +75,14 @@ test.describe('torrent tracker helpers', () => {
     ]
     const additional = [
       'http://tracker.example.com/announce/',
-      'wss://tracker.btorrent.xyz',
+      'https://tracker.tamersunion.org/announce',
       'udp://newtracker.org:6969/announce'
     ]
     const merged = mergeTrackers(existing, additional)
     expect(merged).toEqual([
       'udp://tracker.opentrackr.org:1337/announce',
       'http://tracker.example.com/announce',
-      'wss://tracker.btorrent.xyz',
+      'https://tracker.tamersunion.org/announce',
       'udp://newtracker.org:6969/announce'
     ])
   })

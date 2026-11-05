@@ -64,6 +64,8 @@ export interface TorrentTransferTarget extends TransferTargetBase {
   meters: Meters
   /** What each peer, and each network, has sent. */
   uploadMeters: Meters
+  /** Custom tracker announce URLs added to the torrent. */
+  customTrackers?: string[]
 }
 
 export type TransferTarget = HttpTransferTarget | TorrentTransferTarget

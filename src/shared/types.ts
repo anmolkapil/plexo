@@ -471,8 +471,6 @@ export interface StartTorrentDownloadRequest extends StartDownloadRequestBase {
   infoHash: string
   /** For a torrent: the files to download, as indexes into its probe's `files`. Left out: all. */
   selectedFiles?: number[]
-  /** Custom tracker announce URLs added to the torrent. */
-  trackers?: string[]
 }
 
 export type StartDownloadRequest = StartHttpDownloadRequest | StartTorrentDownloadRequest

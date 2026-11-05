@@ -1,13 +1,15 @@
-const VALID_TRACKER_SCHEMES = new Set(['http:', 'https:', 'udp:', 'ws:', 'wss:'])
+const VALID_TRACKER_SCHEMES = new Set(['http:', 'https:', 'udp:'])
+const MAX_TRACKER_URL_LENGTH = 2048
 
 /**
  * Normalizes and validates a tracker announce URL.
- * Strips whitespace and trailing slashes, ensuring standard BitTorrent tracker schemes.
- * Returns null if the URL is invalid or uses an unsupported scheme.
+ * Strips whitespace and trailing slashes, ensuring standard BitTorrent tracker schemes (udp, http, https).
+ * Returns null if the URL is invalid, exceeds 2048 characters, or uses an unsupported scheme.
  */
-export function normalizeTrackerUrl(rawUrl: string): string | null {
+export function normalizeTrackerUrl(rawUrl: unknown): string | null {
+  if (typeof rawUrl !== 'string') return null
   const trimmed = rawUrl.trim()
-  if (!trimmed) return null
+  if (!trimmed || trimmed.length > MAX_TRACKER_URL_LENGTH) return null
 
   try {
     const parsed = new URL(trimmed)
@@ -20,24 +22,36 @@ export function normalizeTrackerUrl(rawUrl: string): string | null {
   }
 }
 
+export interface ParsedTrackers {
+  valid: string[]
+  invalidCount: number
+}
+
 /**
- * Parses a block of text containing tracker URLs separated by newlines, commas, or spaces.
- * Drops invalid or duplicate URLs.
+ * Parses a block of text containing tracker URLs separated by newlines or commas.
+ * Drops invalid or duplicate URLs and reports the count of invalid lines.
  */
-export function parseTrackerList(input: string): string[] {
+export function parseTrackerList(input: string): ParsedTrackers {
   const tokens = input.split(/[\r\n,]+/)
-  const result: string[] = []
+  const valid: string[] = []
   const seen = new Set<string>()
+  let invalidCount = 0
 
   for (const token of tokens) {
-    const normalized = normalizeTrackerUrl(token)
-    if (normalized && !seen.has(normalized.toLowerCase())) {
+    const trimmed = token.trim()
+    if (!trimmed) continue
+    const normalized = normalizeTrackerUrl(trimmed)
+    if (!normalized) {
+      invalidCount++
+      continue
+    }
+    if (!seen.has(normalized.toLowerCase())) {
       seen.add(normalized.toLowerCase())
-      result.push(normalized)
+      valid.push(normalized)
     }
   }
 
-  return result
+  return { valid, invalidCount }
 }
 
 /**
