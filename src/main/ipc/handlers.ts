@@ -255,6 +255,13 @@ export function registerIpcHandlers(getWindow: () => BrowserWindow | null): Down
   handle('chooseTorrentFiles', async (_event, id, selected) =>
     manager.chooseTorrentFiles(id, selected)
   )
+  handle('torrentTrackers', async (_event, id) => manager.torrentTrackers(id))
+  handle('addTorrentTrackers', async (_event, id, trackers) => {
+    if (!Array.isArray(trackers) || trackers.some((t) => typeof t !== 'string')) {
+      throw new Error("That doesn't look like a tracker link")
+    }
+    return manager.addTorrentTrackers(id, trackers)
+  })
 
   handle('pauseDownload', async (_event, id) => {
     await manager.pause(id)

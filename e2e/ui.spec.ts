@@ -316,7 +316,10 @@ test.describe('settings @smoke', () => {
         .first()
         .first()
     await networksMenu().click()
-    await page().getByRole('button', { name: 'Edit network' }).first().click()
+    await page()
+      .getByRole('button', { name: /^Edit / })
+      .first()
+      .click()
     await page().getByRole('textbox', { name: 'Name' }).fill('Office fibre')
     await page().getByRole('button', { name: 'Violet' }).click()
     await page().getByRole('button', { name: 'Done' }).click()
@@ -332,7 +335,7 @@ test.describe('settings @smoke', () => {
       await page().keyboard.press('Escape')
       await networksMenu().click()
       await expect(page().getByText('Office fibre')).toBeVisible()
-      await page().getByRole('button', { name: 'Edit network' }).first().click()
+      await page().getByRole('button', { name: 'Edit Office fibre' }).click()
       await expect(page().getByRole('button', { name: 'Violet' })).toHaveAttribute(
         'aria-pressed',
         'true'
