@@ -17,6 +17,7 @@ export type ActionId =
   | 'cancel'
   | 'remove'
   | 'trash'
+  | 'trackers'
 
 export type DownloadItem = DownloadState | FinishedDownload
 
@@ -62,16 +63,17 @@ const appliesTo: Record<ActionId, (item: DownloadItem) => boolean> = {
   copy: (item) => /^(https?:|magnet:)/i.test(item.url),
   cancel: isCancellable,
   remove: (item) => isDone(item) || isFailed(item),
-  trash: isTrashable
+  trash: isTrashable,
+  trackers: (item) => !isFinished(item) && item.kind === 'torrent'
 }
 
 /** These make sense for one download at a time: with several selected, they aren't offered. */
-const SINGLE_ONLY: ReadonlySet<ActionId> = new Set(['fix', 'again', 'open', 'reveal'])
+const SINGLE_ONLY: ReadonlySet<ActionId> = new Set(['fix', 'again', 'open', 'reveal', 'trackers'])
 
 /** The order they're shown in, in groups: what to do with it, its link, getting rid of it.
  * Menus put a separator between groups. */
 export const ACTION_GROUPS: readonly (readonly ActionId[])[] = [
-  ['pause', 'resume', 'retry', 'fix', 'again', 'open', 'reveal'],
+  ['pause', 'resume', 'retry', 'fix', 'again', 'open', 'reveal', 'trackers'],
   ['copy'],
   ['cancel', 'remove', 'trash']
 ]

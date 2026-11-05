@@ -313,6 +313,7 @@ export class PlexoApp {
       if (last?.status === 'completed') return last
       if (entry.kind === 'http') return { ...entry, blocks: [], streams: [] }
       if (entry.kind === 'nzb') return { ...entry, blocks: [], streams: [] }
+      if (entry.kind === 'telegram') return { ...entry, blocks: [], readers: [] }
       return { ...entry, pieces: [], peers: [] }
     })
     // One that finished between the two calls is in both: history has its final state.
@@ -388,9 +389,12 @@ export class PlexoApp {
       (network) => `${network.id}:${network.status}${network.error ? ` (${network.error})` : ''}`
     )
     const connections = state
-      ? (state.kind === 'torrent' ? state.peers : state.streams).map(
-          (connection) => `${connection.interfaceId}:${connection.status}`
-        )
+      ? (state.kind === 'http' || state.kind === 'nzb'
+          ? state.streams
+          : state.kind === 'telegram'
+            ? state.readers
+            : state.peers
+        ).map((connection) => `${connection.interfaceId}:${connection.status}`)
       : undefined
     throw new Error(
       `Timed out after ${timeout} ms waiting on the download. Last seen: ${
@@ -441,7 +445,10 @@ export function checkEvents(sessions: DownloadState[][]): void {
         `${label}: as many work units as planned`
       )
       for (const unit of units) {
-        const attributed = Object.values(unit.bytesByInterface).reduce((a, b) => a + b, 0)
+        const attributed = Object.values(unit.bytesByInterface).reduce(
+          (a: number, b: number) => a + b,
+          0
+        )
         assert.equal(
           attributed,
           unit.bytesDownloaded,
@@ -487,7 +494,7 @@ export function checkEvents(sessions: DownloadState[][]): void {
           state.bytesUploaded,
           `${label}: the networks' uploads add up to the download's`
         )
-      } else if (state.status === 'downloading') {
+      } else if (state.kind === 'http' && state.status === 'downloading') {
         // A stream holds a block exactly while it is fetching it. A block has at most one stream
         // fetching it for real from where it has got to, two racing that one as hedges, and any
         // number fetching parts split off further on; it is in flight whenever the first is
