@@ -181,6 +181,85 @@ export interface NzbSegmentState extends WorkUnitState {
 
 export type DownloadUnitState = HttpBlockState | TorrentPieceState | NzbSegmentState
 
+/** What a Saved Messages attachment is, as the media browser groups it. */
+export type TelegramMediaType =
+  'photo' | 'video' | 'audio' | 'voice' | 'document' | 'animation' | 'sticker'
+
+/** One media attachment in Saved Messages. */
+export interface TelegramMediaItem {
+  /** The message's id in Saved Messages: what a download of it is started by. */
+  messageId: number
+  type: TelegramMediaType
+  fileName: string
+  mimeType: string
+  /** 0 for photos: Telegram doesn't reveal a photo's byte size ahead of its download. */
+  totalBytes: number
+  width?: number
+  height?: number
+  /** Unix seconds the message was sent. */
+  date: number
+  /** Inline JPEG thumbnail as a data URL, when the message carries one small enough to embed. */
+  thumbnail?: string
+}
+
+/** One page of Saved Messages media, oldest entry last, for the browser's paging. */
+export interface TelegramMediaPage {
+  items: TelegramMediaItem[]
+  /** The oldest message id seen; the next page asks for older ones than it. Unset when exhausted. */
+  nextOffsetId?: number
+  exhausted: boolean
+}
+
+/** The user's own Telegram API credentials (my.telegram.org) and phone, as the login form
+ * sends them. */
+export interface TelegramCredentials {
+  apiId: number
+  apiHash: string
+  phone: string
+}
+
+/** Where Telegram sign-in stands, as the login dialog shows it. Credentials are the user's own
+ * api_id/api_hash from my.telegram.org — unless the release build bundles Plexo's own
+ * (`bundled`), in which case the api form becomes an advanced fallback. The api_hash itself
+ * never crosses to the window: it's the bundled secret in release builds, and the user's own
+ * is a stored secret either way. */
+export interface TelegramAuthState {
+  signedIn: boolean
+  /** The release build ships Plexo's own credentials: sign in with a phone (or the QR) alone. */
+  bundled?: boolean
+  /** The stored api registration is the user's own (not the bundled pair) — its api_hash field
+   * can stay empty and the stored keys keep winning. */
+  hasOwnKeys?: boolean
+  apiId?: number
+  phone?: string
+  /** A code was sent and not yet accepted: the dialog asks for it. */
+  awaitingCode: boolean
+  /** The account has two-step verification: the dialog asks for its password. */
+  awaitingPassword: boolean
+  /** A QR login is live: `qrDataUrl` holds the current code, which Telegram rotates. */
+  awaitingQr?: boolean
+  qrDataUrl?: string
+  /** The signed-in account's name, as Telegram reports it. */
+  userName?: string
+  error?: string
+}
+
+/** A live Telegram connection fetching the file. Like an HTTP stream without its range: each
+ * reader takes blocks as they free up. */
+export interface TelegramReaderState {
+  id: number
+  /** The network its bytes are attributed to (see TelegramDownloadState). */
+  interfaceId: string
+  bytesDownloaded: number
+  speedBytesPerSec: number
+  status: 'pending' | 'downloading' | 'retrying' | 'paused' | 'completed' | 'cancelled'
+  currentBlockIndex?: number
+}
+
+export interface TelegramDownloadNetwork extends DownloadNetworkBase {
+  transfer: 'telegram'
+}
+
 /**
  * - on: in use.
  * - off: the user switched it off. A network that turns up mid-download starts off.
@@ -222,7 +301,7 @@ export interface TorrentDownloadNetwork extends DownloadNetworkBase {
   uploadSpeedBytesPerSec: number
 }
 
-export type DownloadNetwork = HttpDownloadNetwork | TorrentDownloadNetwork
+export type DownloadNetwork = HttpDownloadNetwork | TorrentDownloadNetwork | TelegramDownloadNetwork
 
 interface DownloadStateBase {
   id: string
@@ -290,6 +369,19 @@ export interface TorrentDownloadState extends DownloadStateBase {
   uploadSpeedBytesPerSec: number
 }
 
+export interface TelegramDownloadState extends DownloadStateBase {
+  kind: 'telegram'
+  networks: TelegramDownloadNetwork[]
+  /** The connections fetching from Telegram. Unlike HTTP streams they aren't pinned to a
+   * network — Telegram is always reached the way the OS routes — so their bytes are attributed
+   * to whichever network was first-enabled as each block was claimed. */
+  readers: TelegramReaderState[]
+  peakReaders: number
+  blocks: HttpBlockState[]
+  totalBlocks: number
+  blockSizeBytes: number
+}
+
 /** One file of an NZB download. */
 export interface NzbFileState {
   /** As it is saved, in the download's folder. */
@@ -319,13 +411,15 @@ export interface NzbDownloadState extends DownloadStateBase {
   server: string
 }
 
-export type DownloadState = HttpDownloadState | TorrentDownloadState | NzbDownloadState
+export type DownloadState =
+  HttpDownloadState | TorrentDownloadState | TelegramDownloadState | NzbDownloadState
 
 /** A finished download as history keeps it: its state without the work units and connections,
  * which only a running download needs. */
 export type FinishedDownload = (
   | Omit<HttpDownloadState, 'blocks' | 'streams'>
   | Omit<TorrentDownloadState, 'pieces' | 'peers'>
+  | Omit<TelegramDownloadState, 'blocks' | 'readers'>
   | Omit<NzbDownloadState, 'blocks' | 'streams'>
 ) & {
   /** The blocks or pieces it was written in (a torrent's: those its chosen files needed; an
@@ -354,13 +448,20 @@ export interface TorrentDownloadUpdate {
   pieces: TorrentPieceState[]
 }
 
+export interface TelegramDownloadUpdate {
+  seq: number
+  state: Omit<TelegramDownloadState, 'blocks'>
+  blocks: HttpBlockState[]
+}
+
 export interface NzbDownloadUpdate {
   seq: number
   state: Omit<NzbDownloadState, 'blocks'>
   blocks: NzbSegmentState[]
 }
 
-export type DownloadUpdate = HttpDownloadUpdate | TorrentDownloadUpdate | NzbDownloadUpdate
+export type DownloadUpdate =
+  HttpDownloadUpdate | TorrentDownloadUpdate | TelegramDownloadUpdate | NzbDownloadUpdate
 
 /** User customization for one physical network, keyed by NetworkInterfaceInfo.id — lets a
  * cryptic OS device name (e.g. "feth0") get a real label, and a color distinct from its
@@ -527,6 +628,14 @@ export interface StartTorrentDownloadRequest extends StartDownloadRequestBase {
   selectedFiles?: number[]
 }
 
+export interface StartTelegramDownloadRequest extends StartDownloadRequestBase {
+  kind: 'telegram'
+  /** The Saved Messages message the media is on; its media is looked up as the download starts
+   * (and again whenever Telegram says the file reference went stale). */
+  messageId: number
+  mediaType: TelegramMediaType
+}
+
 export interface StartNzbDownloadRequest extends StartDownloadRequestBase {
   kind: 'nzb'
   /** The download starts from the NZB retained when it was probed (see NzbInfo.hash). */
@@ -534,7 +643,10 @@ export interface StartNzbDownloadRequest extends StartDownloadRequestBase {
 }
 
 export type StartDownloadRequest =
-  StartHttpDownloadRequest | StartTorrentDownloadRequest | StartNzbDownloadRequest
+  | StartHttpDownloadRequest
+  | StartTorrentDownloadRequest
+  | StartTelegramDownloadRequest
+  | StartNzbDownloadRequest
 
 /** The news server NZB downloads come from, as the window sees it: never its password. */
 export interface UsenetServer {

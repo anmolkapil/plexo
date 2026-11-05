@@ -7,6 +7,8 @@ import type {
   InitialState,
   MagnetCheckStatus,
   NetworkInterfaceInfo,
+  TelegramAuthState,
+  TelegramCredentials,
   UpdateState,
   UsenetServerInput
 } from '../shared/types'
@@ -66,6 +68,23 @@ const plexoApi = {
   usenetServer: () => invoke('usenetServer'),
   saveUsenetServer: (server: UsenetServerInput) => invoke('saveUsenetServer', server),
   testUsenetServer: (server: UsenetServerInput) => invoke('testUsenetServer', server),
+
+  telegramState: () => invoke('telegramState'),
+  telegramStartLogin: (credentials: TelegramCredentials) =>
+    invoke('telegramStartLogin', credentials),
+  telegramStartQrLogin: () => invoke('telegramStartQrLogin'),
+  telegramSubmitCode: (code: string) => invoke('telegramSubmitCode', code),
+  telegramSubmitPassword: (password: string) => invoke('telegramSubmitPassword', password),
+  telegramLogout: () => invoke('telegramLogout'),
+  telegramListMedia: (offsetId?: number, limit?: number) =>
+    invoke('telegramListMedia', offsetId, limit),
+
+  /** Where Telegram sign-in stands changed (see TelegramAuthState). */
+  onTelegramAuth: (callback: (state: TelegramAuthState) => void): (() => void) => {
+    const listener = (_event: IpcRendererEvent, state: TelegramAuthState): void => callback(state)
+    ipcRenderer.on(IpcChannels.telegramAuthChanged, listener)
+    return () => ipcRenderer.removeListener(IpcChannels.telegramAuthChanged, listener)
+  },
 
   /** pendingLinks() has the new link. */
   onLinkReceived: (callback: () => void): (() => void) => {
