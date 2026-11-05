@@ -44,7 +44,12 @@ export interface TorrentProbeResult extends ProbeResultBase {
   torrent: TorrentInfo
 }
 
-export type ProbeResult = HttpProbeResult | TorrentProbeResult
+export interface NzbProbeResult extends ProbeResultBase {
+  kind: 'nzb'
+  nzb: NzbInfo
+}
+
+export type ProbeResult = HttpProbeResult | TorrentProbeResult | NzbProbeResult
 
 /** How the check of a magnet link is going, while it's still going: `noPeersYet` once its first
  * search came back empty and it's looking a little longer. */
@@ -70,6 +75,15 @@ export interface TorrentTrackersResult {
   defaultTrackers: string[]
   customTrackers: string[]
   isPrivate: boolean
+}
+
+/** What an NZB holds: Usenet articles, grouped into the files they make up once decoded. */
+export interface NzbInfo {
+  /** Identifies the NZB among those probed lately (see main/download/nzb/nzbFile.ts). */
+  hash: string
+  /** Each file as it will be saved in the download's folder, and what its articles add up to:
+   * a little more than the file itself, since yEnc encodes it with some overhead. */
+  files: { name: string; bytes: number; segments: number }[]
 }
 
 /** One of a torrent download's files, for listing them while it runs. */
@@ -164,7 +178,97 @@ export interface TorrentPieceState extends WorkUnitState {
   provisionalBytes: number
 }
 
-export type DownloadUnitState = HttpBlockState | TorrentPieceState
+/** `missing`: the news server no longer has the article, or sent it damaged. What the article
+ * held is left as zeros in its file, for a par2 repair to restore. */
+export type NzbSegmentStatus = HttpBlockStatus | 'missing'
+
+/** One Usenet article of an NZB download. Its range is in the NZB's own byte count, the articles
+ * as posted, one after the other: the files' real sizes are only known once they come in. */
+export interface NzbSegmentState extends WorkUnitState {
+  kind: 'nzb'
+  status: NzbSegmentStatus
+}
+
+export type DownloadUnitState = HttpBlockState | TorrentPieceState | NzbSegmentState
+
+/** What a Saved Messages attachment is, as the media browser groups it. */
+export type TelegramMediaType =
+  'photo' | 'video' | 'audio' | 'voice' | 'document' | 'animation' | 'sticker'
+
+/** One media attachment in Saved Messages. */
+export interface TelegramMediaItem {
+  /** The message's id in Saved Messages: what a download of it is started by. */
+  messageId: number
+  type: TelegramMediaType
+  fileName: string
+  mimeType: string
+  /** 0 for photos: Telegram doesn't reveal a photo's byte size ahead of its download. */
+  totalBytes: number
+  width?: number
+  height?: number
+  /** Unix seconds the message was sent. */
+  date: number
+  /** Inline JPEG thumbnail as a data URL, when the message carries one small enough to embed. */
+  thumbnail?: string
+}
+
+/** One page of Saved Messages media, oldest entry last, for the browser's paging. */
+export interface TelegramMediaPage {
+  items: TelegramMediaItem[]
+  /** The oldest message id seen; the next page asks for older ones than it. Unset when exhausted. */
+  nextOffsetId?: number
+  exhausted: boolean
+}
+
+/** The user's own Telegram API credentials (my.telegram.org) and phone, as the login form
+ * sends them. */
+export interface TelegramCredentials {
+  apiId: number
+  apiHash: string
+  phone: string
+}
+
+/** Where Telegram sign-in stands, as the login dialog shows it. Credentials are the user's own
+ * api_id/api_hash from my.telegram.org — unless the release build bundles Plexo's own
+ * (`bundled`), in which case the api form becomes an advanced fallback. The api_hash itself
+ * never crosses to the window: it's the bundled secret in release builds, and the user's own
+ * is a stored secret either way. */
+export interface TelegramAuthState {
+  signedIn: boolean
+  /** The release build ships Plexo's own credentials: sign in with a phone (or the QR) alone. */
+  bundled?: boolean
+  /** The stored api registration is the user's own (not the bundled pair) — its api_hash field
+   * can stay empty and the stored keys keep winning. */
+  hasOwnKeys?: boolean
+  apiId?: number
+  phone?: string
+  /** A code was sent and not yet accepted: the dialog asks for it. */
+  awaitingCode: boolean
+  /** The account has two-step verification: the dialog asks for its password. */
+  awaitingPassword: boolean
+  /** A QR login is live: `qrDataUrl` holds the current code, which Telegram rotates. */
+  awaitingQr?: boolean
+  qrDataUrl?: string
+  /** The signed-in account's name, as Telegram reports it. */
+  userName?: string
+  error?: string
+}
+
+/** A live Telegram connection fetching the file. Like an HTTP stream without its range: each
+ * reader takes blocks as they free up. */
+export interface TelegramReaderState {
+  id: number
+  /** The network its bytes are attributed to (see TelegramDownloadState). */
+  interfaceId: string
+  bytesDownloaded: number
+  speedBytesPerSec: number
+  status: 'pending' | 'downloading' | 'retrying' | 'paused' | 'completed' | 'cancelled'
+  currentBlockIndex?: number
+}
+
+export interface TelegramDownloadNetwork extends DownloadNetworkBase {
+  transfer: 'telegram'
+}
 
 /**
  * - on: in use.
@@ -207,7 +311,7 @@ export interface TorrentDownloadNetwork extends DownloadNetworkBase {
   uploadSpeedBytesPerSec: number
 }
 
-export type DownloadNetwork = HttpDownloadNetwork | TorrentDownloadNetwork
+export type DownloadNetwork = HttpDownloadNetwork | TorrentDownloadNetwork | TelegramDownloadNetwork
 
 interface DownloadStateBase {
   id: string
@@ -275,18 +379,66 @@ export interface TorrentDownloadState extends DownloadStateBase {
   uploadSpeedBytesPerSec: number
 }
 
-export type DownloadState = HttpDownloadState | TorrentDownloadState
+export interface TelegramDownloadState extends DownloadStateBase {
+  kind: 'telegram'
+  networks: TelegramDownloadNetwork[]
+  /** The connections fetching from Telegram. Unlike HTTP streams they aren't pinned to a
+   * network — Telegram is always reached the way the OS routes — so their bytes are attributed
+   * to whichever network was first-enabled as each block was claimed. */
+  readers: TelegramReaderState[]
+  peakReaders: number
+  blocks: HttpBlockState[]
+  totalBlocks: number
+  blockSizeBytes: number
+}
+
+/** One file of an NZB download. */
+export interface NzbFileState {
+  /** As it is saved, in the download's folder. */
+  name: string
+  /** What its articles add up to, as the NZB counts them. */
+  bytes: number
+  /** Its real size, from its articles' yEnc headers; unset until one has come in. */
+  size?: number
+  segments: number
+  /** Articles the server didn't have, or sent damaged (see NzbSegmentStatus). */
+  missing: number
+}
+
+/** A Usenet download: an NZB's articles, fetched over connections to the user's news server. Its
+ * streams are those connections, its blocks the articles. */
+export interface NzbDownloadState extends DownloadStateBase {
+  kind: 'nzb'
+  networks: HttpDownloadNetwork[]
+  streams: HttpStreamState[]
+  peakStreams: number
+  blocks: NzbSegmentState[]
+  totalBlocks: number
+  nzbFiles: NzbFileState[]
+  /** Of `totalBytes`, the bytes of articles that are missing. */
+  missingBytes: number
+  /** The news server it downloads from, by host name. */
+  server: string
+}
+
+export type DownloadState =
+  HttpDownloadState | TorrentDownloadState | TelegramDownloadState | NzbDownloadState
 
 /** A finished download as history keeps it: its state without the work units and connections,
  * which only a running download needs. */
 export type FinishedDownload = (
-  Omit<HttpDownloadState, 'blocks' | 'streams'> | Omit<TorrentDownloadState, 'pieces' | 'peers'>
+  | Omit<HttpDownloadState, 'blocks' | 'streams'>
+  | Omit<TorrentDownloadState, 'pieces' | 'peers'>
+  | Omit<TelegramDownloadState, 'blocks' | 'readers'>
+  | Omit<NzbDownloadState, 'blocks' | 'streams'>
 ) & {
-  /** The blocks or pieces it was written in (a torrent's: those its chosen files needed). */
+  /** The blocks or pieces it was written in (a torrent's: those its chosen files needed; an
+   * NZB's: its articles that came in). */
   unitsWritten: number
   /** Set when listed: its file or folder is no longer where it was saved. */
   missing?: boolean
-  /** Chosen torrent files relative to its destination folder, retained for safe file removal. */
+  /** Chosen torrent files (or an NZB's files) relative to its destination folder, retained for
+   * safe file removal. */
   downloadedFiles?: string[]
 }
 
@@ -306,7 +458,20 @@ export interface TorrentDownloadUpdate {
   pieces: TorrentPieceState[]
 }
 
-export type DownloadUpdate = HttpDownloadUpdate | TorrentDownloadUpdate
+export interface TelegramDownloadUpdate {
+  seq: number
+  state: Omit<TelegramDownloadState, 'blocks'>
+  blocks: HttpBlockState[]
+}
+
+export interface NzbDownloadUpdate {
+  seq: number
+  state: Omit<NzbDownloadState, 'blocks'>
+  blocks: NzbSegmentState[]
+}
+
+export type DownloadUpdate =
+  HttpDownloadUpdate | TorrentDownloadUpdate | TelegramDownloadUpdate | NzbDownloadUpdate
 
 /** User customization for one physical network, keyed by NetworkInterfaceInfo.id — lets a
  * cryptic OS device name (e.g. "feth0") get a real label, and a color distinct from its
@@ -473,4 +638,48 @@ export interface StartTorrentDownloadRequest extends StartDownloadRequestBase {
   selectedFiles?: number[]
 }
 
-export type StartDownloadRequest = StartHttpDownloadRequest | StartTorrentDownloadRequest
+export interface StartTelegramDownloadRequest extends StartDownloadRequestBase {
+  kind: 'telegram'
+  /** The Saved Messages message the media is on; its media is looked up as the download starts
+   * (and again whenever Telegram says the file reference went stale). */
+  messageId: number
+  mediaType: TelegramMediaType
+}
+
+export interface StartNzbDownloadRequest extends StartDownloadRequestBase {
+  kind: 'nzb'
+  /** The download starts from the NZB retained when it was probed (see NzbInfo.hash). */
+  nzbHash: string
+}
+
+export type StartDownloadRequest =
+  | StartHttpDownloadRequest
+  | StartTorrentDownloadRequest
+  | StartTelegramDownloadRequest
+  | StartNzbDownloadRequest
+
+/** The news server NZB downloads come from, as the window sees it: never its password. */
+export interface UsenetServer {
+  host: string
+  port: number
+  tls: boolean
+  username: string
+  /** How many connections the server allows at once, for every network together. */
+  connections: number
+  /** A password is set. */
+  hasPassword: boolean
+  /** Its password is kept only until Plexo quits: this computer offers no keychain to seal it
+   * with (see main/download/nzb/usenetServer.ts). */
+  passwordInMemory?: boolean
+}
+
+/** What the window sends to set the news server, or to test one. `password` left out keeps the
+ * one already saved. */
+export interface UsenetServerInput {
+  host: string
+  port: number
+  tls: boolean
+  username: string
+  connections: number
+  password?: string
+}

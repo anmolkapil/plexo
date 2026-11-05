@@ -4,19 +4,26 @@ import type {
   DownloadUnitState,
   HttpBlockState,
   HttpDownloadState,
+  NzbDownloadState,
+  NzbSegmentState,
   ProxyConfig,
   StartHttpDownloadRequest,
+  StartNzbDownloadRequest,
+  StartTelegramDownloadRequest,
   StartTorrentDownloadRequest,
+  TelegramDownloadState,
   TorrentDownloadState,
   TorrentPieceState
 } from '../../shared/types'
 import type { NetworkMonitor } from '../network/interfaces'
 import type { Limits } from '../network/limits'
 import type { DownloadFile } from './downloadFile'
+import type { NzbDestination } from './nzb/nzbDestination'
 import type { TorrentDestination } from './torrent/torrentDestination'
 
 /**
- * How a download's bytes get fetched: HTTP streams today (see httpTransfer.ts). The manager runs
+ * How a download's bytes get fetched: HTTP streams (see httpTransfer.ts), torrent peers
+ * (torrent/torrentTransfer.ts) or connections to a news server (nzb/nzbTransfer.ts). The manager runs
  * everything a download does whatever fetches it — its networks, pause and resume, saving it,
  * telling the window — and hands the fetching to its transfer.
  */
@@ -68,7 +75,25 @@ export interface TorrentTransferTarget extends TransferTargetBase {
   customTrackers?: string[]
 }
 
-export type TransferTarget = HttpTransferTarget | TorrentTransferTarget
+export interface TelegramTransferTarget extends TransferTargetBase {
+  state: TelegramDownloadState
+  requestPayload: StartTelegramDownloadRequest
+  blocks: HttpBlockState[]
+  /** What each reader, and each network, has received (see updateSpeeds). */
+  meters: Meters
+}
+
+export interface NzbTransferTarget extends TransferTargetBase {
+  file: NzbDestination
+  state: NzbDownloadState
+  requestPayload: StartNzbDownloadRequest
+  blocks: NzbSegmentState[]
+  /** What each connection, and each network, has received (see updateSpeeds). */
+  meters: Meters
+}
+
+export type TransferTarget =
+  HttpTransferTarget | TorrentTransferTarget | TelegramTransferTarget | NzbTransferTarget
 
 /** What a transfer asks of the manager. */
 export interface TransferHost {
@@ -152,7 +177,13 @@ export function updateSpeeds(runtime: TransferTarget, now: number): boolean {
     target[key] = value
   }
   const connections: Array<{ id: number; status: string; speedBytesPerSec: number }> =
-    state.kind === 'http' ? state.streams : state.peers
+    state.kind === 'http'
+      ? state.streams
+      : state.kind === 'telegram'
+        ? state.readers
+        : state.kind === 'torrent'
+          ? state.peers
+          : state.streams
   for (const connection of connections) {
     // Read every tick, moving or not, so its window is never stale when it moves again.
     const speed = runtime.meters.connections.get(connection.id)?.read(now) ?? 0
@@ -204,10 +235,20 @@ export function smoothTimeLeft(
   return expected + (estimate - expected) * (1 - (1 - share) ** elapsedSeconds)
 }
 
+/** Of a download's bytes, those it won't fetch: a torrent's pieces no chosen file needs, an
+ * NZB's articles the server doesn't have. */
+export function unwantedBytes(state: DownloadState): number {
+  return state.kind === 'torrent'
+    ? state.skippedBytes
+    : state.kind === 'nzb'
+      ? state.missingBytes
+      : 0
+}
+
 /** Brings time left up to date from the speed, `elapsedSeconds` after it last was. Read on the
  * download's clock, with the speeds. Says whether it changed. */
 export function updateTimeLeft(state: DownloadState, elapsedSeconds: number): boolean {
-  const wanted = state.totalBytes - (state.kind === 'torrent' ? state.skippedBytes : 0)
+  const wanted = state.totalBytes - unwantedBytes(state)
   const before = state.timeLeftSeconds
   state.timeLeftSeconds =
     state.totalBytes > 0 && state.speedBytesPerSec > 0
@@ -224,7 +265,12 @@ export function updateTimeLeft(state: DownloadState, elapsedSeconds: number): bo
 export function clearSpeeds(state: DownloadState): void {
   state.speedBytesPerSec = 0
   state.timeLeftSeconds = undefined
-  const connections = state.kind === 'http' ? state.streams : state.peers
+  const connections =
+    state.kind === 'http' || state.kind === 'nzb'
+      ? state.streams
+      : state.kind === 'telegram'
+        ? state.readers
+        : state.peers
   for (const connection of connections) connection.speedBytesPerSec = 0
   for (const network of state.networks) network.speedBytesPerSec = 0
   if (state.kind === 'http') state.diskLimited = undefined

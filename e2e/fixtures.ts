@@ -21,6 +21,7 @@ import type {
   DownloadStatus,
   DownloadUpdate,
   HttpDownloadState,
+  NzbDownloadState,
   TorrentDownloadState
 } from '../src/shared/types'
 import { Origin, sha256, type OriginOptions } from './origin'
@@ -36,6 +37,12 @@ export function expectHttp(state: DownloadState): HttpDownloadState {
 export function expectTorrent(state: DownloadState): TorrentDownloadState {
   expect(state.kind).toBe('torrent')
   if (state.kind !== 'torrent') throw new Error('Expected a torrent download')
+  return state
+}
+
+export function expectNzb(state: DownloadState): NzbDownloadState {
+  expect(state.kind).toBe('nzb')
+  if (state.kind !== 'nzb') throw new Error('Expected an NZB download')
   return state
 }
 
@@ -264,7 +271,9 @@ export class PlexoApp {
             infoHash: probe.torrent.infoHash,
             selectedFiles: options.selectedFiles
           }
-        : { ...common, kind: 'http', streamsPerNetwork: options.streamsPerNetwork }
+        : probe.kind === 'nzb'
+          ? { ...common, kind: 'nzb', nzbHash: probe.nzb.hash }
+          : { ...common, kind: 'http', streamsPerNetwork: options.streamsPerNetwork }
     )
     this.tracked.set(id, { expectedSha, destBefore, destinationDir })
     return id
@@ -302,9 +311,10 @@ export class PlexoApp {
     const finished = (await this.api.listHistory()).map((entry): DownloadState => {
       const last = seen.findLast((state) => state.id === entry.id)
       if (last?.status === 'completed') return last
-      return entry.kind === 'http'
-        ? { ...entry, blocks: [], streams: [] }
-        : { ...entry, pieces: [], peers: [] }
+      if (entry.kind === 'http') return { ...entry, blocks: [], streams: [] }
+      if (entry.kind === 'nzb') return { ...entry, blocks: [], streams: [] }
+      if (entry.kind === 'telegram') return { ...entry, blocks: [], readers: [] }
+      return { ...entry, pieces: [], peers: [] }
     })
     // One that finished between the two calls is in both: history has its final state.
     const done = new Set(finished.map((state) => state.id))
@@ -345,6 +355,13 @@ export class PlexoApp {
     return expectTorrent(await this.waitForStatus(status, timeout))
   }
 
+  async waitForNzbStatus(
+    status: DownloadStatus | DownloadStatus[],
+    timeout = 20_000
+  ): Promise<NzbDownloadState> {
+    return expectNzb(await this.waitForStatus(status, timeout))
+  }
+
   async currentHttp(): Promise<HttpDownloadState | null> {
     const state = await this.current()
     return state ? expectHttp(state) : null
@@ -372,9 +389,12 @@ export class PlexoApp {
       (network) => `${network.id}:${network.status}${network.error ? ` (${network.error})` : ''}`
     )
     const connections = state
-      ? (state.kind === 'http' ? state.streams : state.peers).map(
-          (connection) => `${connection.interfaceId}:${connection.status}`
-        )
+      ? (state.kind === 'http' || state.kind === 'nzb'
+          ? state.streams
+          : state.kind === 'telegram'
+            ? state.readers
+            : state.peers
+        ).map((connection) => `${connection.interfaceId}:${connection.status}`)
       : undefined
     throw new Error(
       `Timed out after ${timeout} ms waiting on the download. Last seen: ${
@@ -413,7 +433,7 @@ export function checkEvents(sessions: DownloadState[][]): void {
           `${label}: bytesDownloaded ≤ totalBytes`
         )
       }
-      const units = state.kind === 'http' ? state.blocks : state.pieces
+      const units = state.kind === 'torrent' ? state.pieces : state.blocks
       assert.equal(
         units.every((unit, index) => unit.index === index),
         true,
@@ -421,11 +441,14 @@ export function checkEvents(sessions: DownloadState[][]): void {
       )
       assert.equal(
         units.length,
-        state.kind === 'http' ? state.totalBlocks : state.totalPieces,
+        state.kind === 'torrent' ? state.totalPieces : state.totalBlocks,
         `${label}: as many work units as planned`
       )
       for (const unit of units) {
-        const attributed = Object.values(unit.bytesByInterface).reduce((a, b) => a + b, 0)
+        const attributed = Object.values(unit.bytesByInterface).reduce(
+          (a: number, b: number) => a + b,
+          0
+        )
         assert.equal(
           attributed,
           unit.bytesDownloaded,
@@ -471,7 +494,7 @@ export function checkEvents(sessions: DownloadState[][]): void {
           state.bytesUploaded,
           `${label}: the networks' uploads add up to the download's`
         )
-      } else if (state.status === 'downloading') {
+      } else if (state.kind === 'http' && state.status === 'downloading') {
         // A stream holds a block exactly while it is fetching it. A block has at most one stream
         // fetching it for real from where it has got to, two racing that one as hedges, and any
         // number fetching parts split off further on; it is in flight whenever the first is

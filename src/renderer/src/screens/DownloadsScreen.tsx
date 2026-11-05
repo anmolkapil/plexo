@@ -1,5 +1,5 @@
 import type { DownloadState, FinishedDownload } from '@shared/types'
-import { ChevronRight, Plus, X } from 'lucide-react'
+import { ChevronRight, Plus, Send, X } from 'lucide-react'
 import { cn } from 'cn'
 import { Fragment, memo, useCallback, useEffect, useState } from 'react'
 import { DownloadContextMenu } from '../components/DownloadContextMenu'
@@ -14,6 +14,7 @@ import { networkStatusText } from '../components/NetworkRow'
 import { scheduleMessage, scheduleWindow } from '@shared/downloadSchedule'
 import { NetworksMenu } from '../components/NetworksMenu'
 import { TorrentBadge } from '../components/TorrentBadge'
+import { UsenetBadge } from '../components/UsenetBadge'
 import { Button } from '../components/ui/button'
 import { Checkbox } from '../components/ui/checkbox'
 import { Tooltip, TooltipContent, TooltipTrigger } from '../components/ui/tooltip'
@@ -90,6 +91,7 @@ export function DownloadsScreen(): React.JSX.Element {
   const history = useAppStore((store) => store.history)
   const setView = useAppStore((store) => store.setView)
   const openNewDownload = useAppStore((store) => store.openNewDownload)
+  const openTelegram = useAppStore((store) => store.openTelegram)
   const filter = useAppStore((store) => store.downloadFilter)
   const setFilter = useAppStore((store) => store.setDownloadFilter)
   const [selected, setSelected] = useState<Set<string>>(new Set())
@@ -208,6 +210,10 @@ export function DownloadsScreen(): React.JSX.Element {
               setLimitsOpen(true)
             }}
           />
+          <Button type="button" variant="secondary" onClick={() => openTelegram()}>
+            <Send data-icon="inline-start" />
+            Telegram
+          </Button>
           <Button type="button" onClick={() => openNewDownload()}>
             <Plus data-icon="inline-start" />
             New download
@@ -368,6 +374,7 @@ function EmptyState(): React.JSX.Element {
   )
   const loadInterfaces = useAppStore((store) => store.loadInterfaces)
   const openNewDownload = useAppStore((store) => store.openNewDownload)
+  const openTelegram = useAppStore((store) => store.openTelegram)
 
   return (
     <div className="flex flex-col items-center gap-4 px-5 pt-16 pb-10 text-center">
@@ -396,13 +403,19 @@ function EmptyState(): React.JSX.Element {
         <>
           <div className="font-sans text-[16px] leading-[1.2] font-bold">No downloads yet</div>
           <div className="max-w-[380px] text-[12.5px] leading-[1.6] text-[var(--text-secondary)]">
-            Paste a link ({PASTE_SHORTCUT}) or drop a .torrent anywhere in this window.
+            Paste a link ({PASTE_SHORTCUT}) or drop a .torrent or .nzb anywhere in this window.
           </div>
-          <Button type="button" className="mt-1" onClick={() => openNewDownload()}>
-            <Plus data-icon="inline-start" />
-            New download
-            <span className="ml-1 font-mono text-[11px] opacity-70">{NEW_SHORTCUT}</span>
-          </Button>
+          <div className="mt-1 flex gap-2">
+            <Button type="button" variant="secondary" onClick={() => openTelegram()}>
+              <Send data-icon="inline-start" />
+              Telegram
+            </Button>
+            <Button type="button" onClick={() => openNewDownload()}>
+              <Plus data-icon="inline-start" />
+              New download
+              <span className="ml-1 font-mono text-[11px] opacity-70">{NEW_SHORTCUT}</span>
+            </Button>
+          </div>
         </>
       )}
     </div>
@@ -574,6 +587,7 @@ const DownloadRow = memo(function DownloadRow({
               {item.fileName}
             </span>
             {item.kind === 'torrent' && <TorrentBadge />}
+            {item.kind === 'nzb' && <UsenetBadge />}
             {(dots || speed) && (
               <div className="ml-auto flex shrink-0 items-center gap-2.5 pl-2">
                 {dots && (
