@@ -359,7 +359,8 @@ test.describe('settings @smoke', () => {
       await plexo.newDownload()
       const row = await plexo.page.getByText('Save to', { exact: true }).locator('..').innerText()
       await plexo.page.keyboard.press('Escape')
-      return row
+      // Free space shows up when it's ready; only the folder is compared.
+      return row.replace(/\s*\([^)]*free\)/, '')
     }
     const fresh = await choices()
 
