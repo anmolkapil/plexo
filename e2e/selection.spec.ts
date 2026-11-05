@@ -313,4 +313,39 @@ test('search and filter interaction with selection: no crash on empty query filt
   await expect(page.getByRole('checkbox', { name: 'Select alpha-doc.bin' })).not.toBeChecked()
   // Search box is visible again with 'alpha' still in it
   await expect(search).toHaveValue('alpha')
+
+  // 5. Select row again and press Cmd+F: selection is cleared and search box is focused
+  await page.getByRole('checkbox', { name: 'Select alpha-doc.bin' }).check()
+  await expect(search).toBeHidden()
+  await page.keyboard.press(`${modifier}+f`)
+  await expect(page.getByRole('checkbox', { name: 'Select alpha-doc.bin' })).not.toBeChecked()
+  await expect(search).toBeVisible()
+  await expect(search).toBeFocused()
+})
+
+test('search box maintains minimum usable width at 720px minimum window width with active download', async ({
+  plexo,
+  serve
+}) => {
+  // Set window to minimum 720px width
+  await plexo.evaluateMain(({ BrowserWindow }) => {
+    const window = BrowserWindow.getAllWindows()[0]
+    window.setSize(720, 620)
+  }, null)
+
+  const origin = await serve({ size: 24 * BLOCK })
+  const reached = origin.hold(6 * BLOCK)
+  await plexo.start(origin.url(), origin.sha256, { fileName: 'active-download.bin' })
+  await reached
+
+  const page = plexo.page
+  const searchInput = page.getByRole('textbox', { name: 'Search downloads' })
+  await expect(searchInput).toBeVisible()
+
+  // Verify bounding box width is at least 130px (container is w-40 = 160px; was ~2px before fix)
+  const box = await searchInput.boundingBox()
+  expect(box).not.toBeNull()
+  expect(box!.width).toBeGreaterThanOrEqual(130)
+
+  origin.release()
 })

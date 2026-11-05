@@ -177,8 +177,16 @@ export function DownloadsScreen(): React.JSX.Element {
         setSelected(new Set())
       } else if (command && event.key.toLowerCase() === 'f') {
         event.preventDefault()
-        searchInputRef.current?.focus()
-        searchInputRef.current?.select()
+        if (chosen.length > 0) {
+          setSelected(new Set())
+          requestAnimationFrame(() => {
+            searchInputRef.current?.focus()
+            searchInputRef.current?.select()
+          })
+        } else {
+          searchInputRef.current?.focus()
+          searchInputRef.current?.select()
+        }
       } else if (command && event.key.toLowerCase() === 'a') {
         event.preventDefault()
         setSelected(new Set(items.map((item) => item.id)))
@@ -209,7 +217,7 @@ export function DownloadsScreen(): React.JSX.Element {
   return (
     <div className="flex h-full flex-col bg-background">
       {chosen.length === 0 ? (
-        <div className="flex h-12 shrink-0 items-center gap-3 border-b-[0.5px] border-border px-5">
+        <div className="flex h-12 shrink-0 items-center gap-2 border-b-[0.5px] border-border px-3 sm:gap-3 sm:px-5">
           <DownloadFilterMenu
             value={filter}
             counts={counts}
@@ -220,12 +228,12 @@ export function DownloadsScreen(): React.JSX.Element {
           />
           {/* One group already says it in its header. */}
           {allGroups.length > 1 && (
-            <div className="font-mono text-[11.5px] leading-none text-muted-foreground">
+            <div className="hidden font-mono text-[11.5px] leading-none whitespace-nowrap text-muted-foreground lg:block">
               {summaryOf(downloads)}
             </div>
           )}
           <div className="flex-1" />
-          <div className="relative min-w-0 flex-1 max-w-56">
+          <div className="relative w-44 shrink-0 sm:w-48 md:w-52 lg:w-60">
             <InputGroup className="h-7 w-full border-border/70 bg-secondary/30">
               <InputGroupAddon align="inline-start">
                 <Search className="size-3.5 text-muted-foreground" />
@@ -245,12 +253,12 @@ export function DownloadsScreen(): React.JSX.Element {
                     }
                   }
                 }}
-                placeholder={`Search downloads (${isMac ? '⌘F' : 'Ctrl+F'})`}
+                placeholder="Search downloads"
                 className="h-7 text-xs placeholder:text-muted-foreground/70"
                 aria-label="Search downloads"
               />
-              {searchQuery && (
-                <InputGroupAddon align="inline-end">
+              <InputGroupAddon align="inline-end">
+                {searchQuery ? (
                   <InputGroupButton
                     size="icon-xs"
                     onClick={() => {
@@ -261,8 +269,12 @@ export function DownloadsScreen(): React.JSX.Element {
                   >
                     <X className="size-3" />
                   </InputGroupButton>
-                </InputGroupAddon>
-              )}
+                ) : (
+                  <kbd className="hidden font-mono text-[10px] text-muted-foreground/60 select-none sm:inline-block">
+                    {isMac ? '⌘F' : 'Ctrl+F'}
+                  </kbd>
+                )}
+              </InputGroupAddon>
             </InputGroup>
           </div>
           <ScheduleIndicator onClick={openSchedule} />
@@ -273,10 +285,23 @@ export function DownloadsScreen(): React.JSX.Element {
               setLimitsOpen(true)
             }}
           />
-          <Button type="button" variant="secondary" onClick={() => openTelegram()}>
-            <Send data-icon="inline-start" />
-            Telegram
-          </Button>
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <Button
+                  type="button"
+                  variant="secondary"
+                  onClick={() => openTelegram()}
+                  aria-label="Telegram"
+                  className="px-2.5"
+                >
+                  <Send className="size-3.5" />
+                  <span className="hidden lg:inline">Telegram</span>
+                </Button>
+              }
+            />
+            <TooltipContent>Telegram Saved Messages</TooltipContent>
+          </Tooltip>
           <Button type="button" onClick={() => openNewDownload()}>
             <Plus data-icon="inline-start" />
             New download
