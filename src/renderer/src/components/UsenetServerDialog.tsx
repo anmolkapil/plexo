@@ -112,7 +112,9 @@ function UsenetServerForm({
     tls,
     username: username.trim(),
     connections: Number(connections),
-    password: password === '' && keepsPassword ? undefined : password
+    // Blank keeps the stored password; the main process sends it only to the host and username
+    // it was saved for.
+    password: password === '' ? undefined : password
   })
   const valid =
     host.trim() !== '' &&
