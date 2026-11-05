@@ -12,6 +12,7 @@ import {
 } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 import { useFormatSpeedLimit } from '../hooks/useFormatSpeed'
+import { useFreeSpace } from '../hooks/useFreeSpace'
 import { useNetworkUsage } from '../hooks/useNetworks'
 import { useNetworkVisuals } from '../hooks/useNetworkVisuals'
 import { useDownloadSchedule } from '../hooks/useDownloadSchedule'
@@ -145,28 +146,7 @@ function NewDownloadForm({ onDone }: { onDone: () => void }): React.JSX.Element 
   // The news server, for an NZB: undefined until it has been asked for, null when there's none.
   const [server, setServer] = useState<UsenetServer | null | undefined>(undefined)
   const [serverOpen, setServerOpen] = useState(false)
-  const [freeSpace, setFreeSpace] = useState<number | null>(null)
-
-  useEffect(() => {
-    let stale = false
-    if (!destinationDir) return
-    const check = (): void => {
-      void window.plexo
-        .freeSpace(destinationDir)
-        .then((bytes) => {
-          if (!stale) setFreeSpace(bytes)
-        })
-        .catch(() => {
-          if (!stale) setFreeSpace(null)
-        })
-    }
-    check()
-    const timer = setInterval(check, 10_000)
-    return () => {
-      stale = true
-      clearInterval(timer)
-    }
-  }, [destinationDir])
+  const freeSpace = useFreeSpace(destinationDir)
 
   // Opened with nothing in it: a link on the clipboard is most likely what it's for, as download
   // managers have long assumed. Anything else on the clipboard is left alone.
