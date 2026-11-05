@@ -461,10 +461,7 @@ export interface NzbDownloadUpdate {
 }
 
 export type DownloadUpdate =
-  | HttpDownloadUpdate
-  | TorrentDownloadUpdate
-  | TelegramDownloadUpdate
-  | NzbDownloadUpdate
+  HttpDownloadUpdate | TorrentDownloadUpdate | TelegramDownloadUpdate | NzbDownloadUpdate
 
 /** User customization for one physical network, keyed by NetworkInterfaceInfo.id — lets a
  * cryptic OS device name (e.g. "feth0") get a real label, and a color distinct from its

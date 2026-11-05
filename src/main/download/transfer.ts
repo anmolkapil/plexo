@@ -91,10 +91,7 @@ export interface NzbTransferTarget extends TransferTargetBase {
 }
 
 export type TransferTarget =
-  | HttpTransferTarget
-  | TorrentTransferTarget
-  | TelegramTransferTarget
-  | NzbTransferTarget
+  HttpTransferTarget | TorrentTransferTarget | TelegramTransferTarget | NzbTransferTarget
 
 /** What a transfer asks of the manager. */
 export interface TransferHost {

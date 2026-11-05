@@ -155,10 +155,7 @@ interface NzbDownloadRuntime extends RuntimeFields, NzbTransferTarget {
 }
 
 type DownloadRuntime =
-  | HttpDownloadRuntime
-  | TorrentDownloadRuntime
-  | TelegramDownloadRuntime
-  | NzbDownloadRuntime
+  HttpDownloadRuntime | TorrentDownloadRuntime | TelegramDownloadRuntime | NzbDownloadRuntime
 
 interface PersistedDownloadBase {
   savedAt: number
