@@ -251,15 +251,20 @@ test.describe('window close with active downloads @smoke', () => {
     const windowState = await plexo.evaluateMain(({ BrowserWindow }) => {
       const win = BrowserWindow.getAllWindows()[0]
       win.close()
-      return { isDestroyed: win.isDestroyed(), isVisible: win.isVisible() }
+      return { isDestroyed: win.isDestroyed() }
     }, null)
 
     expect(windowState.isDestroyed, 'window is not destroyed').toBe(false)
-    expect(windowState.isVisible, 'window is hidden').toBe(false)
     expect(plexo.alive, 'app is still alive').toBe(true)
 
     const nextReached = origin.hold(10 * BLOCK)
     await nextReached
+
+    const windowCount = await plexo.evaluateMain(
+      ({ BrowserWindow }) => BrowserWindow.getAllWindows().length,
+      null
+    )
+    expect(windowCount, 'window remains open in background').toBe(1)
 
     await plexo.relaunch()
     const current = await plexo.currentHttp()

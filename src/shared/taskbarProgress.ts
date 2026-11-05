@@ -11,7 +11,7 @@ export interface TaskbarDownload {
   status: DownloadStatus
   totalBytes: number
   bytesDownloaded: number
-  kind?: 'http' | 'torrent' | 'nzb'
+  kind?: 'http' | 'torrent' | 'nzb' | 'telegram'
   skippedBytes?: number
   missingBytes?: number
 }
