@@ -10,6 +10,7 @@ import type {
   TelegramCredentials,
   TelegramMediaPage,
   TorrentFileEntry,
+  TorrentTrackersResult,
   UpdateState,
   UsenetServer,
   UsenetServerInput
@@ -54,6 +55,10 @@ export interface IpcContract {
   /** Which of a torrent download's files to fetch, by index, as it runs or not. Refused for one
    * already downloaded, or with no room on disk for what's added. */
   chooseTorrentFiles: { args: [id: string, selected: number[]]; result: void }
+  /** The trackers for a torrent download: default trackers from the metadata, and custom ones added. */
+  torrentTrackers: { args: [id: string]; result: TorrentTrackersResult }
+  /** Adds custom trackers to a torrent download. */
+  addTorrentTrackers: { args: [id: string, trackers: string[]]; result: TorrentTrackersResult }
   pauseDownload: { args: [id: string]; result: void }
   resumeDownload: { args: [id: string]; result: void }
   /** A fresh link to the same file, for a download whose link stopped working; it resumes. */

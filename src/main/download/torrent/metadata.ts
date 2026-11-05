@@ -51,7 +51,13 @@ export async function describeTorrent(torrentFile: Uint8Array, link: string): Pr
     contentType: 'application/x-bittorrent',
     etag: null,
     lastModified: null,
-    torrent: { infoHash: parsed.infoHash, pieceLength: parsed.pieceLength ?? 0, files }
+    torrent: {
+      infoHash: parsed.infoHash,
+      pieceLength: parsed.pieceLength ?? 0,
+      files,
+      trackers: Array.isArray(parsed.announce) ? parsed.announce : [],
+      isPrivate: Boolean(parsed.private)
+    }
   }
 }
 
