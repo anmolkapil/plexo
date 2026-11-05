@@ -1998,8 +1998,9 @@ export class DownloadManager {
       )
     } catch (error) {
       // Cancelled while it repaired or unpacked (see cancel): cancelRuntime takes it from here.
-      // Stopped by a quit: it runs again after the relaunch (see suspendAll).
-      if ((runtime.state.status as DownloadStatus) !== 'paused' && !this.suspending) {
+      // Stopped by a quit: it runs again after the relaunch (see suspendAll). Failed while it
+      // did: failDownload has said why.
+      if ((runtime.state.status as DownloadStatus) === 'downloading' && !this.suspending) {
         runtime.state.status = 'error'
         runtime.state.error = error instanceof Error ? error.message : String(error)
         this.notify(
