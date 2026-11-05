@@ -452,7 +452,7 @@ test.describe('Usenet settings', () => {
     expect(JSON.parse(await readFile(file, 'utf-8')).password).toBe(password)
   })
 
-  test('off, an NZB is no Usenet download, and a running one stops connecting', async ({
+  test('off, an NZB is no Usenet download, and a running one stops connecting and waits', async ({
     plexo
   }) => {
     const server = await newsServer({ delayMs: 40 })
@@ -462,12 +462,13 @@ test.describe('Usenet settings', () => {
     await plexo.waitUntil((state) => state.kind === 'nzb' && countDone(state) >= 2)
 
     await useServer(plexo, server, { connections: 2, enabled: false })
-    const failed = await plexo.waitForNzbStatus('error', 10_000)
-    expect(failed.error).toMatch(/Usenet downloads are off/)
-    expect(failed.resumable).toBe(true)
-    // Resumed while off, it fails again before it connects.
+    await expect
+      .poll(async () => (await plexo.byId(id))?.status, { timeout: 10_000 })
+      .toBe('queued')
     await new Promise((resolve) => setTimeout(resolve, 200))
     const served = server.served.length
+    // Paused and resumed while off, it fails before it connects.
+    await plexo.api.pauseDownload(id)
     await plexo.api.resumeDownload(id)
     await expect.poll(async () => (await plexo.byId(id))?.status, { timeout: 10_000 }).toBe('error')
     expect((await plexo.byId(id))?.error).toMatch(/Usenet downloads are off/)
@@ -490,7 +491,7 @@ test.describe('Usenet settings', () => {
     await plexo.waitForNzbStatus('completed', 30_000)
   })
 
-  test('off, a queued NZB waits rather than fails, and starts once it’s back on', async ({
+  test('off, running and queued NZBs wait rather than fail, and start once it’s back on', async ({
     plexo
   }) => {
     await plexo.api.updateSettings({ downloadsAtOnce: 1 })
@@ -508,21 +509,25 @@ test.describe('Usenet settings', () => {
     expect((await plexo.byId(queued))?.status).toBe('queued')
 
     await useServer(plexo, server, { connections: 2, enabled: false })
+    // The running one goes back in the queue, which makes room (see pause): the queued one still
+    // waits.
     await expect
       .poll(async () => (await plexo.byId(running))?.status, { timeout: 10_000 })
-      .toBe('error')
-    // Cancelled, it makes room in the queue once more (see cancel): the queued one still waits,
-    // having asked for nothing.
-    await plexo.api.cancelDownload(running)
+      .toBe('queued')
+    await new Promise((resolve) => setTimeout(resolve, 200))
     const waiting = expectNzb((await plexo.byId(queued))!)
     expect(waiting.status).toBe('queued')
     expect(countDone(waiting)).toBe(0)
     expect(waiting.streams).toHaveLength(0)
+    expect((await plexo.byId(running))?.status).toBe('queued')
 
+    // Back on, both start without being asked.
     await useServer(plexo, server, { connections: 2, enabled: true })
-    await expect
-      .poll(async () => (await plexo.byId(queued))?.status, { timeout: 30_000 })
-      .toBe('completed')
+    for (const id of [running, queued]) {
+      await expect
+        .poll(async () => (await plexo.byId(id))?.status, { timeout: 30_000 })
+        .toBe('completed')
+    }
   })
 
   test('the news server is set up from Speed & data limits', async ({ plexo }) => {

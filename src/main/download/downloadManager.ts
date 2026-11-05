@@ -1752,9 +1752,10 @@ export class DownloadManager {
     }
   }
 
-  /** The Usenet switch was saved. Off, the NZBs running stop rather than keep connecting, and
-   * queued ones wait (see pump); a paused one resumed fails before it connects (see
-   * NzbTransfer.reconcile). On, the queued ones start. */
+  /** The Usenet switch was saved. Off, the NZBs running stop rather than keep connecting and go
+   * back in the queue, as the download schedule does, to wait with the queued ones (see pump); a
+   * paused one resumed fails before it connects (see NzbTransfer.reconcile). On, the queue
+   * starts. */
   usenetSwitched(on: boolean): void {
     this.usenetOn = on
     if (on) {
@@ -1762,7 +1763,10 @@ export class DownloadManager {
       return
     }
     for (const runtime of this.runtimes.values()) {
-      if (runtime.kind === 'nzb') this.failDownload(runtime, USENET_OFF)
+      if (runtime.kind !== 'nzb') continue
+      void this.pause(runtime.state.id, true).catch((error) =>
+        console.error('[plexo] Usenet switched off', error)
+      )
     }
   }
 
