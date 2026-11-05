@@ -2236,8 +2236,8 @@ export class DownloadManager {
     const server = await loadUsenetServer().catch(() => null)
     runtime.postProcessing = new AbortController()
     // Run again after a relaunch: from where it got to.
-    const { repaired, unpackedNames } = state.postProcess ?? {}
-    state.postProcess = { repaired, unpackedNames }
+    const { repaired, unpacked, unpackedNames, unpackedFiles } = state.postProcess ?? {}
+    state.postProcess = { repaired, unpacked, unpackedNames, unpackedFiles }
     try {
       await postProcess({
         folder: state.destinationPath,
@@ -2249,6 +2249,8 @@ export class DownloadManager {
         checkpoint: () => this.persistNow(runtime),
         signal: runtime.postProcessing.signal
       })
+      // Cancelled or quit after the last tool ran: not completed, whatever it got to.
+      runtime.postProcessing.signal.throwIfAborted()
     } finally {
       runtime.postProcessing = undefined
     }

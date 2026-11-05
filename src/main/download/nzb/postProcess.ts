@@ -1,8 +1,9 @@
 import { spawn } from 'node:child_process'
 import { constants } from 'node:fs'
-import { access, lstat, mkdtemp, readdir, rename, rm, stat, statfs } from 'node:fs/promises'
+import { access, lstat, mkdtemp, readdir, rm, stat, statfs } from 'node:fs/promises'
 import { delimiter, isAbsolute, join, relative, sep } from 'node:path'
 import type { NzbPostProcess } from '../../../shared/types'
+import { renameWithRetry } from '../../jsonFile'
 
 /** Where the tools are looked for: PATH, then where their installers put them without adding
  * them to it (7-Zip's and WinRAR's on Windows; Homebrew's, which an app opened from the Finder
@@ -257,13 +258,16 @@ async function removeUnpacked(
 
 /** Unpacks the archives in the download's folder, each into a new, empty folder of its own and
  * from there into the download's: an archive can't write through a link another one left there.
- * One that holds anything but plain files and folders isn't unpacked. */
+ * One that holds anything but plain files and folders isn't unpacked. A link and a file through
+ * it in one archive are the tool's to refuse, as current 7-Zip and unrar (6.12 on) do. */
 async function unpack(
   job: Parameters<typeof postProcess>[0],
   par2Files: readonly string[],
   at: (stage: NzbPostProcess['stage'], percent?: number) => void
 ): Promise<void> {
   const { folder, state, signal } = job
+  // Stopped while its archives were deleted: only that is left to do.
+  if (state.unpacked) return removeArchives(job, par2Files)
   // An unpack cut short (a quit, a crash): what it got to goes, and it starts over.
   await removeUnpacked(folder, state.unpackedNames ?? [], job.files)
   state.unpackedNames = []
@@ -329,7 +333,9 @@ async function unpack(
         state.unpackedNames.push(target)
       }
       await job.checkpoint()
-      for (const [name, target] of moves) await rename(join(into, name), join(folder, target))
+      for (const [name, target] of moves) {
+        await renameWithRetry(join(into, name), join(folder, target))
+      }
       await rm(into, { recursive: true, force: true })
     }
     unpacked = true
@@ -354,9 +360,29 @@ async function unpack(
         .map((entry) => relative(folder, join(entry.parentPath, entry.name)))
     )
   }
+  // Saved before anything goes: a relaunch mustn't unpack again, with the archives half gone.
+  await job.checkpoint()
+  await removeArchives(job, par2Files)
+}
+
+/** Once unpacked, and the setting says so: the download's own archives and .par2 files go, what
+ * else is in its folder stays. */
+async function removeArchives(
+  job: Parameters<typeof postProcess>[0],
+  par2Files: readonly string[]
+): Promise<void> {
   if (!job.deleteArchives) return
-  // Only the download's own: what else is in its folder stays.
-  for (const name of [...volumes, ...par2Files]) await rm(join(folder, name), { force: true })
+  // The NZB's names too: with its first volume gone, an archive's others aren't recognised. Not
+  // what unpacking added, which may hold archives of its own.
+  const added = new Set(job.state.unpackedNames)
+  const names = [
+    ...new Set([...job.files, ...(await readdir(job.folder)).filter((name) => !added.has(name))])
+  ]
+  const volumes = names.filter(isFirstVolume).flatMap((archive) => volumesOf(archive, names))
+  for (const name of [...volumes, ...par2Files]) {
+    // One that can't go (held open on Windows, say) stays: the download is done all the same.
+    await rm(join(job.folder, name), { force: true }).catch(() => {})
+  }
 }
 
 function formatGigabytes(bytes: number): string {

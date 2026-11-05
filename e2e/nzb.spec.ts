@@ -528,6 +528,26 @@ test.describe('NZB repair and unpacking', () => {
     expect(done.postProcess).toMatchObject({ unpacked: true })
   })
 
+  test('what an archive holds goes in beside what was posted, overwriting none of it', async ({
+    plexo
+  }) => {
+    test.skip(!SEVEN_ZIP, 'needs 7-Zip')
+    const posts = [{ path: 'info.txt', data: seededBytes(KB, 53) }]
+    const files = [
+      ...(await posted((run) =>
+        run(SEVEN_ZIP!, ['a', '-mx0', 'Test.Release.7z', 'movie.mkv', 'info.txt'])
+      )),
+      { name: 'info.txt', data: posts[0].data }
+    ]
+    const server = await newsServer({ files })
+    await useServer(plexo, server)
+
+    const unpacked = [CONTENT[0], { path: 'info (2).txt', data: CONTENT[1].data }]
+    await plexo.start(await nzbOnDisk(server), treeSha([...posts, ...unpacked]))
+    const done = await plexo.waitForNzbStatus('completed', 30_000)
+    expect(done.postProcess?.unpackedFiles?.sort()).toEqual(['info (2).txt', 'movie.mkv'])
+  })
+
   test('a password-protected archive is left as posted, saying so', async ({ plexo }) => {
     test.skip(!SEVEN_ZIP, 'needs 7-Zip')
     const files = await posted((run) =>
