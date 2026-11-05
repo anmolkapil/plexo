@@ -3,6 +3,7 @@ import type {
   DownloadUpdate,
   HttpDownloadUpdate,
   NzbDownloadUpdate,
+  TelegramDownloadUpdate,
   TorrentDownloadUpdate
 } from './types'
 
@@ -48,9 +49,11 @@ export function applyDownloadUpdate(
     )
     return blocks ? { ...state, blocks, seq } : current
   }
-  const { state, blocks: changed } = update as HttpDownloadUpdate
+  // HTTP and Telegram downloads both keep blocks; kinds must match so a snapshot of one
+  // never lands on a live download of the other.
+  const { state, blocks: changed } = update as HttpDownloadUpdate | TelegramDownloadUpdate
   const blocks = withChanged(
-    same?.kind === 'http' ? same.blocks : undefined,
+    same?.kind === 'http' || same?.kind === 'telegram' ? same.blocks : undefined,
     changed,
     state.totalBlocks
   )

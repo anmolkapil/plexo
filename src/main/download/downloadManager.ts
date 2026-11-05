@@ -32,15 +32,21 @@ import {
   type StartDownloadRequest,
   type StartHttpDownloadRequest,
   type StartNzbDownloadRequest,
+  type StartTelegramDownloadRequest,
   type StartTorrentDownloadRequest,
+  type TelegramDownloadNetwork,
+  type TelegramDownloadState,
   type TorrentDownloadNetwork,
   type TorrentDownloadState,
   type TorrentFileEntry,
   type TorrentInfo,
-  type TorrentPieceState
+  type TorrentPieceState,
+  type TorrentTrackersResult
 } from '../../shared/types'
+import { mergeTrackers, normalizeTrackerUrl } from '../../shared/torrentTrackers'
 import { Limits } from '../network/limits'
 import { loadSettings } from '../settings'
+import type { TelegramServiceApi } from '../telegram/service'
 import { addToHistory, findInHistory, removeFromHistory } from './history'
 import { testKnobs } from '../testKnobs'
 import { DownloadFile } from './downloadFile'
@@ -61,6 +67,7 @@ import { browserContextFrom } from './browserContext'
 import { describeTorrent, probedTorrentFile } from './torrent/metadata'
 import { TorrentDestination } from './torrent/torrentDestination'
 import { TorrentTransfer } from './torrent/torrentTransfer'
+import { TelegramTransfer } from './telegramTransfer'
 import { NzbDestination } from './nzb/nzbDestination'
 import {
   parseNzb,
@@ -83,6 +90,7 @@ import {
   type TransferHost,
   type HttpTransferTarget,
   type NzbTransferTarget,
+  type TelegramTransferTarget,
   type TorrentTransferTarget
 } from './transfer'
 import type { NetworkMonitor } from '../network/interfaces'
@@ -138,12 +146,18 @@ interface TorrentDownloadRuntime extends RuntimeFields, TorrentTransferTarget {
   transfer: TorrentTransfer
 }
 
+interface TelegramDownloadRuntime extends RuntimeFields, TelegramTransferTarget {
+  kind: 'telegram'
+  transfer: TelegramTransfer
+}
+
 interface NzbDownloadRuntime extends RuntimeFields, NzbTransferTarget {
   kind: 'nzb'
   transfer: NzbTransfer
 }
 
-type DownloadRuntime = HttpDownloadRuntime | TorrentDownloadRuntime | NzbDownloadRuntime
+type DownloadRuntime =
+  HttpDownloadRuntime | TorrentDownloadRuntime | TelegramDownloadRuntime | NzbDownloadRuntime
 
 interface PersistedDownloadBase {
   savedAt: number
@@ -153,11 +167,13 @@ interface PersistedDownloadBase {
   requestPayload: StartDownloadRequest
   /** Kept apart from requestPayload, sealed (see sealBrowser). */
   browser?: string
+  customTrackers?: string[]
 }
 
 type PersistedState =
   | Omit<HttpDownloadState, 'blocks' | 'streams'>
   | Omit<TorrentDownloadState, 'pieces' | 'peers'>
+  | Omit<TelegramDownloadState, 'blocks' | 'readers'>
   | Omit<NzbDownloadState, 'blocks' | 'streams'>
 
 type PersistedDownload = PersistedDownloadBase & {
@@ -277,6 +293,16 @@ function newTorrentNetwork(iface: NetworkInterfaceInfo, enabled: boolean): Torre
     transfer: 'torrent',
     bytesUploaded: 0,
     uploadSpeedBytesPerSec: 0
+  }
+}
+
+function newTelegramNetwork(
+  iface: NetworkInterfaceInfo,
+  enabled: boolean
+): TelegramDownloadNetwork {
+  return {
+    ...newHttpNetwork(iface, enabled),
+    transfer: 'telegram'
   }
 }
 
@@ -416,7 +442,8 @@ export class DownloadManager {
 
   constructor(
     private getWindow: () => BrowserWindow | null,
-    private networks: NetworkMonitor
+    private networks: NetworkMonitor,
+    private readonly telegram: TelegramServiceApi
   ) {
     this.initialization = Promise.all([this.restorePersistedDownloads(), this.limits.loaded]).then(
       async () => {
@@ -676,7 +703,8 @@ export class DownloadManager {
     requestPayload: StartTorrentDownloadRequest,
     file: TorrentDestination,
     pieces: TorrentDownloadState['pieces'],
-    torrentFile: Uint8Array
+    torrentFile: Uint8Array,
+    customTrackers: string[] = []
   ): TorrentDownloadRuntime {
     const target: TorrentTransferTarget = {
       state,
@@ -685,7 +713,8 @@ export class DownloadManager {
       file,
       pieces,
       meters: new Meters(),
-      uploadMeters: new Meters()
+      uploadMeters: new Meters(),
+      customTrackers
     }
     const host: TransferHost = {
       networks: this.networks,
@@ -699,6 +728,39 @@ export class DownloadManager {
     const runtime: TorrentDownloadRuntime = Object.assign(target, this.runtimeFields(), {
       kind: 'torrent' as const,
       transfer: new TorrentTransfer(target, host, torrentFile, file.path)
+    })
+    return runtime
+  }
+
+  private newTelegramRuntime(
+    state: TelegramDownloadState,
+    requestPayload: StartTelegramDownloadRequest,
+    file: DownloadFile,
+    blocks: HttpBlockState[]
+  ): TelegramDownloadRuntime {
+    const target: TelegramTransferTarget = {
+      state,
+      requestPayload,
+      stop: new AbortController(),
+      file,
+      blocks,
+      meters: new Meters()
+    }
+    const host: TransferHost = {
+      networks: this.networks,
+      limits: this.limits,
+      downloadsOn: (networkId) => this.httpDownloadsOn(networkId),
+      reconcile: () => this.reconcile(runtime),
+      failDownload: (message, discard) => this.failDownload(runtime, message, discard),
+      failNetwork: (network, message) => this.failNetwork(runtime, network, message),
+      scheduleUpdate: () => this.scheduleUpdate(runtime),
+      getProxyForInterface: (networkId) => this.networkPreferences[networkId]?.proxy
+    }
+    const runtime: TelegramDownloadRuntime = Object.assign(target, this.runtimeFields(), {
+      kind: 'telegram' as const,
+      transfer: new TelegramTransfer(target, host, () =>
+        this.telegram.fileSource(requestPayload.messageId)
+      )
     })
     return runtime
   }
@@ -815,6 +877,11 @@ export class DownloadManager {
       void omittedBlocks
       void omittedStreams
       entry = { ...state, unitsWritten: state.totalBlocks }
+    } else if (runtime.kind === 'telegram') {
+      const { blocks: omittedBlocks, readers: omittedReaders, ...state } = runtime.state
+      void omittedBlocks
+      void omittedReaders
+      entry = { ...state, unitsWritten: state.totalBlocks }
     } else if (runtime.kind === 'nzb') {
       const { blocks, streams: omittedStreams, ...state } = runtime.state
       void omittedStreams
@@ -916,7 +983,8 @@ export class DownloadManager {
           torrent.files.map((file) => file.path)
         ),
         pieces,
-        torrentFile
+        torrentFile,
+        persisted.customTrackers
       )
     } else if (persisted.state.kind === 'nzb' && requestPayload.kind === 'nzb') {
       const nzbFile = await readFile(this.nzbFilePath(id)).catch((error: unknown) => {
@@ -952,6 +1020,17 @@ export class DownloadManager {
       if (!blocks) return null
       state = { ...old, streams: [], blocks, totalBlocks: blocks.length }
       runtime = this.newHttpRuntime(
+        state,
+        requestPayload,
+        new DownloadFile(persisted.partialPath),
+        blocks
+      )
+    } else if (persisted.state.kind === 'telegram' && requestPayload.kind === 'telegram') {
+      const old = persisted.state
+      const blocks = restoreBlocks(old, saved)
+      if (!blocks) return null
+      state = { ...old, readers: [], blocks, totalBlocks: blocks.length }
+      runtime = this.newTelegramRuntime(
         state,
         requestPayload,
         new DownloadFile(persisted.partialPath),
@@ -1052,6 +1131,10 @@ export class DownloadManager {
           const { blocks, ...state } = runtime.state
           return structuredClone({ seq: runtime.sentUpdates, state, blocks })
         }
+        if (runtime.kind === 'telegram') {
+          const { blocks, ...state } = runtime.state
+          return structuredClone({ seq: runtime.sentUpdates, state, blocks })
+        }
         if (runtime.kind === 'nzb') {
           const { blocks, ...state } = runtime.state
           return structuredClone({ seq: runtime.sentUpdates, state, blocks })
@@ -1078,6 +1161,7 @@ export class DownloadManager {
     const id = randomUUID()
     let runtime: DownloadRuntime
     if (requestPayload.kind === 'torrent') {
+      delete (requestPayload as { trackers?: unknown }).trackers
       const torrentFile = probedTorrentFile(requestPayload.infoHash)
       if (!torrentFile) throw new Error('Add the torrent again to start downloading.')
       const torrentProbe = await describeTorrent(torrentFile, requestPayload.url)
@@ -1124,6 +1208,43 @@ export class DownloadManager {
         startedAt: Date.now()
       }
       runtime = this.newTorrentRuntime(state, requestPayload, file, pieces, torrentFile)
+    } else if (requestPayload.kind === 'telegram') {
+      // The dialog's idea of the file was a hint; Telegram's answer is the truth (a photo's
+      // size is 0: unknown until the download ends).
+      const info = await this.telegram.mediaInfo(requestPayload.messageId)
+      const totalBytes = info.totalBytes
+      const blockSizeBytes = 1024 * 1024
+      const blocks = planBlocks(totalBytes, blockSizeBytes)
+      await ensureDiskSpace(requestPayload.destinationDir, totalBytes)
+      const destinationPath = await reserveDestinationPath(
+        requestPayload.destinationDir,
+        requestPayload.suggestedFileName
+      )
+      const networks = available.map((iface) => newTelegramNetwork(iface, selected.includes(iface)))
+      const state: TelegramDownloadState = {
+        id,
+        kind: 'telegram',
+        url: requestPayload.url,
+        fileName: basename(destinationPath),
+        destinationPath,
+        totalBytes,
+        bytesDownloaded: 0,
+        speedBytesPerSec: 0,
+        status: 'downloading',
+        networks,
+        readers: [],
+        peakReaders: 0,
+        blocks,
+        totalBlocks: blocks.length,
+        blockSizeBytes,
+        startedAt: Date.now()
+      }
+      runtime = this.newTelegramRuntime(
+        state,
+        requestPayload,
+        new DownloadFile(`${destinationPath}.plexo`),
+        blocks
+      )
     } else if (requestPayload.kind === 'nzb') {
       runtime = await this.startNzb(id, requestPayload, available, selected)
     } else {
@@ -1286,7 +1407,7 @@ export class DownloadManager {
     }
     runtime.state.pausedAt = Date.now()
     clearSpeeds(runtime.state)
-    if (runtime.kind !== 'torrent') {
+    if (runtime.kind === 'http' || runtime.kind === 'nzb') {
       for (const stream of runtime.state.streams) {
         if (stream.status !== 'completed') {
           stream.status = 'paused'
@@ -1294,6 +1415,14 @@ export class DownloadManager {
         stream.currentBlockIndex = undefined
         stream.hedge = undefined
         stream.split = undefined
+      }
+    }
+    if (runtime.kind === 'telegram') {
+      for (const reader of runtime.state.readers) {
+        if (reader.status !== 'completed') {
+          reader.status = 'paused'
+        }
+        reader.currentBlockIndex = undefined
       }
     }
     for (const unit of unitsOf(runtime)) {
@@ -1525,12 +1654,19 @@ export class DownloadManager {
       }
       if (unit.kind === 'torrent') unit.provisionalBytes = 0
     }
-    if (runtime.kind !== 'torrent') {
+    if (runtime.kind === 'http' || runtime.kind === 'nzb') {
       for (const stream of runtime.state.streams) {
         if (stream.status !== 'completed') {
           stream.status = 'pending'
         }
         stream.speedBytesPerSec = 0
+      }
+    } else if (runtime.kind === 'telegram') {
+      for (const reader of runtime.state.readers) {
+        if (reader.status !== 'completed') {
+          reader.status = 'pending'
+        }
+        reader.speedBytesPerSec = 0
       }
     } else {
       runtime.state.peers.length = 0
@@ -1713,6 +1849,74 @@ export class DownloadManager {
     this.pushUpdate(runtime)
   }
 
+  /** A torrent download's trackers: default trackers from the .torrent, and any custom trackers added. */
+  async torrentTrackers(id: string): Promise<TorrentTrackersResult> {
+    const runtime = this.runtimes.get(id)
+    if (runtime?.kind !== 'torrent') throw new Error('Not a torrent download')
+    const torrent = await this.torrentInfo(id)
+    if (!torrent) throw new Error('Not a torrent download')
+    const defaultTrackers = torrent.trackers ?? []
+    const customTrackers = runtime.customTrackers ?? []
+    return {
+      defaultTrackers,
+      customTrackers,
+      isPrivate: Boolean(torrent.isPrivate)
+    }
+  }
+
+  /** Adds custom trackers to a torrent download. */
+  async addTorrentTrackers(id: string, rawTrackers: unknown): Promise<TorrentTrackersResult> {
+    if (!Array.isArray(rawTrackers) || rawTrackers.some((t) => typeof t !== 'string')) {
+      throw new Error("That doesn't look like a tracker link")
+    }
+    if (rawTrackers.length === 0) {
+      throw new Error("That doesn't look like a tracker link")
+    }
+    if (rawTrackers.length > 100) {
+      throw new Error('Too many trackers (maximum 100)')
+    }
+    for (const tracker of rawTrackers) {
+      if (tracker.length > 2048) {
+        throw new Error("That doesn't look like a tracker link")
+      }
+    }
+
+    const runtime = this.runtimes.get(id)
+    if (runtime?.kind !== 'torrent') throw new Error('Not a torrent download')
+    const torrent = await this.torrentInfo(id)
+    if (!torrent) throw new Error('Not a torrent download')
+    if (torrent.isPrivate) throw new Error('Cannot add trackers to a private torrent')
+
+    const settled =
+      runtime.publishing ||
+      runtime.state.status === 'completed' ||
+      runtime.state.status === 'cancelled' ||
+      this.runtimes.get(id) !== runtime
+    if (settled) throw new Error('This download’s trackers can’t change now')
+
+    const defaultTrackers = torrent.trackers ?? []
+    const existingCustom = runtime.customTrackers ?? []
+    const merged = mergeTrackers([...defaultTrackers, ...existingCustom], rawTrackers)
+    const newCustom = merged.filter((url) => !defaultTrackers.includes(url))
+    if (newCustom.length > 100) {
+      throw new Error('Too many trackers (maximum 100)')
+    }
+
+    const validTrackers = rawTrackers.map(normalizeTrackerUrl).filter(Boolean)
+    if (validTrackers.length === 0) {
+      throw new Error("That doesn't look like a tracker link")
+    }
+
+    runtime.customTrackers = newCustom
+    runtime.transfer.trackersChanged()
+    await this.persistNow(runtime)
+    return {
+      defaultTrackers,
+      customTrackers: newCustom,
+      isPrivate: false
+    }
+  }
+
   async cancel(id: string): Promise<void> {
     const runtime = this.runtimes.get(id)
     if (runtime?.cancelPromise) return runtime.cancelPromise
@@ -1750,8 +1954,11 @@ export class DownloadManager {
       await runtime.file.discard()
       await this.removePersistedDownload(runtime, false)
       runtime.state.status = 'cancelled'
-      if (runtime.kind !== 'torrent') {
+      if (runtime.kind === 'http' || runtime.kind === 'nzb') {
         for (const stream of runtime.state.streams) stream.status = 'cancelled'
+      }
+      if (runtime.kind === 'telegram') {
+        for (const reader of runtime.state.readers) reader.status = 'cancelled'
       }
       this.pushUpdate(runtime, false)
     } catch (error) {
@@ -2046,13 +2253,21 @@ export class DownloadManager {
     // Until the monitor has looked, nothing is known to be gone.
     const known = present !== null
     if (known) {
-      if (state.kind !== 'torrent') {
+      if (state.kind === 'http' || state.kind === 'nzb') {
         state.networks = state.networks.filter(
           (network) =>
             network.enabled ||
             network.bytesDownloaded > 0 ||
             present.some((iface) => iface.id === network.id) ||
             state.streams.some((stream) => stream.interfaceId === network.id)
+        )
+      } else if (state.kind === 'telegram') {
+        state.networks = state.networks.filter(
+          (network) =>
+            network.enabled ||
+            network.bytesDownloaded > 0 ||
+            present.some((iface) => iface.id === network.id) ||
+            state.readers.some((reader) => reader.interfaceId === network.id)
         )
       } else {
         state.networks = state.networks.filter(
@@ -2066,8 +2281,11 @@ export class DownloadManager {
       }
       for (const iface of present) {
         if (!state.networks.some((network) => network.id === iface.id)) {
-          if (state.kind !== 'torrent') state.networks.push(newHttpNetwork(iface, false))
-          else state.networks.push(newTorrentNetwork(iface, false))
+          if (state.kind === 'http' || state.kind === 'nzb') {
+            state.networks.push(newHttpNetwork(iface, false))
+          } else if (state.kind === 'telegram') {
+            state.networks.push(newTelegramNetwork(iface, false))
+          } else state.networks.push(newTorrentNetwork(iface, false))
         }
       }
     }
@@ -2114,15 +2332,20 @@ export class DownloadManager {
     try {
       const notification = new Notification({ title, body })
       notification.on('click', () => {
-        if (downloadId) {
-          void this.reveal(downloadId)
-        } else {
+        const showWindow = (): void => {
           const window = this.getWindow()
           if (window && !window.isDestroyed()) {
             if (window.isMinimized()) window.restore()
             window.show()
             window.focus()
           }
+        }
+        if (downloadId) {
+          void this.reveal(downloadId).then((revealed) => {
+            if (!revealed) showWindow()
+          })
+        } else {
+          showWindow()
         }
       })
       notification.show()
@@ -2182,6 +2405,12 @@ export class DownloadManager {
   /** What the window hasn't been sent yet: the download's state, and the work units that moved. */
   private takeUpdate(runtime: DownloadRuntime): DownloadUpdate {
     if (runtime.kind === 'http') {
+      const changed = this.changedUnits(runtime, runtime.blocks)
+      const { blocks: omittedBlocks, ...state } = runtime.state
+      void omittedBlocks
+      return structuredClone({ seq: ++runtime.sentUpdates, state, blocks: changed })
+    }
+    if (runtime.kind === 'telegram') {
       const changed = this.changedUnits(runtime, runtime.blocks)
       const { blocks: omittedBlocks, ...state } = runtime.state
       void omittedBlocks
@@ -2263,6 +2492,11 @@ export class DownloadManager {
           void omittedBlocks
           void omittedStreams
           state = rest
+        } else if (runtime.kind === 'telegram') {
+          const { blocks: omittedBlocks, readers: omittedReaders, ...rest } = runtime.state
+          void omittedBlocks
+          void omittedReaders
+          state = rest
         } else if (runtime.kind === 'nzb') {
           const { blocks, streams: omittedStreams, ...rest } = runtime.state
           void omittedStreams
@@ -2283,7 +2517,8 @@ export class DownloadManager {
           partialPath: runtime.file.path,
           publicationPath: runtime.publicationPath,
           publicationIdentity: runtime.publicationIdentity,
-          ...savedRequest(runtime)
+          ...savedRequest(runtime),
+          customTrackers: runtime.kind === 'torrent' ? runtime.customTrackers : undefined
         }
         if (['downloading', 'paused', 'queued'].includes(runtime.state.status)) {
           await runtime.file.sync()
