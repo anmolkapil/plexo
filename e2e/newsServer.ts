@@ -41,13 +41,16 @@ export interface NewsServerOptions {
   fault?: (article: { file: number; number: number }, request: number) => ArticleFault
   /** Waits this long before answering each BODY: slow enough for a test to act partway. */
   delayMs?: number
+  /** Listens on IPv6 as well as IPv4. */
+  dualStack?: boolean
 }
 
 /** - ok: the article as posted.
  * - corrupt: one byte of its data flipped, its checksum unchanged.
  * - cut: half of it, then the connection dropped.
- * - stall: half of it, then nothing. */
-export type ArticleFault = 'ok' | 'corrupt' | 'cut' | 'stall'
+ * - stall: half of it, then nothing.
+ * - drop: the connection dropped before any of it. */
+export type ArticleFault = 'ok' | 'corrupt' | 'cut' | 'stall' | 'drop'
 
 export interface ServedArticle {
   messageId: string
@@ -167,7 +170,9 @@ export class NewsServer {
 
   /** On `port`, to start a stopped server again where it was; any free one by default. */
   async start(port = 0): Promise<this> {
-    await new Promise<void>((resolve) => this.server.listen(port, '0.0.0.0', resolve))
+    await new Promise<void>((resolve) =>
+      this.server.listen(port, this.options.dualStack ? '::' : '0.0.0.0', resolve)
+    )
     this.port = (this.server.address() as AddressInfo).port
     return this
   }
@@ -300,6 +305,10 @@ ${files.join('\n')}
     this.requests.set(messageId, request)
     const fault = this.options.fault?.(article, request) ?? 'ok'
     this.served.push({ messageId, from, connection, fault })
+    if (fault === 'drop') {
+      socket.destroy()
+      return
+    }
     let body = article.body
     if (fault === 'corrupt') {
       body = Buffer.from(body)

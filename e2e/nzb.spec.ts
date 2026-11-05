@@ -612,6 +612,84 @@ test.describe('Backup news server', () => {
     const perNetwork = done.networks.reduce((sum, network) => sum + network.bytesDownloaded, 0)
     expect(perNetwork).toBe(done.totalBytes)
   })
+
+  test.describe('a network with no route to the backup server', () => {
+    // a reaches both servers over IPv4; c, IPv6 only, reaches only the news server ("localhost").
+    test.use({ appEnv: { PLEXO_E2E_INTERFACES: 'a=127.0.0.1,c=::1' } })
+
+    test('leaves the backup server to the networks that have one', async ({ plexo }) => {
+      const main = await newsServer({ missing: lacking, dualStack: true })
+      const backup = await newsServer()
+      await useServer(plexo, main, { host: 'localhost' })
+      await useBackup(plexo, backup)
+
+      await plexo.start(
+        await nzbOnDisk(main),
+        main.expectedSha(() => false),
+        { networks: ['a', 'c'] }
+      )
+      const done = await plexo.waitForNzbStatus('completed', 30_000)
+      expect(done.missingBytes).toBe(0)
+      expect(done.fromBackup).toBe(2)
+      expect(done.backupError).toBeUndefined()
+      expect(new Set(main.served.map((article) => article.from))).toEqual(
+        new Set(['127.0.0.1', '::1'])
+      )
+    })
+  })
+
+  test.describe('a news server answering only 430 for a while', () => {
+    test.use({ appEnv: { PLEXO_E2E_SILENT_MS: '1500' } })
+
+    test('is still reachable when a connection drops, so the backup keeps its share', async ({
+      plexo
+    }) => {
+      // One connection: the 430s come one after another for 3 s, longer than SILENT_MS, then the
+      // connection drops three times on the next article before it comes.
+      const main = await newsServer({
+        articleBytes: 4 * KB,
+        missing: (article) => article.file === 0 && article.number <= 30,
+        fault: (article, request) =>
+          article.file === 0 && article.number === 31 && request <= 3 ? 'drop' : 'ok',
+        delayMs: 100
+      })
+      const backup = await newsServer({ articleBytes: 4 * KB })
+      await useServer(plexo, main, { connections: 1 })
+      await useBackup(plexo, backup)
+
+      await plexo.start(
+        await nzbOnDisk(main),
+        main.expectedSha(() => false),
+        { networks: ['a'] }
+      )
+      const done = await plexo.waitForNzbStatus('completed', 30_000)
+      expect(done.fromBackup).toBe(30)
+      // Out of reach would have cut the backup to one connection (see shareConnections).
+      const unreachable = plexo.sessions
+        .flat()
+        .some((state) => state.networks.some((network) => network.status === 'unreachable'))
+      expect(unreachable).toBe(false)
+    })
+  })
+
+  test('a backup server connection waits for the next missing article, not a new sign-in', async ({
+    plexo
+  }) => {
+    // Gaps scattered through the NZB, a few articles apart.
+    const main = await newsServer({ missing: (article) => article.number % 4 === 0, delayMs: 100 })
+    const backup = await newsServer()
+    await useServer(plexo, main, { connections: 2 })
+    await useBackup(plexo, backup, { connections: 2 })
+
+    await plexo.start(
+      await nzbOnDisk(main),
+      main.expectedSha(() => false),
+      { networks: ['a'] }
+    )
+    const done = await plexo.waitForNzbStatus('completed', 30_000)
+    expect(done.fromBackup).toBe(main.missingCount)
+    expect(backup.connections).toBeLessThanOrEqual(2)
+  })
 })
 
 /** Speed & data limits, on its Usenet page. */
