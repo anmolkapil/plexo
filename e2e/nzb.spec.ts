@@ -462,21 +462,33 @@ test.describe('Backup news server', () => {
     expect(backup.connections).toBe(0)
   })
 
-  test('a backup server out of reach leaves the articles missing, and the download finishes', async ({
+  test('a backup server out of reach is waited for, and the download finishes once it answers', async ({
     plexo
   }) => {
     const main = await newsServer({ missing: lacking })
     const backup = await newsServer()
     const { port } = backup
     await backup.stop()
-    servers = servers.filter((server) => server !== backup)
     await useServer(plexo, main)
     await useBackup(plexo, backup, { port })
 
-    await plexo.start(await nzbOnDisk(main), main.expectedSha())
+    await plexo.start(
+      await nzbOnDisk(main),
+      main.expectedSha(() => false)
+    )
+    // Not given up on: it keeps trying, and the download waits for it.
+    const waiting = await plexo.waitUntil(
+      (state) => state.kind === 'nzb' && /can’t be reached/.test(state.backupError ?? ''),
+      15_000
+    )
+    expect(waiting.status).toBe('downloading')
+    expect(waiting.kind === 'nzb' && waiting.missingBytes).toBe(0)
+
+    await backup.start(port)
     const done = await plexo.waitForNzbStatus('completed', 30_000)
-    expect(done.nzbFiles[0].missing).toBe(2)
-    expect(done.backupError).toMatch(/backup server couldn’t be reached/)
+    expect(done.missingBytes).toBe(0)
+    expect(done.fromBackup).toBe(2)
+    expect(done.backupError).toBeUndefined()
   })
 
   test('a backup server that turns the sign-in down leaves the articles missing', async ({
@@ -498,6 +510,36 @@ test.describe('Backup news server', () => {
     const done = await plexo.waitForNzbStatus('completed', 30_000)
     expect(done.nzbFiles[0].missing).toBe(2)
     expect(done.backupError).toMatch(/didn’t accept the username or password/)
+  })
+
+  test('fixed after it turned the sign-in down, the backup server sends what was missing on a resume', async ({
+    plexo
+  }) => {
+    // The first articles, so they're missing well before the download is done.
+    const main = await newsServer({
+      missing: (article) => article.file === 0 && article.number <= 2,
+      delayMs: 200
+    })
+    const backup = await newsServer({ username: 'reader', password: 'right' })
+    await useServer(plexo, main, { connections: 2 })
+    await useBackup(plexo, backup, { username: 'reader', password: 'wrong' })
+
+    const id = await plexo.start(
+      await nzbOnDisk(main),
+      main.expectedSha(() => false)
+    )
+    await plexo.waitUntil((state) => state.kind === 'nzb' && state.nzbFiles[0].missing === 2)
+    await plexo.api.pauseDownload(id)
+    const paused = await plexo.waitForNzbStatus('paused')
+    expect(paused.backupError).toMatch(/didn’t accept the username or password/)
+
+    await useBackup(plexo, backup, { username: 'reader', password: 'right' })
+    await plexo.api.resumeDownload(id)
+    const done = await plexo.waitForNzbStatus('completed', 30_000)
+    expect(done.missingBytes).toBe(0)
+    expect(done.nzbFiles[0].missing).toBe(0)
+    expect(done.fromBackup).toBe(2)
+    expect(done.backupError).toBeUndefined()
   })
 })
 

@@ -163,8 +163,9 @@ export class NewsServer {
     this.server = createServer((socket) => this.accept(socket))
   }
 
-  async start(): Promise<this> {
-    await new Promise<void>((resolve) => this.server.listen(0, '0.0.0.0', resolve))
+  /** On `port`, to start a stopped server again where it was; any free one by default. */
+  async start(port = 0): Promise<this> {
+    await new Promise<void>((resolve) => this.server.listen(port, '0.0.0.0', resolve))
     this.port = (this.server.address() as AddressInfo).port
     return this
   }

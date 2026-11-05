@@ -419,7 +419,8 @@ export interface NzbDownloadState extends DownloadStateBase {
   missingBytes: number
   /** Articles the news server didn't have that came from the backup server. */
   fromBackup?: number
-  /** Why the backup server was left out: the articles it would have sent count as missing. */
+  /** Why the backup server was left out (the articles it would have sent count as missing), or
+   * that it can't be reached for now. Cleared once it answers, and on each run. */
   backupError?: string
   /** The news server it downloads from, by host name. */
   server: string

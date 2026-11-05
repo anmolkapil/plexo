@@ -141,6 +141,11 @@ export class NzbTransfer implements Transfer {
           this.server = server
           this.allowed = server.connections
           this.backupAllowed = server.backup?.connections ?? 0
+          // The last run's word on the backup server: this run asks it again.
+          this.runtime.state.backupError = undefined
+          // What neither server had last time is asked for again: the backup's settings may have
+          // been put right since (a password), and the servers may have the articles by now.
+          if (server.backup) this.retryMissing()
           this.host.reconcile()
         },
         (error) => this.host.failDownload(message(error))
@@ -166,17 +171,42 @@ export class NzbTransfer implements Transfer {
       }
     }
     const backup = this.server.backup && !this.backupDown
+    // Out of reach for a while: it keeps one connection trying, as the main server does.
+    const backupTotal = this.backupUnreachable() ? 1 : this.backupAllowed
     const toStart = [
       ...this.plan(false, shareConnections(usable, this.allowed), waiting(false)),
       // Without articles for it, none: retiring any it has.
       ...this.plan(
         true,
-        backup ? shareConnections(usable, this.backupAllowed) : new Map(),
+        backup ? shareConnections(usable, backupTotal) : new Map(),
         backup ? waiting(true) : 0
       )
     ]
     // Every network gets its first connection before any gets a second.
     this.start(interleave(toStart, (stream) => stream.interfaceId))
+  }
+
+  /** Articles marked missing, pending again. */
+  private retryMissing(): void {
+    const { state } = this.runtime
+    for (const block of this.runtime.blocks) {
+      if (block.status !== 'missing') continue
+      block.status = 'pending'
+      state.nzbFiles[this.articles[block.index].file].missing -= 1
+      state.missingBytes -= block.rangeEnd! - block.rangeStart + 1
+    }
+  }
+
+  private backupUnreachable(): boolean {
+    return (
+      this.backupFailingSince !== null && Date.now() - this.backupFailingSince >= SILENT_AFTER_MS
+    )
+  }
+
+  /** The backup server answered: reachable, whatever it said. */
+  private backupAnswered(): void {
+    this.backupFailingSince = null
+    if (!this.backupDown) this.runtime.state.backupError = undefined
   }
 
   /** Which of one server's connections to start, stop or open, network by network: `targets`
@@ -252,6 +282,8 @@ export class NzbTransfer implements Transfer {
 
   systemResumed(now: number): void {
     for (const id of this.aliveAt.keys()) this.aliveAt.set(id, now)
+    // Its failures from before the sleep say nothing about it now.
+    this.backupFailingSince = null
     this.wake(
       () => true,
       () => true
@@ -392,7 +424,9 @@ export class NzbTransfer implements Transfer {
         if (!block) {
           this.goIdle(stream)
           // Others still have articles in flight: one may come back for this connection to take.
-          if (this.inFlight.size > 0) {
+          // A backup server connection doesn't wait for that: it is opened again once there is
+          // an article for it (see reconcile), rather than held open for the whole download.
+          if (this.inFlight.size > 0 && !connection.backup) {
             await delay(IDLE_POLL_MS, connection.wait)
             continue
           }
@@ -510,10 +544,14 @@ export class NzbTransfer implements Transfer {
     bytes: number
   ): void {
     const networkId = stream.interfaceId
-    this.aliveAt.set(networkId, Date.now())
-    if (this.connections.get(stream.id)?.backup) this.backupFailingSince = null
     const network = this.network(networkId)
-    if (network.status === 'unreachable') network.status = 'on'
+    // The backup server getting through says nothing of the main one (see failed).
+    if (this.connections.get(stream.id)?.backup) {
+      this.backupAnswered()
+    } else {
+      this.aliveAt.set(networkId, Date.now())
+      if (network.status === 'unreachable') network.status = 'on'
+    }
     // Shown as it comes, short of its last byte: the article counts once it's written.
     const gained = advanceBlock(block, networkId, position)
     stream.bytesDownloaded += gained
@@ -547,8 +585,7 @@ export class NzbTransfer implements Transfer {
   ): void {
     this.release(stream, block)
     this.damaged.delete(block.index)
-    // It answered: reachable.
-    if (connection.backup) this.backupFailingSince = null
+    if (connection.backup) this.backupAnswered()
     if (connection.backup || !this.server?.backup || this.backupDown) {
       this.markMissing(block)
       return
@@ -663,19 +700,19 @@ export class NzbTransfer implements Transfer {
   }
 
   /**
-   * A backup server connection failed. The backup server turning the sign-in down, or failing
-   * every try for SILENT_AFTER_MS through a network the main server isn't out of reach on, is
-   * out of this run: what it would have sent counts as missing, and the download carries on
-   * without it. Until then each connection tries again, as the main server's do; one fewer when
-   * it turned one away for the account's limit.
+   * A backup server connection failed. The backup server turning the sign-in down, having no
+   * route from the network, or answering what makes no sense time after time is out of this run:
+   * what it would have sent counts as missing (asked for again on a resume, see reconcile), and
+   * the download carries on without it. Anything else it is tried again, as the main server is:
+   * failing for SILENT_AFTER_MS, it can't be reached and keeps one connection trying. One fewer
+   * when it turned one away for the account's limit.
    */
   private async backupFailed(
     stream: HttpStreamState,
     connection: Connection,
     error: unknown
   ): Promise<'continue' | 'stop'> {
-    const now = Date.now()
-    this.backupFailingSince ??= now
+    this.backupFailingSince ??= Date.now()
     if (error instanceof NntpRefusedError) {
       // Over the account's limit, as for the main server (see failed).
       const live = this.backupStreams.filter(
@@ -687,27 +724,34 @@ export class NzbTransfer implements Transfer {
         this.host.reconcile()
         return 'stop'
       }
+    } else if (!(error instanceof ConnectionError)) {
+      connection.strikes += 1
     }
     if (
       error instanceof NntpAuthError ||
-      (this.network(stream.interfaceId).status === 'on' &&
-        now - this.backupFailingSince >= SILENT_AFTER_MS)
+      error instanceof NoCompatibleRouteError ||
+      connection.strikes > MAX_STRIKES
     ) {
       this.backupDown = true
       this.runtime.state.backupError =
         error instanceof NntpAuthError
           ? `The backup server didn’t accept the username or password. (${error.message})`
-          : `The backup server couldn’t be reached. (${message(error)})`
+          : `The backup server couldn’t be used. (${message(error)})`
       this.host.reconcile()
       return 'stop'
     }
+    const unreachable = this.backupUnreachable()
+    if (unreachable) {
+      this.runtime.state.backupError = `The backup server can’t be reached. Plexo keeps trying. (${message(error)})`
+      // Down to one connection.
+      this.host.reconcile()
+    }
     connection.failures += 1
+    let wait = retryDelayMs(connection.failures)
+    if (unreachable) wait = Math.min(wait, UNREACHABLE_RETRY_MS)
     stream.status = 'retrying'
     this.host.scheduleUpdate()
-    await delay(
-      retryDelayMs(connection.failures),
-      AbortSignal.any([connection.wait, connection.nudge.signal])
-    )
+    await delay(wait, AbortSignal.any([connection.wait, connection.nudge.signal]))
     if (connection.nudge.signal.aborted) connection.nudge = new AbortController()
     if (this.stopped(connection)) return 'stop'
     this.goIdle(stream)

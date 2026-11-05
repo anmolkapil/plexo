@@ -400,6 +400,22 @@ export const DownloadingScreen = memo(function DownloadingScreen({
                   <span>{download.fromBackup} from backup</span>
                 </>
               )}
+              {/* Nothing missing yet: what's waiting for the backup server waits for it to answer. */}
+              {download.kind === 'nzb' && download.backupError && missingArticles === 0 && (
+                <>
+                  <Dot />
+                  <Tooltip>
+                    <TooltipTrigger
+                      render={
+                        <span tabIndex={0} className="text-destructive outline-none">
+                          backup unreachable
+                        </span>
+                      }
+                    />
+                    <TooltipContent>{download.backupError}</TooltipContent>
+                  </Tooltip>
+                </>
+              )}
               {/* Several files: they open below. One is the name above. */}
               {download.kind === 'torrent' && download.files.total > 1 && (
                 <>
