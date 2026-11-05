@@ -22,6 +22,17 @@ const sectionHeaderClass =
  * where articles were missing, unpacking where it's an archive. Null when it's ready as it is. */
 function usenetNote(
   files: NzbFileState[],
+  backupError: string | undefined,
+  fromBackup = 0
+): { warning: boolean; text: string } | null {
+  const note = usenetTodo(files, backupError)
+  if (!fromBackup) return note
+  const backup = `${fromBackup} ${fromBackup === 1 ? 'article' : 'articles'} came from the backup server.`
+  return note ? { ...note, text: `${note.text} ${backup}` } : { warning: false, text: backup }
+}
+
+function usenetTodo(
+  files: NzbFileState[],
   backupError: string | undefined
 ): { warning: boolean; text: string } | null {
   const missing = files.reduce((sum, file) => sum + file.missing, 0)
@@ -87,7 +98,10 @@ export function CompleteScreen({
       : download.kind === 'nzb'
         ? { chosen: download.nzbFiles.length, total: download.nzbFiles.length }
         : null
-  const note = download.kind === 'nzb' ? usenetNote(download.nzbFiles, download.backupError) : null
+  const note =
+    download.kind === 'nzb'
+      ? usenetNote(download.nzbFiles, download.backupError, download.fromBackup)
+      : null
 
   return (
     <div className="flex h-full flex-col bg-background">

@@ -429,6 +429,9 @@ test.describe('Backup news server', () => {
     // Only what the news server lacked was asked of the backup.
     expect(backup.served.every((article) => article.fault === 'ok')).toBe(true)
     expect(askedFor(backup).size).toBe(2)
+    // The complete screen says so too, not only the downloading one.
+    await plexo.page.getByText('Test.Release', { exact: true }).first().click()
+    await expect(plexo.page.getByText('2 articles came from the backup server.')).toBeVisible()
   })
 
   test('an article neither server has counts as missing', async ({ plexo }) => {
