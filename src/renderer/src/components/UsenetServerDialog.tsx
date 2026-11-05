@@ -96,8 +96,12 @@ function UsenetServerForm({
   const [tls, setTls] = useState(server?.tls ?? true)
   const [port, setPort] = useState(String(server?.port ?? 563))
   const [username, setUsername] = useState(server?.username ?? '')
-  // Left empty, the saved password stays.
+  // Left empty, the saved password stays, but only for the host and username it was saved with.
   const [password, setPassword] = useState('')
+  const keepsPassword =
+    server?.hasPassword === true &&
+    host.trim() === server.host &&
+    username.trim() === server.username
   const [connections, setConnections] = useState(String(server?.connections ?? 8))
   const [busy, setBusy] = useState<'test' | 'save' | null>(null)
   const [result, setResult] = useState<{ ok: boolean; text: string } | null>(null)
@@ -108,7 +112,7 @@ function UsenetServerForm({
     tls,
     username: username.trim(),
     connections: Number(connections),
-    password: password === '' && server?.hasPassword ? undefined : password
+    password: password === '' && keepsPassword ? undefined : password
   })
   const valid =
     host.trim() !== '' &&
@@ -227,10 +231,15 @@ function UsenetServerForm({
             type="password"
             value={password}
             onChange={(event) => setPassword(event.target.value)}
-            placeholder={server?.hasPassword ? 'Saved' : ''}
+            placeholder={keepsPassword ? 'Saved' : ''}
             autoComplete="off"
           />
         </div>
+        {server?.hasPassword && !keepsPassword && password === '' && (
+          <p className={hintClass}>
+            Enter the password: the saved one only goes to the server and username it was saved for.
+          </p>
+        )}
         <div className="flex items-center gap-3">
           <label htmlFor={`${id}-connections`} className={labelClass}>
             Connections

@@ -104,8 +104,8 @@ export async function usenetEnabled(): Promise<boolean> {
   return (await loadUsenetServer())?.enabled !== false
 }
 
-/** The server (or the backup) as `input` sets it: the password it gives, or the one saved when
- * it gives none. */
+/** The server (or the backup) as `input` sets it: the password it gives, or, when it gives none,
+ * the one saved for the same host and username. */
 export async function serverFromInput(
   input: UsenetServerInput,
   backup = false
@@ -116,7 +116,11 @@ export async function serverFromInput(
     throw new Error('A password can’t span lines')
   }
   const saved = await loadUsenetServer()
-  return { ...server, password: input.password ?? (backup ? saved?.backup : saved)?.password ?? '' }
+  const kept = backup ? saved?.backup : saved
+  // A password never goes to another server or account. Port and SSL may change: the same
+  // provider takes the same login on each of its ports.
+  const same = kept?.host === server.host && kept.username === server.username
+  return { ...server, password: input.password ?? (same ? kept.password : '') }
 }
 
 /** Sets the news server, keeping its backup; its switch as `input` gives it, or as saved. */

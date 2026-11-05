@@ -739,6 +739,47 @@ test.describe('Usenet settings', () => {
     await plexo.start(await nzbOnDisk(server), server.expectedSha())
     await plexo.waitForNzbStatus('completed', 30_000)
   })
+
+  test('a saved password goes only to the server and username it was saved for', async ({
+    plexo
+  }) => {
+    const server = await newsServer({ username: 'reader', password: 'right' })
+    const elsewhere = { host: 'old.example.com', username: 'reader', password: 'old-secret' }
+    await useServer(plexo, server, elsewhere)
+    await useBackup(plexo, server, elsewhere)
+    // Moved to this server without the password typed again: neither role sends the old one here.
+    const moved = { host: '127.0.0.1', port: server.port, tls: false, username: 'reader' }
+    for (const backup of [false, true]) {
+      await expect(
+        plexo.api.testUsenetServer({ ...moved, connections: 2 }, backup)
+      ).rejects.toThrow(/username or password/)
+    }
+
+    let dialog = await openUsenetPage(plexo)
+    await dialog.getByRole('button', { name: 'Change server' }).click()
+    const form = plexo.page.getByRole('dialog', { name: 'Usenet server' })
+    await expect(form.getByLabel('Password')).toHaveAttribute('placeholder', 'Saved')
+    await form.getByLabel('Server').fill('127.0.0.1')
+    await expect(form.getByLabel('Password')).toHaveAttribute('placeholder', '')
+    await expect(form.getByText(/^Enter the password/)).toBeVisible()
+    await form.getByRole('button', { name: 'Test' }).click()
+    await expect(form.getByText(/username or password/)).toBeVisible()
+    await form.getByRole('button', { name: 'Save' }).click()
+    await expect(form).toBeHidden()
+    expect(server.passwords).not.toContain('old-secret')
+    expect((await plexo.api.usenetServer())?.hasPassword).toBe(false)
+    await dialog.getByRole('button', { name: 'Cancel' }).click()
+
+    // The same server and username: the saved password is still used.
+    await useServer(plexo, server, { username: 'reader', password: 'right' })
+    await plexo.api.testUsenetServer({ ...moved, connections: 2 })
+    dialog = await openUsenetPage(plexo)
+    await dialog.getByRole('button', { name: 'Change server' }).click()
+    await expect(form.getByLabel('Password')).toHaveAttribute('placeholder', 'Saved')
+    await expect(form.getByText(/^Enter the password/)).toBeHidden()
+    await form.getByRole('button', { name: 'Test' }).click()
+    await expect(form.getByText('Connected and signed in.')).toBeVisible()
+  })
 })
 
 test.describe('Backup server settings', () => {

@@ -155,6 +155,8 @@ export class NewsServer {
   readonly served: ServedArticle[] = []
   /** Connections turned away for going over maxConnections. */
   refused = 0
+  /** Every password it was sent (AUTHINFO PASS). */
+  readonly passwords: string[] = []
   port = 0
 
   constructor(private readonly options: NewsServerOptions) {
@@ -258,14 +260,12 @@ ${files.join('\n')}
             if (kind.toUpperCase() === 'USER') {
               user = value.join(' ')
               socket.write('381 Password required\r\n')
-            } else if (
-              user === this.options.username &&
-              value.join(' ') === this.options.password
-            ) {
-              signedIn = true
-              socket.write('281 Authentication accepted\r\n')
             } else {
-              socket.write('481 Authentication failed\r\n')
+              this.passwords.push(value.join(' '))
+              if (user === this.options.username && value.join(' ') === this.options.password) {
+                signedIn = true
+                socket.write('281 Authentication accepted\r\n')
+              } else socket.write('481 Authentication failed\r\n')
             }
             break
           }
