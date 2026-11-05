@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { NzbDownloadState, UsenetServerInput } from '../src/shared/types'
 import type { Locator } from '@playwright/test'
-import { expect, LAN_ADDRESS, test, type PlexoApp } from './fixtures'
+import { expect, expectNzb, LAN_ADDRESS, test, type PlexoApp } from './fixtures'
 import { NewsServer, type NewsServerOptions } from './newsServer'
 import { seededBytes } from './origin'
 
@@ -486,6 +486,41 @@ test.describe('Usenet settings', () => {
     await useServer(plexo, server, { connections: 2, enabled: true })
     await plexo.api.resumeDownload(id)
     await plexo.waitForNzbStatus('completed', 30_000)
+  })
+
+  test('off, a queued NZB waits rather than fails, and starts once it’s back on', async ({
+    plexo
+  }) => {
+    await plexo.api.updateSettings({ downloadsAtOnce: 1 })
+    const server = await newsServer({ delayMs: 40 })
+    await useServer(plexo, server, { connections: 2 })
+    const running = await plexo.start(
+      await nzbOnDisk(server, 'First.Release.nzb'),
+      server.expectedSha()
+    )
+    await plexo.waitUntil((state) => state.id === running && countDone(expectNzb(state)) >= 2)
+    const queued = await plexo.start(
+      await nzbOnDisk(server, 'Second.Release.nzb'),
+      server.expectedSha()
+    )
+    expect((await plexo.byId(queued))?.status).toBe('queued')
+
+    await useServer(plexo, server, { connections: 2, enabled: false })
+    await expect
+      .poll(async () => (await plexo.byId(running))?.status, { timeout: 10_000 })
+      .toBe('error')
+    // Cancelled, it makes room in the queue once more (see cancel): the queued one still waits,
+    // having asked for nothing.
+    await plexo.api.cancelDownload(running)
+    const waiting = expectNzb((await plexo.byId(queued))!)
+    expect(waiting.status).toBe('queued')
+    expect(countDone(waiting)).toBe(0)
+    expect(waiting.streams).toHaveLength(0)
+
+    await useServer(plexo, server, { connections: 2, enabled: true })
+    await expect
+      .poll(async () => (await plexo.byId(queued))?.status, { timeout: 30_000 })
+      .toBe('completed')
   })
 
   test('the news server is set up from Speed & data limits', async ({ plexo }) => {
