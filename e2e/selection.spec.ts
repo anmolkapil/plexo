@@ -2,6 +2,7 @@ import { existsSync } from 'node:fs'
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { basename, dirname, join } from 'node:path'
 import type { Page } from '@playwright/test'
+import { DEFAULT_DOWNLOAD_SCHEDULE } from '../src/shared/downloadSchedule'
 import { BLOCK, expect, test, treeSha } from './fixtures'
 import { seededBytes } from './origin'
 import { named, Swarm, torrentFileOnDisk } from './torrentSwarm'
@@ -332,6 +333,9 @@ test('search box maintains minimum usable width at 720px minimum window width wi
     const window = BrowserWindow.getAllWindows()[0]
     window.setSize(720, 620)
   }, null)
+  await plexo.api.updateSettings({
+    downloadSchedule: { ...DEFAULT_DOWNLOAD_SCHEDULE, enabled: true }
+  })
 
   const origin = await serve({ size: 24 * BLOCK })
   const reached = origin.hold(6 * BLOCK)
@@ -346,6 +350,12 @@ test('search box maintains minimum usable width at 720px minimum window width wi
   const box = await searchInput.boundingBox()
   expect(box).not.toBeNull()
   expect(box!.width).toBeGreaterThanOrEqual(130)
+  await expect(page.getByRole('button', { name: 'New download' })).toBeInViewport({ ratio: 1 })
+  expect(
+    await page.evaluate(
+      () => document.documentElement.scrollWidth <= document.documentElement.clientWidth
+    )
+  ).toBe(true)
 
   origin.release()
 })

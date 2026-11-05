@@ -217,7 +217,7 @@ export function DownloadsScreen(): React.JSX.Element {
   return (
     <div className="flex h-full flex-col bg-background">
       {chosen.length === 0 ? (
-        <div className="flex h-12 shrink-0 items-center gap-2 border-b-[0.5px] border-border px-3 sm:gap-3 sm:px-5">
+        <div className="relative flex h-12 shrink-0 items-center gap-2 border-b-[0.5px] border-border px-3 sm:gap-3 sm:px-5">
           <DownloadFilterMenu
             value={filter}
             counts={counts}
@@ -233,7 +233,7 @@ export function DownloadsScreen(): React.JSX.Element {
             </div>
           )}
           <div className="flex-1" />
-          <div className="relative w-44 shrink-0 sm:w-48 md:w-52 lg:w-60">
+          <div className="relative w-44 shrink-0 sm:w-48 md:w-52 min-[900px]:absolute min-[900px]:left-1/2 min-[900px]:-translate-x-1/2 lg:w-60">
             <InputGroup className="h-7 w-full border-border/70 bg-secondary/30">
               <InputGroupAddon align="inline-start">
                 <Search className="size-3.5 text-muted-foreground" />
