@@ -693,4 +693,37 @@ test.describe('NZB unpacking, stopped by a quit', () => {
     const done = await plexo.waitForNzbStatus('completed', 30_000)
     expect(done.postProcess).toMatchObject({ unpacked: true })
   })
+
+  test('stopped once unpacked, it only deletes the archives on Resume', async ({ plexo }) => {
+    test.skip(process.platform === 'win32', 'the stand-in is a shell script')
+    const server = await newsServer({
+      files: [{ name: 'Test.Release.7z', data: seededBytes(40 * KB, 72) }]
+    })
+    await useServer(plexo, server)
+
+    const id = await plexo.start(await nzbOnDisk(server), treeSha([CONTENT[0]]))
+    const unpacking = await plexo.waitUntil(
+      (state) => state.kind === 'nzb' && state.postProcess?.percent === 12,
+      30_000
+    )
+    await plexo.quit()
+    await rm(pidFile, { force: true })
+    // As a quit right after the last move leaves it: unpacked and saved, the archive still there.
+    const folder = unpacking.destinationPath
+    for (const name of await readdir(folder)) {
+      if (name.startsWith('.plexo-unpack-')) await rm(join(folder, name), { recursive: true })
+    }
+    await writeFile(join(folder, 'movie.mkv'), CONTENT[0].data)
+    const manifestPath = join(plexo.dirs.userData, 'downloads', id, 'manifest.json')
+    const manifest = JSON.parse(await readFile(manifestPath, 'utf-8'))
+    Object.assign(manifest.state.postProcess, { unpacked: true, unpackedNames: ['movie.mkv'] })
+    await writeFile(manifestPath, JSON.stringify(manifest))
+
+    await plexo.relaunch()
+    await plexo.waitForNzbStatus('paused')
+    await plexo.api.resumeDownload(id)
+    const done = await plexo.waitForNzbStatus('completed', 30_000)
+    expect(done.postProcess?.unpacked).toBe(true)
+    expect(await readdir(folder)).toEqual(['movie.mkv'])
+  })
 })
