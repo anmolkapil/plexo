@@ -274,3 +274,43 @@ test('a removal that fails for one download still removes the rest, and asks aga
   await expect(page.getByRole('checkbox', { name: 'Select goes.bin' })).toHaveCount(0)
   expect(existsSync(join(trashed, 'goes.bin'))).toBe(true)
 })
+
+test('search and filter interaction with selection: no crash on empty query filter, Cmd+A selects matching only, Esc clears selection', async ({
+  plexo,
+  serve
+}) => {
+  const first = await serve({ size: BLOCK })
+  await plexo.start(first.url(), first.sha256, { fileName: 'alpha-doc.bin' })
+  await plexo.waitForStatus('completed')
+
+  const second = await serve({ size: BLOCK })
+  await plexo.start(second.url(), second.sha256, { fileName: 'beta-video.bin' })
+  await plexo.waitForStatus('completed')
+
+  const page = plexo.page
+  const search = page.getByRole('textbox', { name: 'Search downloads' })
+
+  // 1. Pick a status filter ('Finished') and type a query matching nothing ('zzz').
+  // Verifies bug 1: no white screen / crash occurs when a group has 0 matches.
+  await page.getByRole('button', { name: 'All downloads' }).click()
+  await page.getByRole('menuitemradio', { name: 'Finished' }).click()
+  await search.fill('zzz')
+  await expect(page.getByText(/No downloads matching/)).toBeVisible()
+
+  // 2. Search for 'alpha': only alpha-doc.bin shows
+  await search.fill('alpha')
+  await expect(page.getByText('alpha-doc.bin')).toBeVisible()
+  await expect(page.getByText('beta-video.bin')).toHaveCount(0)
+
+  // 3. Press Cmd+A / Ctrl+A: selects only the matching row (alpha-doc.bin)
+  const modifier = process.platform === 'darwin' ? 'Meta' : 'Control'
+  await search.blur()
+  await page.keyboard.press(`${modifier}+a`)
+  await expect(page.getByRole('checkbox', { name: 'Select alpha-doc.bin' })).toBeChecked()
+
+  // 4. Press Escape with a selection: first Esc clears selection (not the hidden query)
+  await page.keyboard.press('Escape')
+  await expect(page.getByRole('checkbox', { name: 'Select alpha-doc.bin' })).not.toBeChecked()
+  // Search box is visible again with 'alpha' still in it
+  await expect(search).toHaveValue('alpha')
+})

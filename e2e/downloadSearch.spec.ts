@@ -2,7 +2,8 @@ import { expect, test } from '@playwright/test'
 import {
   filterDownloadsByQuery,
   matchesSearch,
-  normalizeSearchQuery
+  normalizeSearchQuery,
+  searchTokens
 } from '../src/shared/downloadSearch'
 
 test.describe('download search @smoke', () => {
@@ -78,5 +79,13 @@ test.describe('download search @smoke', () => {
 
     const noMatches = filterDownloadsByQuery(sampleDownloads, 'nonexistent_file')
     expect(noMatches).toHaveLength(0)
+  })
+
+  test('searchTokens and token array matching avoid redundant string splitting', () => {
+    const tokens = searchTokens('  UBUNTU   Desktop  ')
+    expect(tokens).toEqual(['ubuntu', 'desktop'])
+    expect(searchTokens('   ')).toEqual([])
+    expect(matchesSearch(sampleDownloads[0], tokens)).toBe(true)
+    expect(matchesSearch(sampleDownloads[1], tokens)).toBe(false)
   })
 })

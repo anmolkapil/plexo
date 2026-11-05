@@ -6,16 +6,24 @@ export function normalizeSearchQuery(query: string): string {
 }
 
 /**
- * Checks whether a download item matches a search query.
+ * Splits a search query into non-empty lowercase normalized tokens.
+ */
+export function searchTokens(query: string): string[] {
+  const normalized = normalizeSearchQuery(query)
+  return normalized ? normalized.split(/\s+/).filter(Boolean) : []
+}
+
+/**
+ * Checks whether a download item matches a search query or a pre-computed list of tokens.
  * Matches case-insensitively across fileName and url.
  * Multiple space-separated keywords must all match (AND search).
  * An empty or whitespace-only query matches all items.
  */
-export function matchesSearch(item: { fileName: string; url?: string }, query: string): boolean {
-  const normalized = normalizeSearchQuery(query)
-  if (!normalized) return true
-
-  const tokens = normalized.split(/\s+/).filter(Boolean)
+export function matchesSearch(
+  item: { fileName: string; url?: string },
+  queryOrTokens: string | readonly string[]
+): boolean {
+  const tokens = typeof queryOrTokens === 'string' ? searchTokens(queryOrTokens) : queryOrTokens
   if (tokens.length === 0) return true
 
   const name = item.fileName.normalize('NFC').toLowerCase()
@@ -32,6 +40,7 @@ export function filterDownloadsByQuery<T extends { fileName: string; url?: strin
   items: readonly T[],
   query: string
 ): T[] {
-  if (!query.trim()) return [...items]
-  return items.filter((item) => matchesSearch(item, query))
+  const tokens = searchTokens(query)
+  if (tokens.length === 0) return [...items]
+  return items.filter((item) => matchesSearch(item, tokens))
 }

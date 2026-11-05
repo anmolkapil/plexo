@@ -1,7 +1,7 @@
 import type { DownloadState, FinishedDownload } from '@shared/types'
 import { ChevronRight, Plus, Search, X } from 'lucide-react'
 import { cn } from 'cn'
-import { Fragment, memo, useCallback, useEffect, useRef, useState } from 'react'
+import { Fragment, memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { DownloadContextMenu } from '../components/DownloadContextMenu'
 import { useDownloadActions, useDownloadActionsState } from '../components/downloadActionsContext'
 import { ACTION_META, toolbarLabel } from '../components/downloadActionMeta'
@@ -12,7 +12,7 @@ import { LimitsDialog } from '../components/LimitsDialog'
 import { ScheduleIndicator } from '../components/ScheduleIndicator'
 import { networkStatusText } from '../components/NetworkRow'
 import { scheduleMessage, scheduleWindow } from '@shared/downloadSchedule'
-import { matchesSearch } from '@shared/downloadSearch'
+import { matchesSearch, searchTokens } from '@shared/downloadSearch'
 import { NetworksMenu } from '../components/NetworksMenu'
 import { TorrentBadge } from '../components/TorrentBadge'
 import { Button } from '../components/ui/button'
@@ -108,7 +108,8 @@ export function DownloadsScreen(): React.JSX.Element {
   const [searchQuery, setSearchQuery] = useState('')
   const searchInputRef = useRef<HTMLInputElement>(null)
   const isMac = window.plexo.platform === 'darwin'
-  const isSearching = searchQuery.trim().length > 0
+  const tokens = useMemo(() => searchTokens(searchQuery), [searchQuery])
+  const isSearching = tokens.length > 0
   const [now, setNow] = useState(() => Date.now())
 
   useEffect(() => {
@@ -131,12 +132,10 @@ export function DownloadsScreen(): React.JSX.Element {
   const groups = allGroups
     .map((group) => ({
       ...group,
-      items: isSearching
-        ? group.items.filter((item) => matchesSearch(item, searchQuery))
-        : group.items
+      items: isSearching ? group.items.filter((item) => matchesSearch(item, tokens)) : group.items
     }))
     .filter(
-      (group) => (filter === 'all' || filterOf(group.items[0]) === filter) && group.items.length > 0
+      (group) => group.items.length > 0 && (filter === 'all' || filterOf(group.items[0]) === filter)
     )
   const items = groups.flatMap((group) => group.items)
   // Only what's still listed counts: one that finished or went is no longer selected.
@@ -163,19 +162,6 @@ export function DownloadsScreen(): React.JSX.Element {
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent): void => {
       const command = isMac ? event.metaKey : event.ctrlKey
-      if (command && event.key.toLowerCase() === 'f') {
-        event.preventDefault()
-        searchInputRef.current?.focus()
-        searchInputRef.current?.select()
-        return
-      }
-      if (event.key === 'Escape' && searchQuery) {
-        event.preventDefault()
-        setSearchQuery('')
-        searchInputRef.current?.blur()
-        return
-      }
-
       const target = event.target
       if (
         event.defaultPrevented ||
@@ -185,8 +171,13 @@ export function DownloadsScreen(): React.JSX.Element {
       )
         return
 
-      if (event.key === 'Escape') setSelected(new Set())
-      else if (command && event.key.toLowerCase() === 'a') {
+      if (event.key === 'Escape') {
+        setSelected(new Set())
+      } else if (command && event.key.toLowerCase() === 'f') {
+        event.preventDefault()
+        searchInputRef.current?.focus()
+        searchInputRef.current?.select()
+      } else if (command && event.key.toLowerCase() === 'a') {
         event.preventDefault()
         setSelected(new Set(items.map((item) => item.id)))
       } else if (event.key === 'Delete' || event.key === 'Backspace') {
@@ -201,7 +192,7 @@ export function DownloadsScreen(): React.JSX.Element {
     }
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
-  }, [items, chosen, perform, isMac, searchQuery])
+  }, [items, chosen, perform, isMac])
 
   // What the toolbar offers: the two actions most needed for what's selected as buttons, and
   // the rest of what the menu does for the selection behind More, so six never need more room.
@@ -232,7 +223,7 @@ export function DownloadsScreen(): React.JSX.Element {
             </div>
           )}
           <div className="flex-1" />
-          <div className="relative w-44 sm:w-56">
+          <div className="relative min-w-0 flex-1 max-w-56">
             <InputGroup className="h-7 w-full border-border/70 bg-secondary/30">
               <InputGroupAddon align="inline-start">
                 <Search className="size-3.5 text-muted-foreground" />
@@ -242,6 +233,16 @@ export function DownloadsScreen(): React.JSX.Element {
                 type="text"
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === 'Escape') {
+                    event.preventDefault()
+                    if (searchQuery) {
+                      setSearchQuery('')
+                    } else {
+                      searchInputRef.current?.blur()
+                    }
+                  }
+                }}
                 placeholder={`Search downloads (${isMac ? '⌘F' : 'Ctrl+F'})`}
                 className="h-7 text-xs placeholder:text-muted-foreground/70"
                 aria-label="Search downloads"
@@ -381,7 +382,7 @@ export function DownloadsScreen(): React.JSX.Element {
                   <span className="ml-2.5 tracking-normal">{group.items.length}</span>
                 </h2>
                 <div className="flex-1" />
-                {group.label === 'Finished' && history.length > 0 && (
+                {group.label === 'Finished' && history.length > 0 && !isSearching && (
                   <button
                     type="button"
                     className="text-[12.5px] text-[var(--text-secondary)] hover:text-foreground"
