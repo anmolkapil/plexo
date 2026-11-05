@@ -113,8 +113,12 @@ function NewDownloadForm({ onDone }: { onDone: () => void }): React.JSX.Element 
   const dropLink = useAppStore((store) => store.dropLink)
   const shownLink = links.find((link) => link.id === shownId)
   const position = shownLink ? links.indexOf(shownLink) : -1
-  const destinationDir = useAppStore((store) => store.destinationDir)
-  const setDestinationDir = useAppStore((store) => store.setDestinationDir)
+  const defaultDestinationDir = useAppStore((store) => store.defaultDestinationDir)
+  const askDestinationEachTime = useAppStore((store) => store.askDestinationEachTime)
+  const storeDestinationDir = useAppStore((store) => store.destinationDir)
+  const [destinationDir, setDestinationDir] = useState(
+    () => defaultDestinationDir ?? storeDestinationDir
+  )
   const full = useAppStore(
     (store) =>
       Object.values(store.downloads).filter((download) => download.status === 'downloading')
@@ -308,7 +312,12 @@ function NewDownloadForm({ onDone }: { onDone: () => void }): React.JSX.Element 
 
   const handleBrowse = async (): Promise<void> => {
     const chosen = await window.plexo.chooseDestinationFolder(destinationDir)
-    if (chosen) setDestinationDir(chosen)
+    if (chosen) {
+      setDestinationDir(chosen)
+      if (!defaultDestinationDir) {
+        useAppStore.getState().setDestinationDir(chosen)
+      }
+    }
   }
 
   // A .torrent or .nzb file goes in the link field as its path; the probe reads it from there.
@@ -396,6 +405,26 @@ function NewDownloadForm({ onDone }: { onDone: () => void }): React.JSX.Element 
       setStarting(false)
     }
   }
+
+  const handleStartRef = useRef(handleStart)
+  useEffect(() => {
+    handleStartRef.current = handleStart
+  })
+  const autoStartedRef = useRef(false)
+  useEffect(() => {
+    if (
+      !askDestinationEachTime &&
+      shownLink &&
+      !shownLink.resumes &&
+      probe.status === 'ready' &&
+      canStart &&
+      !starting &&
+      !autoStartedRef.current
+    ) {
+      autoStartedRef.current = true
+      void handleStartRef.current()
+    }
+  }, [askDestinationEachTime, shownLink, probe.status, canStart, starting])
 
   const fileName = ready ? (fileNameOverride ?? ready.suggestedFileName) : ''
 

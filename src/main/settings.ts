@@ -110,6 +110,15 @@ function sanitizeSettings(parsed: unknown): AppSettings {
   if (typeof destinationDir === 'string' && isAbsolute(destinationDir)) {
     settings.destinationDir = destinationDir
   }
+  if (
+    typeof parsed.defaultDestinationDir === 'string' &&
+    isAbsolute(parsed.defaultDestinationDir)
+  ) {
+    settings.defaultDestinationDir = parsed.defaultDestinationDir
+  }
+  if (typeof parsed.askDestinationEachTime === 'boolean') {
+    settings.askDestinationEachTime = parsed.askDestinationEachTime
+  }
   // Clamped rather than dropped: a count saved under an older, higher limit keeps the most allowed.
   if (Number.isInteger(downloadsAtOnce) && (downloadsAtOnce as number) >= DOWNLOADS_AT_ONCE.min) {
     settings.downloadsAtOnce = Math.min(downloadsAtOnce as number, DOWNLOADS_AT_ONCE.max)

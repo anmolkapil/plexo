@@ -8,7 +8,6 @@ import { ACTION_META, toolbarLabel } from '../components/downloadActionMeta'
 import { MoreActionsMenu } from '../components/MoreActionsMenu'
 import { DownloadFilterMenu } from '../components/DownloadFilterMenu'
 import { CombineDiagram } from '../components/CombineDiagram'
-import { LimitsDialog } from '../components/LimitsDialog'
 import { ScheduleIndicator } from '../components/ScheduleIndicator'
 import { networkStatusText } from '../components/NetworkRow'
 import { scheduleMessage, scheduleWindow } from '@shared/downloadSchedule'
@@ -94,12 +93,10 @@ export function DownloadsScreen(): React.JSX.Element {
   const openTelegram = useAppStore((store) => store.openTelegram)
   const filter = useAppStore((store) => store.downloadFilter)
   const setFilter = useAppStore((store) => store.setDownloadFilter)
+  const openSettings = useAppStore((store) => store.openSettings)
   const [selected, setSelected] = useState<Set<string>>(new Set())
   const { perform, askClearFinished } = useDownloadActions()
   const { busy } = useDownloadActionsState()
-  const [limitsOpen, setLimitsOpen] = useState(false)
-  const [showSchedule, setShowSchedule] = useState(false)
-  const [limitsPage, setLimitsPage] = useState<string | null>(null)
   const [now, setNow] = useState(() => Date.now())
 
   useEffect(() => {
@@ -178,9 +175,7 @@ export function DownloadsScreen(): React.JSX.Element {
   const { buttons: toolbarButtons, more: moreActions } = splitToolbar(availableActions(chosen))
 
   const openSchedule = (): void => {
-    setLimitsPage(null)
-    setShowSchedule(true)
-    setLimitsOpen(true)
+    openSettings(null, true)
   }
 
   return (
@@ -205,9 +200,7 @@ export function DownloadsScreen(): React.JSX.Element {
           <ScheduleIndicator onClick={openSchedule} />
           <NetworksMenu
             onOpenLimits={(page) => {
-              setShowSchedule(false)
-              setLimitsPage(page)
-              setLimitsOpen(true)
+              openSettings(page, false)
             }}
           />
           <Button type="button" variant="secondary" onClick={() => openTelegram()}>
@@ -345,14 +338,6 @@ export function DownloadsScreen(): React.JSX.Element {
           )
         })}
       </div>
-
-      <LimitsDialog
-        open={limitsOpen}
-        showSchedule={showSchedule}
-        onOpenChange={setLimitsOpen}
-        page={limitsPage}
-        onPageChange={setLimitsPage}
-      />
     </div>
   )
 }
