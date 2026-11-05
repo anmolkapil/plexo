@@ -599,7 +599,16 @@ function UsenetPage({
             {server?.backup ? 'Change backup server' : 'Set up backup server'}
           </Button>
           {server?.backup && (
-            <Button type="button" variant="secondary" size="sm" onClick={() => setRemoving(true)}>
+            <Button
+              type="button"
+              variant="secondary"
+              size="sm"
+              // A failure from a remove that was then cancelled is old news.
+              onClick={() => {
+                setError(null)
+                setRemoving(true)
+              }}
+            >
               Remove
             </Button>
           )}

@@ -385,11 +385,8 @@ export const DownloadingScreen = memo(function DownloadingScreen({
                     />
                     <TooltipContent>
                       The news server doesn’t have{' '}
-                      {missingArticles === 1 ? 'this article' : 'these articles'}.{' '}
-                      {download.kind === 'nzb' &&
-                        download.backupError &&
-                        `${download.backupError} `}
-                      Once the download is done, repair its files with their .par2 files.
+                      {missingArticles === 1 ? 'this article' : 'these articles'}. Once the download
+                      is done, repair its files with their .par2 files.
                     </TooltipContent>
                   </Tooltip>
                 </>
@@ -400,8 +397,7 @@ export const DownloadingScreen = memo(function DownloadingScreen({
                   <span>{download.fromBackup} from backup</span>
                 </>
               )}
-              {/* Nothing missing yet: what's waiting for the backup server waits for it to answer. */}
-              {download.kind === 'nzb' && download.backupError && missingArticles === 0 && (
+              {download.kind === 'nzb' && download.backupError && (
                 <>
                   <Dot />
                   <Tooltip>
