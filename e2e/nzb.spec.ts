@@ -61,6 +61,39 @@ async function useServer(
   })
 }
 
+/** A SOCKS5 proxy without auth, IPv4 targets only (greeting, then CONNECT), noting each target. */
+async function socksProxy(): Promise<{
+  targets: string[]
+  port: number
+  close: () => Promise<void>
+}> {
+  const targets: string[] = []
+  const proxy = createTcpServer((client) => {
+    client.once('data', () => {
+      client.write(Buffer.from([0x05, 0x00]))
+      client.once('data', (request: Buffer) => {
+        const host = [...request.subarray(4, 8)].join('.')
+        const port = request.readUInt16BE(8)
+        targets.push(`${host}:${port}`)
+        const upstream = netConnect(port, host, () => {
+          client.write(Buffer.from([0x05, 0x00, 0x00, 0x01, 0, 0, 0, 0, 0, 0]))
+          upstream.pipe(client)
+          client.pipe(upstream)
+        })
+        upstream.on('error', () => client.destroy())
+        client.on('error', () => upstream.destroy())
+      })
+    })
+  })
+  await new Promise<void>((resolve) => proxy.listen(0, '127.0.0.1', resolve))
+  const { port } = proxy.address() as AddressInfo
+  return {
+    targets,
+    port,
+    close: () => new Promise<void>((resolve) => proxy.close(() => resolve()))
+  }
+}
+
 test.describe('NZB downloads', () => {
   test('an NZB’s files, decoded byte for byte into their folder @smoke', async ({ plexo }) => {
     const server = await newsServer()
@@ -336,28 +369,8 @@ test.describe('NZB downloads', () => {
   test('goes through the proxy set on the network', async ({ plexo }) => {
     const server = await newsServer()
     await useServer(plexo, server, { connections: 2 })
-    // SOCKS5 without auth, IPv4 targets only: greeting, then CONNECT.
-    const targets: string[] = []
-    const proxy = createTcpServer((client) => {
-      client.once('data', () => {
-        client.write(Buffer.from([0x05, 0x00]))
-        client.once('data', (request: Buffer) => {
-          const host = [...request.subarray(4, 8)].join('.')
-          const port = request.readUInt16BE(8)
-          targets.push(`${host}:${port}`)
-          const upstream = netConnect(port, host, () => {
-            client.write(Buffer.from([0x05, 0x00, 0x00, 0x01, 0, 0, 0, 0, 0, 0]))
-            upstream.pipe(client)
-            client.pipe(upstream)
-          })
-          upstream.on('error', () => client.destroy())
-          client.on('error', () => upstream.destroy())
-        })
-      })
-    })
-    await new Promise<void>((resolve) => proxy.listen(0, '127.0.0.1', resolve))
+    const { targets, port, close } = await socksProxy()
     try {
-      const port = (proxy.address() as AddressInfo).port
       await plexo.api.updateSettings({
         networkPreferences: {
           a: { proxy: { enabled: true, type: 'socks5', host: '127.0.0.1', port } }
@@ -368,7 +381,7 @@ test.describe('NZB downloads', () => {
       expect(targets.length).toBeGreaterThan(0)
       expect(new Set(targets)).toEqual(new Set([`127.0.0.1:${server.port}`]))
     } finally {
-      await new Promise<void>((resolve) => proxy.close(() => resolve()))
+      await close()
     }
   })
 
@@ -540,6 +553,64 @@ test.describe('Backup news server', () => {
     expect(done.nzbFiles[0].missing).toBe(0)
     expect(done.fromBackup).toBe(2)
     expect(done.backupError).toBeUndefined()
+  })
+
+  test('through the proxy set on the network, the backup server is connected to as well', async ({
+    plexo
+  }) => {
+    const main = await newsServer({ missing: lacking })
+    const backup = await newsServer()
+    await useServer(plexo, main, { connections: 2 })
+    await useBackup(plexo, backup)
+    const { targets, port, close } = await socksProxy()
+    try {
+      await plexo.api.updateSettings({
+        networkPreferences: {
+          a: { proxy: { enabled: true, type: 'socks5', host: '127.0.0.1', port } }
+        }
+      })
+      await plexo.start(
+        await nzbOnDisk(main),
+        main.expectedSha(() => false)
+      )
+      const done = await plexo.waitForNzbStatus('completed', 30_000)
+      expect(done.missingBytes).toBe(0)
+      expect(done.fromBackup).toBe(2)
+      // Every connection the backup server took came through the proxy, none past it.
+      expect(backup.connections).toBeGreaterThan(0)
+      const toBackup = targets.filter((target) => target === `127.0.0.1:${backup.port}`)
+      expect(toBackup).toHaveLength(backup.connections)
+      expect(new Set(targets)).toEqual(
+        new Set([`127.0.0.1:${main.port}`, `127.0.0.1:${backup.port}`])
+      )
+    } finally {
+      await close()
+    }
+  })
+
+  test('an article damaged every time on the news server comes from the backup, counted once', async ({
+    plexo
+  }) => {
+    const damaged = (article: { file: number; number: number }): boolean =>
+      article.file === 0 && (article.number === 2 || article.number === 5)
+    const main = await newsServer({ fault: (article) => (damaged(article) ? 'corrupt' : 'ok') })
+    const backup = await newsServer()
+    await useServer(plexo, main)
+    await useBackup(plexo, backup)
+
+    await plexo.start(
+      await nzbOnDisk(main),
+      main.expectedSha(() => false)
+    )
+    const done = await plexo.waitForNzbStatus('completed', 30_000)
+    expect(done.missingBytes).toBe(0)
+    expect(done.nzbFiles.every((file) => file.missing === 0)).toBe(true)
+    expect(done.fromBackup).toBe(2)
+    expect(askedFor(backup).size).toBe(2)
+    // The damaged copies' bytes aren't counted on top of the backup's: each byte once.
+    expect(done.bytesDownloaded).toBe(done.totalBytes)
+    const perNetwork = done.networks.reduce((sum, network) => sum + network.bytesDownloaded, 0)
+    expect(perNetwork).toBe(done.totalBytes)
   })
 })
 
