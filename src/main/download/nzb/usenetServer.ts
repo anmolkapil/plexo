@@ -7,7 +7,12 @@ import { readJson, updateJson } from '../../jsonFile'
 export type NewsServerConfig = Omit<
   UsenetServer,
   'enabled' | 'backup' | 'hasPassword' | 'passwordInMemory'
-> & { password: string }
+> & {
+  password: string
+  /** Its password as sealed, when this session can't unseal it (no keyring yet, another
+   * keychain): written back as it is, so a session that can still has it. */
+  unread?: string
+}
 
 /** The news server, and the backup for the articles it doesn't have. */
 export interface UsenetServerConfig extends NewsServerConfig {
@@ -67,14 +72,16 @@ function loaded(saved: unknown, role: keyof typeof inMemory): NewsServerConfig |
   const server = checkedServer(saved)
   if (!server || !isRecord(saved)) return null
   let password = inMemory[role] ?? ''
-  if (typeof saved.password === 'string' && canSeal()) {
+  let unread = typeof saved.password === 'string' ? saved.password : undefined
+  if (unread && canSeal()) {
     try {
-      password = safeStorage.decryptString(Buffer.from(saved.password, 'base64'))
+      password = safeStorage.decryptString(Buffer.from(unread, 'base64'))
+      unread = undefined
     } catch {
       // Sealed by another keychain (a restored profile, say): it has to be entered again.
     }
   }
-  return { ...server, password }
+  return { ...server, password, ...(unread && { unread }) }
 }
 
 /** The news server set up, with its backup if it has one, passwords included; null when there's
@@ -90,9 +97,14 @@ export async function loadUsenetServer(): Promise<UsenetServerConfig | null> {
 
 /** As the window may see it. */
 export function viewOf(server: UsenetServerConfig): UsenetServer {
-  const view = ({ password, ...rest }: NewsServerConfig): Omit<UsenetServer, 'enabled'> => ({
+  const view = ({
+    password,
+    unread,
+    ...rest
+  }: NewsServerConfig): Omit<UsenetServer, 'enabled'> => ({
     ...rest,
-    hasPassword: password !== '',
+    // One this session can't unseal is still saved: left blank, it stays.
+    hasPassword: password !== '' || unread !== undefined,
     ...(!canSeal() && { passwordInMemory: true })
   })
   const { enabled, backup, ...main } = server
@@ -101,7 +113,9 @@ export function viewOf(server: UsenetServerConfig): UsenetServer {
 
 /** Whether NZBs download from Usenet: on until switched off, which takes a server set up. */
 export async function usenetEnabled(): Promise<boolean> {
-  return (await loadUsenetServer())?.enabled !== false
+  // Only the switch: no password to unseal for it.
+  const saved = await readJson(serverPath()).catch(() => undefined)
+  return !(isRecord(saved) && checkedServer(saved) && saved.enabled === false)
 }
 
 /** The server (or the backup) as `input` sets it: the password it gives, or, when it gives none,
@@ -120,7 +134,8 @@ export async function serverFromInput(
   // A password never goes to another server or account. Port and SSL may change: the same
   // provider takes the same login on each of its ports.
   const same = kept?.host === server.host && kept.username === server.username
-  return { ...server, password: input.password ?? (same ? kept.password : '') }
+  if (input.password !== undefined || !same) return { ...server, password: input.password ?? '' }
+  return { ...server, password: kept.password, ...(kept.unread && { unread: kept.unread }) }
 }
 
 /** Sets the news server, keeping its backup; its switch as `input` gives it, or as saved. */
@@ -155,7 +170,7 @@ async function write(server: UsenetServerConfig): Promise<UsenetServer> {
 
 /** As the file keeps it: the password sealed, or not at all (kept for this session instead). */
 function sealed(
-  { password, ...fields }: NewsServerConfig,
+  { password, unread, ...fields }: NewsServerConfig,
   role: keyof typeof inMemory
 ): Omit<NewsServerConfig, 'password'> & { password?: string } {
   let sealed: string | undefined
@@ -167,5 +182,7 @@ function sealed(
     }
   }
   inMemory[role] = sealed === undefined ? password || undefined : undefined
-  return { ...fields, ...(sealed && { password: sealed }) }
+  // Nothing new to seal: a password sealed by a keychain this session can't use stays as it is.
+  const kept = sealed ?? (password ? undefined : unread)
+  return { ...fields, ...(kept && { password: kept }) }
 }

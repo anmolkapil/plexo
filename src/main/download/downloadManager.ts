@@ -77,7 +77,7 @@ import {
   type ParsedNzb
 } from './nzb/nzbFile'
 import { NzbTransfer } from './nzb/nzbTransfer'
-import { loadUsenetServer, USENET_OFF } from './nzb/usenetServer'
+import { loadUsenetServer, USENET_OFF, usenetEnabled } from './nzb/usenetServer'
 import {
   clearSpeeds,
   delay,
@@ -437,6 +437,8 @@ export class DownloadManager {
   private awakeBlocker: number | null = null
   /** How many downloads may run at once; the rest wait, queued (see pump). */
   private downloadsAtOnce = DOWNLOADS_AT_ONCE.default
+  /** The Usenet switch, as last saved: while it's off, queued NZBs wait rather than start. */
+  private usenetOn = true
   /** Speed and data limits, for every download together. */
   readonly limits = new Limits(() => this.limitsChanged())
 
@@ -445,12 +447,14 @@ export class DownloadManager {
     private networks: NetworkMonitor,
     private readonly telegram: TelegramServiceApi
   ) {
-    this.initialization = Promise.all([this.restorePersistedDownloads(), this.limits.loaded]).then(
-      async () => {
-        // Read after recovery, including any settings saved while the manifests were loading.
-        await this.configureSettings(await loadSettings())
-      }
-    )
+    this.initialization = Promise.all([
+      this.restorePersistedDownloads(),
+      this.limits.loaded,
+      usenetEnabled().then((on) => (this.usenetOn = on))
+    ]).then(async () => {
+      // Read after recovery, including any settings saved while the manifests were loading.
+      await this.configureSettings(await loadSettings())
+    })
   }
 
   /** Takes up what the user set: how many run at once, and the limits. One running past a
@@ -613,6 +617,8 @@ export class DownloadManager {
       .sort((a, b) => (a.state.queuedAt ?? 0) - (b.state.queuedAt ?? 0))
     for (const runtime of queued) {
       if (this.runningCount() >= this.downloadsAtOnce) return
+      // Each would only fail on the switch, making room for the next to fail too.
+      if (runtime.kind === 'nzb' && !this.usenetOn) continue
       this.begin(runtime)
     }
   }
@@ -1746,9 +1752,15 @@ export class DownloadManager {
     }
   }
 
-  /** Usenet downloads were switched off: the ones running stop rather than keep connecting.
-   * Paused and queued ones stop when they'd start (see NzbTransfer.reconcile). */
-  usenetTurnedOff(): void {
+  /** The Usenet switch was saved. Off, the NZBs running stop rather than keep connecting, and
+   * queued ones wait (see pump); a paused one resumed fails before it connects (see
+   * NzbTransfer.reconcile). On, the queued ones start. */
+  usenetSwitched(on: boolean): void {
+    this.usenetOn = on
+    if (on) {
+      this.pump()
+      return
+    }
     for (const runtime of this.runtimes.values()) {
       if (runtime.kind === 'nzb') this.failDownload(runtime, USENET_OFF)
     }
@@ -2224,7 +2236,10 @@ export class DownloadManager {
     runtime.state.status = 'error'
     runtime.state.error = message
     runtime.state.resumable = !discard
-    this.notify('Download failed', `${runtime.state.fileName}: ${describeError(message)}`)
+    // Switched off by the user, who needs no telling; the download's error still says so.
+    if (message !== USENET_OFF) {
+      this.notify('Download failed', `${runtime.state.fileName}: ${describeError(message)}`)
+    }
     this.stopRun(runtime)
   }
 

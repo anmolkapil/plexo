@@ -290,7 +290,7 @@ export function registerIpcHandlers(getWindow: () => BrowserWindow | null): Down
   })
   handle('saveUsenetServer', async (_event, input) => {
     const server = await saveUsenetServer(input)
-    if (!server.enabled) manager.usenetTurnedOff()
+    manager.usenetSwitched(server.enabled)
     return server
   })
   handle('saveUsenetBackup', async (_event, input) => saveUsenetBackup(input))

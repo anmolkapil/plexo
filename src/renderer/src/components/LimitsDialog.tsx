@@ -563,7 +563,8 @@ function UsenetPage({
       <section className={sectionClass}>
         <h4 className={headingClass}>News server</h4>
         <p className={hintClass}>
-          Where NZB downloads come from, as your Usenet provider gives it. Saved in its own dialog.
+          Where NZB downloads come from, as your Usenet provider gives it. Changes to the server are
+          saved in its own window, right away.
         </p>
         {server && <ServerRows server={server} />}
         <div>
@@ -837,21 +838,13 @@ function LimitsEditor({
       }
     }
     try {
-      if (usenet && usenetEnabled !== undefined && usenetEnabled !== usenet.enabled) {
-        const { host, port, tls, username, connections } = usenet
-        // No password given: the saved one stays.
-        const saved = await window.plexo.saveUsenetServer({
-          host,
-          port,
-          tls,
-          username,
-          connections,
-          enabled: usenetEnabled
-        })
-        setUsenet(saved)
-      }
       await window.plexo.updateSettings(patch)
       useAppStore.setState(patch)
+      // Last, as switching off stops running NZBs: not done when the rest failed to save.
+      if (usenet && usenetEnabled !== undefined && usenetEnabled !== usenet.enabled) {
+        // The server as it is, every field kept. No password given: the saved one stays.
+        setUsenet(await window.plexo.saveUsenetServer({ ...usenet, enabled: usenetEnabled }))
+      }
       onClose()
     } catch (cause) {
       setError(describeError(cause))

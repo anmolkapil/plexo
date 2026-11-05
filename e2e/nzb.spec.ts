@@ -1,11 +1,11 @@
 import { createServer, type Server } from 'node:http'
 import { connect as netConnect, createServer as createTcpServer, type AddressInfo } from 'node:net'
-import { mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { NzbDownloadState, UsenetServerInput } from '../src/shared/types'
 import type { Locator } from '@playwright/test'
-import { expect, LAN_ADDRESS, test, type PlexoApp } from './fixtures'
+import { expect, expectNzb, LAN_ADDRESS, test, type PlexoApp } from './fixtures'
 import { NewsServer, type NewsServerOptions } from './newsServer'
 import { seededBytes } from './origin'
 
@@ -642,10 +642,13 @@ test.describe('Usenet settings', () => {
     plexo
   }) => {
     const server = await newsServer()
-    // Saved before there was a switch: on.
+    const file = join(plexo.dirs.userData, 'usenet-server.json')
+    // Saved before there was a switch: on. Its password sealed by a keychain this session can't
+    // open (another login's, say), so it reads as none.
+    const password = Buffer.from('sealed elsewhere').toString('base64')
     await writeFile(
-      join(plexo.dirs.userData, 'usenet-server.json'),
-      JSON.stringify({ host: '127.0.0.1', port: server.port, tls: false, connections: 3 })
+      file,
+      JSON.stringify({ host: '127.0.0.1', port: server.port, tls: false, connections: 3, password })
     )
     await plexo.relaunch()
     expect((await plexo.api.usenetServer())?.enabled).toBe(true)
@@ -658,6 +661,8 @@ test.describe('Usenet settings', () => {
     await dialog.getByRole('button', { name: 'Save', exact: true }).click()
     await expect(dialog).toBeHidden()
     expect(await plexo.api.usenetServer()).toMatchObject({ enabled: false, connections: 3 })
+    // Kept for a session that can unseal it.
+    expect(JSON.parse(await readFile(file, 'utf-8')).password).toBe(password)
 
     await plexo.relaunch()
     expect((await plexo.api.usenetServer())?.enabled).toBe(false)
@@ -708,6 +713,41 @@ test.describe('Usenet settings', () => {
     await useServer(plexo, server, { connections: 2, enabled: true })
     await plexo.api.resumeDownload(id)
     await plexo.waitForNzbStatus('completed', 30_000)
+  })
+
+  test('off, a queued NZB waits rather than fails, and starts once it’s back on', async ({
+    plexo
+  }) => {
+    await plexo.api.updateSettings({ downloadsAtOnce: 1 })
+    const server = await newsServer({ delayMs: 40 })
+    await useServer(plexo, server, { connections: 2 })
+    const running = await plexo.start(
+      await nzbOnDisk(server, 'First.Release.nzb'),
+      server.expectedSha()
+    )
+    await plexo.waitUntil((state) => state.id === running && countDone(expectNzb(state)) >= 2)
+    const queued = await plexo.start(
+      await nzbOnDisk(server, 'Second.Release.nzb'),
+      server.expectedSha()
+    )
+    expect((await plexo.byId(queued))?.status).toBe('queued')
+
+    await useServer(plexo, server, { connections: 2, enabled: false })
+    await expect
+      .poll(async () => (await plexo.byId(running))?.status, { timeout: 10_000 })
+      .toBe('error')
+    // Cancelled, it makes room in the queue once more (see cancel): the queued one still waits,
+    // having asked for nothing.
+    await plexo.api.cancelDownload(running)
+    const waiting = expectNzb((await plexo.byId(queued))!)
+    expect(waiting.status).toBe('queued')
+    expect(countDone(waiting)).toBe(0)
+    expect(waiting.streams).toHaveLength(0)
+
+    await useServer(plexo, server, { connections: 2, enabled: true })
+    await expect
+      .poll(async () => (await plexo.byId(queued))?.status, { timeout: 30_000 })
+      .toBe('completed')
   })
 
   test('the news server is set up from Speed & data limits', async ({ plexo }) => {
