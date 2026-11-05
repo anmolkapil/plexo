@@ -65,6 +65,16 @@ export interface TorrentInfo {
   /** Where each file will be written, relative to the destination folder, already checked to be
    * safe (see main/download/torrent/paths.ts). */
   files: { path: string; length: number }[]
+  /** Trackers listed in the torrent's metadata. */
+  trackers?: string[]
+  /** Whether the torrent is marked private (BEP 27). */
+  isPrivate?: boolean
+}
+
+export interface TorrentTrackersResult {
+  defaultTrackers: string[]
+  customTrackers: string[]
+  isPrivate: boolean
 }
 
 /** What an NZB holds: Usenet articles, grouped into the files they make up once decoded. */

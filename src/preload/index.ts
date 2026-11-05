@@ -51,6 +51,9 @@ const plexoApi = {
   torrentFiles: (downloadId: string) => invoke('torrentFiles', downloadId),
   chooseTorrentFiles: (downloadId: string, selected: number[]) =>
     invoke('chooseTorrentFiles', downloadId, selected),
+  torrentTrackers: (downloadId: string) => invoke('torrentTrackers', downloadId),
+  addTorrentTrackers: (downloadId: string, trackers: string[]) =>
+    invoke('addTorrentTrackers', downloadId, trackers),
   pauseDownload: (downloadId: string) => invoke('pauseDownload', downloadId),
   resumeDownload: (downloadId: string) => invoke('resumeDownload', downloadId),
   relinkDownload: (downloadId: string, url: string) => invoke('relinkDownload', downloadId, url),

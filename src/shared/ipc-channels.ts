@@ -20,6 +20,8 @@ export const IpcChannels = {
   historyChanged: 'history:changed',
   torrentFiles: 'download:torrent-files',
   chooseTorrentFiles: 'download:choose-torrent-files',
+  torrentTrackers: 'download:torrent-trackers',
+  addTorrentTrackers: 'download:add-torrent-trackers',
   pauseDownload: 'download:pause',
   resumeDownload: 'download:resume',
   relinkDownload: 'download:relink',
