@@ -307,7 +307,9 @@ test.describe('settings @smoke', () => {
     await plexo.newDownload()
     await page().getByRole('button', { name: 'Change' }).click()
     const destinationRow = (): Locator => page().getByText('Save to', { exact: true }).locator('..')
-    const chosenDestination = await destinationRow().innerText()
+    const destination = async (): Promise<string> =>
+      (await destinationRow().innerText()).replace(/\s*\([^)]*free\)/, '')
+    const chosenDestination = await destination()
     await page().keyboard.press('Escape')
     // A function: the window, and so the page, is a new one after a relaunch.
     const networksMenu = (): Locator =>
@@ -328,7 +330,7 @@ test.describe('settings @smoke', () => {
     const expectAllKept = async (): Promise<void> => {
       await expect(page().getByRole('button', { name: labelAfterSwitch })).toBeVisible()
       await plexo.newDownload()
-      await expect(destinationRow()).toHaveText(chosenDestination, { useInnerText: true })
+      await expect.poll(destination).toBe(chosenDestination)
       // Presentation may abbreviate home; persistence must retain the usable absolute path.
       const saved = JSON.parse(await readFile(join(dirs.userData, 'app-settings.json'), 'utf8'))
       expect(saved.destinationDir).toBe(dirs.dest)
