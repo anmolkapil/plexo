@@ -372,6 +372,18 @@ test.describe('settings @smoke', () => {
 test.describe('no networks', () => {
   test.use({ appEnv: { PLEXO_E2E_INTERFACES: '' } })
 
+  test('New download says why it has no network to offer @smoke', async ({ plexo }) => {
+    await plexo.newDownload()
+    const dialog = plexo.page.getByRole('dialog', { name: 'New download' })
+    await expect(
+      dialog.getByText(
+        'No networks connected. Join a Wi-Fi network, plug in Ethernet, or connect your phone using USB tethering.'
+      )
+    ).toBeVisible()
+    await expect(dialog.getByRole('button', { name: 'Scan again', exact: true })).toBeVisible()
+    await expect(dialog.getByRole('button', { name: 'Download', exact: true })).toBeDisabled()
+  })
+
   test('a network appearing makes the list ready for downloads @smoke', async ({ plexo }) => {
     await expect(plexo.page.getByText('No networks connected')).toBeVisible()
     // A manual scan is safe while the list stays empty. Once an interface appears, the

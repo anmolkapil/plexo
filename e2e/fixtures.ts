@@ -21,6 +21,7 @@ import type {
   DownloadStatus,
   DownloadUpdate,
   HttpDownloadState,
+  NzbDownloadState,
   TorrentDownloadState
 } from '../src/shared/types'
 import { Origin, sha256, type OriginOptions } from './origin'
@@ -36,6 +37,12 @@ export function expectHttp(state: DownloadState): HttpDownloadState {
 export function expectTorrent(state: DownloadState): TorrentDownloadState {
   expect(state.kind).toBe('torrent')
   if (state.kind !== 'torrent') throw new Error('Expected a torrent download')
+  return state
+}
+
+export function expectNzb(state: DownloadState): NzbDownloadState {
+  expect(state.kind).toBe('nzb')
+  if (state.kind !== 'nzb') throw new Error('Expected an NZB download')
   return state
 }
 
@@ -264,7 +271,9 @@ export class PlexoApp {
             infoHash: probe.torrent.infoHash,
             selectedFiles: options.selectedFiles
           }
-        : { ...common, kind: 'http', streamsPerNetwork: options.streamsPerNetwork }
+        : probe.kind === 'nzb'
+          ? { ...common, kind: 'nzb', nzbHash: probe.nzb.hash }
+          : { ...common, kind: 'http', streamsPerNetwork: options.streamsPerNetwork }
     )
     this.tracked.set(id, { expectedSha, destBefore, destinationDir })
     return id
@@ -302,11 +311,10 @@ export class PlexoApp {
     const finished = (await this.api.listHistory()).map((entry): DownloadState => {
       const last = seen.findLast((state) => state.id === entry.id)
       if (last?.status === 'completed') return last
-      return entry.kind === 'http'
-        ? { ...entry, blocks: [], streams: [] }
-        : entry.kind === 'telegram'
-          ? { ...entry, blocks: [], readers: [] }
-          : { ...entry, pieces: [], peers: [] }
+      if (entry.kind === 'http') return { ...entry, blocks: [], streams: [] }
+      if (entry.kind === 'nzb') return { ...entry, blocks: [], streams: [] }
+      if (entry.kind === 'telegram') return { ...entry, blocks: [], readers: [] }
+      return { ...entry, pieces: [], peers: [] }
     })
     // One that finished between the two calls is in both: history has its final state.
     const done = new Set(finished.map((state) => state.id))
@@ -347,6 +355,13 @@ export class PlexoApp {
     return expectTorrent(await this.waitForStatus(status, timeout))
   }
 
+  async waitForNzbStatus(
+    status: DownloadStatus | DownloadStatus[],
+    timeout = 20_000
+  ): Promise<NzbDownloadState> {
+    return expectNzb(await this.waitForStatus(status, timeout))
+  }
+
   async currentHttp(): Promise<HttpDownloadState | null> {
     const state = await this.current()
     return state ? expectHttp(state) : null
@@ -374,7 +389,7 @@ export class PlexoApp {
       (network) => `${network.id}:${network.status}${network.error ? ` (${network.error})` : ''}`
     )
     const connections = state
-      ? (state.kind === 'http'
+      ? (state.kind === 'http' || state.kind === 'nzb'
           ? state.streams
           : state.kind === 'telegram'
             ? state.readers

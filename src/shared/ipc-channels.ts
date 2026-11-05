@@ -6,7 +6,7 @@ export const IpcChannels = {
   getInitialState: 'app:get-initial-state',
   updateSettings: 'app:update-settings',
   chooseDestinationFolder: 'dialog:choose-destination-folder',
-  chooseTorrentFile: 'dialog:choose-torrent-file',
+  chooseDownloadFile: 'dialog:choose-download-file',
   readClipboardText: 'clipboard:read-text',
   revealDownload: 'shell:reveal-download',
   openDownload: 'shell:open-download',
@@ -43,5 +43,8 @@ export const IpcChannels = {
   telegramSubmitPassword: 'telegram:submit-password',
   telegramLogout: 'telegram:logout',
   telegramListMedia: 'telegram:list-media',
-  telegramAuthChanged: 'telegram:auth-changed'
+  telegramAuthChanged: 'telegram:auth-changed',
+  usenetServer: 'usenet:server',
+  saveUsenetServer: 'usenet:save-server',
+  testUsenetServer: 'usenet:test-server'
 } as const
