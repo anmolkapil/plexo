@@ -448,6 +448,8 @@ test.describe('Usenet settings', () => {
     await form.getByRole('button', { name: 'Save' }).click()
     await expect(form).toBeHidden()
     expect(await plexo.api.usenetServer()).toMatchObject({ enabled: false, connections: 5 })
+    // Its password field left blank, which can't show a password this session can't unseal.
+    expect(JSON.parse(await readFile(file, 'utf-8')).password).toBe(password)
   })
 
   test('off, an NZB is no Usenet download, and a running one stops connecting', async ({

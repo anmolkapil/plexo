@@ -98,7 +98,8 @@ function UsenetServerForm({
     tls,
     username: username.trim(),
     connections: Number(connections),
-    password: password === '' && server?.hasPassword ? undefined : password
+    // Blank keeps the stored password, also one this session can't unseal (hasPassword false).
+    password: password === '' ? undefined : password
   })
   const valid =
     host.trim() !== '' &&
