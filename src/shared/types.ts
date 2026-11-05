@@ -340,6 +340,12 @@ interface DownloadStateBase {
 
 export interface HttpDownloadState extends DownloadStateBase {
   kind: 'http'
+  /** Optional diagnostics; old saved downloads may not have these fields. No validator values. */
+  supportsRanges?: boolean
+  etagPresent?: boolean
+  lastModifiedPresent?: boolean
+  /** Last five failed HTTP statuses only, never response text, headers or URLs. */
+  recentHttpStatuses?: number[]
   networks: HttpDownloadNetwork[]
   streams: HttpStreamState[]
   peakStreams: number
@@ -555,6 +561,10 @@ export const DEFAULT_SLOW_MODE_SPEED = 2 * 1024 ** 2
 /** Everything the renderer needs for its first paint, read synchronously by the preload so no
  * saved value flashes in over a default a moment after launch. */
 export interface InitialState {
+  /** Installed build information, for an opt-in failure report. */
+  appVersion: string
+  os: string
+  architecture: string
   downloadSchedule?: DownloadSchedule
   homeDir: string
   downloadsDir: string

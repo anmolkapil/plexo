@@ -1048,6 +1048,12 @@ export class HttpTransfer implements Transfer {
     attempt: Attempt,
     error: unknown
   ): Promise<'continue' | 'stop'> {
+    // Record only the status number, never the request URL or response headers. The bound keeps
+    // the download state/manifest small and gives an opt-in failure report useful context.
+    if (error instanceof HttpStatusError && error.status >= 100 && error.status <= 599) {
+      const recent = this.runtime.state.recentHttpStatuses ?? []
+      this.runtime.state.recentHttpStatuses = [...recent.slice(-4), error.status]
+    }
     const message = error instanceof Error ? error.message : String(error)
     const network = this.network(attempt.networkId)
     const deliveredNothing = attempt.networkReceived === 0
