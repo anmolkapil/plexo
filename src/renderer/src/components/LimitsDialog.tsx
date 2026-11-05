@@ -828,9 +828,15 @@ function LimitsEditor({
                 ]
               : [])
           ])}
-          {navItem(USENET_PAGE, 'var(--text-secondary)', 'Usenet', [
-            usenet === null ? 'No server' : shownUsenetEnabled ? 'On' : 'Off'
-          ])}
+          {navItem(
+            USENET_PAGE,
+            'var(--text-secondary)',
+            'Usenet',
+            // Still loading: no line rather than a guess.
+            usenet === undefined
+              ? []
+              : [usenet === null ? 'No server' : shownUsenetEnabled ? 'On' : 'Off']
+          )}
           <div className={navLabelClass}>Networks</div>
           {interfaces.map((iface) => {
             const visual = networkVisual(iface.id, iface.kind, iface.displayName)
