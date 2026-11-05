@@ -434,9 +434,9 @@ export interface NzbPostProcess {
   repaired?: boolean
   /** Its archives were unpacked into its folder. */
   unpacked?: boolean
-  /** What its folder held before unpacking began: a relaunch clears an unpack cut short back
-   * to this. */
-  beforeUnpack?: string[]
+  /** What unpacking moved into its folder so far (names there): a relaunch removes what an
+   * unpack cut short added. */
+  unpackedNames?: string[]
   /** The files unpacking added, relative to its folder: its own, as its NZB's files are. */
   unpackedFiles?: string[]
   /** The tool it needed and didn't find installed: par2 to repair, 7-Zip (or unrar, or unar)

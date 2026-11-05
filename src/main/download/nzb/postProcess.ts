@@ -1,14 +1,15 @@
 import { spawn } from 'node:child_process'
 import { constants } from 'node:fs'
-import { access, readdir, rm } from 'node:fs/promises'
-import { delimiter, join, relative, sep } from 'node:path'
+import { access, lstat, mkdtemp, readdir, rename, rm, stat, statfs } from 'node:fs/promises'
+import { delimiter, isAbsolute, join, relative, sep } from 'node:path'
 import type { NzbPostProcess } from '../../../shared/types'
 
 /** Where the tools are looked for: PATH, then where their installers put them without adding
  * them to it (7-Zip's and WinRAR's on Windows; Homebrew's, which an app opened from the Finder
- * doesn't have on its PATH). */
+ * doesn't have on its PATH). Only absolute paths: `.` on PATH would find a `7z.exe` the NZB put
+ * in the download's folder. */
 function toolDirs(): string[] {
-  const path = (process.env['PATH'] ?? '').split(delimiter).filter(Boolean)
+  const path = (process.env['PATH'] ?? '').split(delimiter).filter((dir) => isAbsolute(dir))
   if (process.platform === 'darwin') return [...path, '/opt/homebrew/bin', '/usr/local/bin']
   if (process.platform !== 'win32') return path
   const programs = [process.env['ProgramFiles'], process.env['ProgramFiles(x86)']]
@@ -80,14 +81,15 @@ function runTool(
   })
 }
 
-/** What can unpack what, best first. 7-Zip opens RAR too, where its build has the codec; unar
- * opens everything, but can't tell a wrong password from damage. */
+/** What can unpack what, best first: the official 7-Zip (`7zz`) before p7zip (`7z`), unmaintained
+ * since 2016. 7-Zip opens RAR too, where its build has the codec; unar opens everything, but
+ * can't tell a wrong password from damage. */
 const UNPACKERS: {
   name: string
   opens: RegExp
   args: (archive: string, into: string) => string[]
 }[] = [
-  ...['7z', '7zz'].map((name) => ({
+  ...['7zz', '7z'].map((name) => ({
     name,
     opens: /./,
     // A password that can't be right: without one, 7-Zip would wait for it to be typed.
@@ -180,7 +182,8 @@ export async function postProcess(job: {
       await job.checkpoint()
       for (const set of sets.length > 0 ? sets : par2Files.slice(0, 1)) {
         // -p: once repaired, the damaged originals par2 keeps (`name.1`) and the .par2 files go.
-        const args = ['r', ...(job.deleteArchives ? ['-p'] : []), join(folder, set)]
+        // -B: the names to repair come from the .par2 file; they resolve in the folder only.
+        const args = ['r', ...(job.deleteArchives ? ['-p'] : []), `-B${folder}`, join(folder, set)]
         const { code, output } = await runTool(par2, args, folder, signal, (text) =>
           at(
             /Repairing/.test(text) || state.stage === 'repairing' ? 'repairing' : 'verifying',
@@ -199,7 +202,7 @@ export async function postProcess(job: {
     }
     // With gaps left in them, its archives can't be unpacked.
     if (missing > 0 && !state.repaired) return
-    await unpack(job, at)
+    await unpack(job, par2Files, at)
   } finally {
     // Stopped by a quit or a cancel, the stage stays: it tells a relaunch it isn't done.
     if (!signal.aborted) {
@@ -210,47 +213,101 @@ export async function postProcess(job: {
   }
 }
 
-/** Removes from `folder` what isn't in `kept`: what an unpack added. */
-async function removeAdded(folder: string, kept: ReadonlySet<string>): Promise<void> {
-  for (const name of await readdir(folder)) {
-    if (!kept.has(name)) await rm(join(folder, name), { recursive: true, force: true })
+const STAGING = '.plexo-unpack-'
+
+/** What isn't a plain file or folder in `dir`, at any depth: a link (or a device, a socket) an
+ * archive left there. Null when there is none. */
+async function oddEntry(dir: string): Promise<string | null> {
+  for (const entry of await readdir(dir, { recursive: true, withFileTypes: true })) {
+    if (!entry.isFile() && !entry.isDirectory()) {
+      return relative(dir, join(entry.parentPath, entry.name))
+    }
+  }
+  return null
+}
+
+/** `name`, or `name (2)`, `name (3)`, ...: the first neither in `folder` nor `taken` yet. */
+async function freeName(folder: string, name: string, taken: Set<string>): Promise<string> {
+  const dot = name.lastIndexOf('.')
+  const [stem, ext] = dot > 0 ? [name.slice(0, dot), name.slice(dot)] : [name, '']
+  for (let n = 1; ; n++) {
+    const candidate = n === 1 ? name : `${stem} (${n})${ext}`
+    const exists = await lstat(join(folder, candidate)).then(
+      () => true,
+      () => false
+    )
+    if (!exists && !taken.has(candidate)) return candidate
   }
 }
 
+/** Removes the staging folders an unpack cut short left in `folder`, and `added`: what it had
+ * moved out of them. */
+async function removeUnpacked(
+  folder: string,
+  added: readonly string[],
+  posted: readonly string[]
+): Promise<void> {
+  const staging = (await readdir(folder)).filter(
+    (name) => name.startsWith(STAGING) && !posted.includes(name)
+  )
+  for (const name of [...staging, ...added]) {
+    await rm(join(folder, name), { recursive: true, force: true })
+  }
+}
+
+/** Unpacks the archives in the download's folder, each into a new, empty folder of its own and
+ * from there into the download's: an archive can't write through a link another one left there.
+ * One that holds anything but plain files and folders isn't unpacked. */
 async function unpack(
   job: Parameters<typeof postProcess>[0],
+  par2Files: readonly string[],
   at: (stage: NzbPostProcess['stage'], percent?: number) => void
 ): Promise<void> {
   const { folder, state, signal } = job
-  // As the folder was before the first try: one cut short left more in it.
-  if (state.beforeUnpack) await removeAdded(folder, new Set(state.beforeUnpack))
+  // An unpack cut short (a quit, a crash): what it got to goes, and it starts over.
+  await removeUnpacked(folder, state.unpackedNames ?? [], job.files)
+  state.unpackedNames = []
   const names = await readdir(folder)
   const archives = names.filter(isFirstVolume)
   if (archives.length === 0) return
-  const before = new Set(names)
-  state.beforeUnpack = names
+  const volumes = new Set(archives.flatMap((archive) => volumesOf(archive, names)))
+  // shortcut: the archives' own size, what a release (RAR, stored) unpacks to; a compressed one
+  // unpacks to more. Ask each tool for the unpacked size if that turns out to matter.
+  let size = 0
+  for (const name of volumes) size += (await stat(join(folder, name))).size
+  const { bavail, bsize } = await statfs(folder)
+  if (bavail * bsize < size) {
+    state.note = `There isn’t enough disk space to unpack the download (${formatGigabytes(size)} needed, ${formatGigabytes(bavail * bsize)} free). Its files are in the folder as posted.`
+    return
+  }
   at('unpacking')
   await job.checkpoint()
   let unpacked = false
   try {
     for (const archive of archives) {
-      const tools: { path: string; args: string[] }[] = []
+      const tools: { path: string; args: (into: string) => string[] }[] = []
       for (const unpacker of UNPACKERS) {
         const path = unpacker.opens.test(archive) && (await findTool(unpacker.name))
-        if (path) tools.push({ path, args: unpacker.args(join(folder, archive), folder) })
+        if (path) tools.push({ path, args: (into) => unpacker.args(join(folder, archive), into) })
       }
       if (tools.length === 0) {
         state.missingTool = '7z'
         return
       }
       let failure = ''
+      let into = ''
       for (const tool of tools) {
+        // Each try from an empty folder: never over what a tool before it left.
+        if (into) await rm(into, { recursive: true, force: true })
+        into = await mkdtemp(join(folder, STAGING))
         at('unpacking')
-        const { code, output } = await runTool(tool.path, tool.args, folder, signal, (text) =>
+        const { code, output } = await runTool(tool.path, tool.args(into), into, signal, (text) =>
           at('unpacking', percentIn(text) ?? state.percent)
         )
         if (code === 0) {
-          failure = ''
+          const odd = await oddEntry(into)
+          failure = odd ? `it holds ${odd}, which isn’t a file or a folder` : ''
+          // Another tool would only make the same link, or one it treats less carefully.
           break
         }
         if (/password/i.test(output)) {
@@ -263,20 +320,45 @@ async function unpack(
         state.note = `Plexo couldn’t unpack ${archive} (${failure}). Its files are in the folder as posted.`
         return
       }
+      // Into the download's folder, overwriting nothing: names taken get " (2)". Saved first, so
+      // a relaunch knows what to remove.
+      const moves = new Map<string, string>()
+      for (const name of await readdir(into)) {
+        const target = await freeName(folder, name, new Set(moves.values()))
+        moves.set(name, target)
+        state.unpackedNames.push(target)
+      }
+      await job.checkpoint()
+      for (const [name, target] of moves) await rename(join(into, name), join(folder, target))
+      await rm(into, { recursive: true, force: true })
     }
     unpacked = true
   } finally {
     // Half unpacked, or stopped: what it added goes, the download as posted stays.
-    if (!unpacked) await removeAdded(folder, before)
+    if (!unpacked) {
+      await removeUnpacked(folder, state.unpackedNames, job.files)
+      state.unpackedNames = []
+    }
   }
   state.unpacked = true
-  state.unpackedFiles = (await readdir(folder, { recursive: true, withFileTypes: true }))
-    .filter((entry) => entry.isFile())
-    .map((entry) => relative(folder, join(entry.parentPath, entry.name)))
-    .filter((path) => !before.has(path.split(sep)[0]))
-  if (!job.deleteArchives) return
-  const volumes = new Set(archives.flatMap((archive) => volumesOf(archive, names)))
-  for (const name of names) {
-    if (volumes.has(name) || /\.par2$/i.test(name)) await rm(join(folder, name), { force: true })
+  state.unpackedFiles = []
+  for (const name of state.unpackedNames) {
+    const path = join(folder, name)
+    if ((await lstat(path)).isFile()) {
+      state.unpackedFiles.push(name)
+      continue
+    }
+    state.unpackedFiles.push(
+      ...(await readdir(path, { recursive: true, withFileTypes: true }))
+        .filter((entry) => entry.isFile())
+        .map((entry) => relative(folder, join(entry.parentPath, entry.name)))
+    )
   }
+  if (!job.deleteArchives) return
+  // Only the download's own: what else is in its folder stays.
+  for (const name of [...volumes, ...par2Files]) await rm(join(folder, name), { force: true })
+}
+
+function formatGigabytes(bytes: number): string {
+  return `${(bytes / 1024 ** 3).toFixed(2)} GB`
 }

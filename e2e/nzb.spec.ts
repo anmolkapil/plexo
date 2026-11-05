@@ -3,6 +3,7 @@ import { createServer, type Server } from 'node:http'
 import { connect as netConnect, createServer as createTcpServer, type AddressInfo } from 'node:net'
 import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
+import { crc32 } from 'node:zlib'
 import { join } from 'node:path'
 import type { NzbDownloadState, UsenetServerInput } from '../src/shared/types'
 import { expect, LAN_ADDRESS, PROJECT_ROOT, test, treeSha, type PlexoApp } from './fixtures'
@@ -398,7 +399,7 @@ function countDone(state: NzbDownloadState): number {
 
 const installed = (tool: string): boolean =>
   spawnSync(tool, ['--help'], { stdio: 'ignore' }).error === undefined
-const SEVEN_ZIP = ['7z', '7zz'].find(installed)
+const SEVEN_ZIP = ['7zz', '7z'].find(installed)
 const PAR2 = installed('par2')
 
 const CONTENT = [
@@ -418,6 +419,43 @@ async function posted(
   for (const file of CONTENT) await rm(join(dir, file.path))
   const names = await readdir(dir)
   return Promise.all(names.map(async (name) => ({ name, data: await readFile(join(dir, name)) })))
+}
+
+/** A zip of `entries` as they are, stored: `link` makes one a symbolic link to `data`, which no
+ * zip tool on every runner can be asked to keep as it is. */
+function zipOf(entries: { name: string; data: string; link?: boolean }[]): Buffer {
+  const locals: Buffer[] = []
+  const centrals: Buffer[] = []
+  let offset = 0
+  for (const entry of entries) {
+    const name = Buffer.from(entry.name)
+    const data = Buffer.from(entry.data)
+    const local = Buffer.alloc(30)
+    local.writeUInt32LE(0x04034b50, 0)
+    local.writeUInt16LE(10, 4) // version needed
+    local.writeUInt16LE(0x21, 12) // 1980-01-01
+    local.writeUInt32LE(crc32(data), 14)
+    local.writeUInt32LE(data.length, 18)
+    local.writeUInt32LE(data.length, 22)
+    local.writeUInt16LE(name.length, 26)
+    const central = Buffer.alloc(46)
+    central.writeUInt32LE(0x02014b50, 0)
+    central.writeUInt16LE(0x0314, 4) // made on Unix: the mode below counts
+    local.copy(central, 6, 4, 30)
+    central.writeUInt32LE(((entry.link ? 0o120777 : 0o100644) << 16) >>> 0, 38)
+    central.writeUInt32LE(offset, 42)
+    locals.push(local, name, data)
+    centrals.push(central, name)
+    offset += local.length + name.length + data.length
+  }
+  const directory = Buffer.concat(centrals)
+  const end = Buffer.alloc(22)
+  end.writeUInt32LE(0x06054b50, 0)
+  end.writeUInt16LE(entries.length, 8)
+  end.writeUInt16LE(entries.length, 10)
+  end.writeUInt32LE(directory.length, 12)
+  end.writeUInt32LE(offset, 16)
+  return Buffer.concat([...locals, directory, end])
 }
 
 const twoGaps = (article: { file: number; number: number }): boolean =>
@@ -503,6 +541,37 @@ test.describe('NZB repair and unpacking', () => {
     const done = await plexo.waitForNzbStatus('completed', 30_000)
     expect(done.postProcess?.unpacked).toBeUndefined()
     expect(done.postProcess?.note).toMatch(/Test\.Release\.7z is password-protected/)
+  })
+
+  test('an archive can’t write through a link another one left: neither is unpacked', async ({
+    plexo
+  }) => {
+    test.skip(!SEVEN_ZIP && !installed('unar'), 'needs 7-Zip or unar')
+    test.skip(process.platform === 'win32', 'links need more rights on Windows')
+    // Outside the download, a folder of the user's.
+    const outside = join(folder, 'outside')
+    await mkdir(outside)
+    await writeFile(join(outside, 'notes.txt'), 'mine')
+    // The first archive leaves a link to it, the second writes through that link.
+    const files = [
+      { name: 'A.zip', data: zipOf([{ name: 'Sample', data: outside, link: true }]) },
+      {
+        name: 'B.zip',
+        data: zipOf([
+          { name: 'Sample/notes.txt', data: 'overwritten' },
+          { name: 'Sample/new.txt', data: 'added' }
+        ])
+      }
+    ]
+    const server = await newsServer({ files })
+    await useServer(plexo, server)
+
+    await plexo.start(await nzbOnDisk(server), server.expectedSha())
+    const done = await plexo.waitForNzbStatus('completed', 30_000)
+    expect(done.postProcess?.unpacked).toBeUndefined()
+    expect(done.postProcess?.note).toMatch(/Plexo couldn’t unpack A\.zip/)
+    expect(await readdir(outside)).toEqual(['notes.txt'])
+    expect(await readFile(join(outside, 'notes.txt'), 'utf8')).toBe('mine')
   })
 })
 

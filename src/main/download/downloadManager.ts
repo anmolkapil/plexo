@@ -2236,8 +2236,8 @@ export class DownloadManager {
     const server = await loadUsenetServer().catch(() => null)
     runtime.postProcessing = new AbortController()
     // Run again after a relaunch: from where it got to.
-    const { repaired, beforeUnpack } = state.postProcess ?? {}
-    state.postProcess = { repaired, beforeUnpack }
+    const { repaired, unpackedNames } = state.postProcess ?? {}
+    state.postProcess = { repaired, unpackedNames }
     try {
       await postProcess({
         folder: state.destinationPath,
