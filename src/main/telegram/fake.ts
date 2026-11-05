@@ -119,6 +119,15 @@ class FakeFileSource {
     if (offset >= this.servedBytes) return Buffer.alloc(0)
     return this.generator.slice(offset, Math.min(limit, this.servedBytes - offset))
   }
+
+  /** The transfer re-locates the file over a stale reference through this (see
+   * telegramTransfer.ts): the double marks the reference fresh again, and the retry that
+   * follows succeeds — the same contract the real service's re-locate keeps. */
+  async refresh(): Promise<void> {
+    if (this.file.staleReference !== undefined) {
+      this.requests = Math.max(this.requests, this.file.staleReference)
+    }
+  }
 }
 
 export class FakeTelegramService implements TelegramServiceApi {
@@ -209,6 +218,7 @@ export class FakeTelegramService implements TelegramServiceApi {
       },
       request: (offset: number, limit: number, signal?: AbortSignal) =>
         source.request(offset, limit, signal),
+      refresh: (): Promise<void> => source.refresh(),
       dispose: async (): Promise<void> => {}
     }
   }

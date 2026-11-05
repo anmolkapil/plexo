@@ -25,6 +25,9 @@ export interface TelegramFileSource {
   /** True when the size is unknown (a photo): requests run until an empty answer. */
   unknownSize: boolean
   request(offset: number, limit: number, signal: AbortSignal): Promise<Buffer>
+  /** The file's reference went stale (Telegram expires them within a day): find the file
+   * again, so the next request carries a fresh one. */
+  refresh(): Promise<void>
   /** Closes the connections this source opened. Best-effort; safe to repeat. */
   dispose(): Promise<void>
 }
@@ -54,6 +57,8 @@ const RETRY_BASE_MS = 1_000
 const RETRY_MAX_MS = 15_000
 /** A rate-limit wait longer than this ends the download (resumable) rather than holding it. */
 const RATE_WAIT_MAX_MS = 120_000
+/** The most times a download re-locates its file over stale references. */
+const MAX_REFERENCE_REFRESHES = 5
 
 interface ReaderRuntime {
   id: number
@@ -101,6 +106,8 @@ export class TelegramTransfer implements Transfer {
   private maxChunkBytes = FILE_CHUNK_BYTES
   /** When the cap last came down: concurrent failures share one halving (see asOutcome). */
   private lastHalveAt = 0
+  /** How many times the file was re-located over stale references. */
+  private refreshes = 0
 
   constructor(
     private readonly runtime: TelegramTransferTarget,
@@ -169,6 +176,7 @@ export class TelegramTransfer implements Transfer {
     this.rateLimitedUntil = 0
     this.maxChunkBytes = FILE_CHUNK_BYTES
     this.lastHalveAt = 0
+    this.refreshes = 0
     void this.disposeSource()
   }
 
@@ -361,6 +369,14 @@ export class TelegramTransfer implements Transfer {
         this.handBack(block)
         if (self.controller.signal.aborted || (state.status as DownloadStatus) !== 'downloading') {
           return { type: 'stopped' }
+        }
+        const code = (settled as { errorMessage?: string }).errorMessage ?? settled.message ?? ''
+        if (/FILE_REFERENCE/.test(code) && this.refreshes < MAX_REFERENCE_REFRESHES) {
+          // The file's reference expired — Telegram's do, within a day: find the file again
+          // and take the block at the fresh reference.
+          this.refreshes += 1
+          await source.refresh()
+          return { type: 'retry', waitMs: 50 }
         }
         return this.asOutcome(self, settled)
       }

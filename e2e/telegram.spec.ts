@@ -1,5 +1,8 @@
+import { readdir, readFile } from 'node:fs/promises'
+import { join } from 'node:path'
 import type { TelegramMediaType } from '../src/shared/types'
 import { expect, test, type PlexoApp } from './fixtures'
+import { seededBytes } from './origin'
 
 // Downloading from Telegram: the service is the e2e double (PLEXO_E2E_TELEGRAM_FAKE=1), so
 // the real transfer, manager, queue and persistence run against a source that serves seeded
@@ -7,6 +10,26 @@ import { expect, test, type PlexoApp } from './fixtures'
 // on the request size, and a photo whose size only the download itself learns.
 
 const KB = 1024
+
+/** Reads the finished download from the destination and compares it byte for byte with the
+ * fake's seeded output — a halving or retry bug that wrote the right size in wrong places
+ * would fail here. The bytes match because the double's generator and `seededBytes` are the
+ * same xorshift from the same seed. */
+async function expectDownloadedBytes(
+  plexo: PlexoApp,
+  namePrefix: string,
+  size: number,
+  seed: number
+): Promise<void> {
+  const names = await readdir(plexo.dirs.dest)
+  const name = names.find((entry) => entry.startsWith(namePrefix))
+  expect(name, `${namePrefix} should be in the destination`).toBeDefined()
+  const actual = await readFile(join(plexo.dirs.dest, name!))
+  expect(
+    actual.equals(seededBytes(size, seed)),
+    `${namePrefix}'s bytes should match the fake's seeded output`
+  ).toBe(true)
+}
 
 test.use({
   appEnv: {
@@ -42,6 +65,11 @@ test.describe('Telegram Saved Messages downloads', () => {
   test('signs in through the dialog, lists media, and downloads a video and a photo @smoke', async ({
     plexo
   }) => {
+    // The dialog saves where the app's destination setting says: point it at the test's folder
+    // and relaunch, so the files land where the byte check reads them.
+    await plexo.api.updateSettings({ destinationDir: plexo.dirs.dest })
+    await plexo.relaunch()
+
     await plexo.page.getByRole('button', { name: 'Telegram' }).first().click()
     await plexo.page.locator('#tg-api-id').fill('12345')
     await plexo.page.locator('#tg-api-hash').fill('fake-hash')
@@ -60,9 +88,12 @@ test.describe('Telegram Saved Messages downloads', () => {
     await plexo.page.getByRole('button', { name: /Download 2/ }).click()
 
     await expect
-      .poll(async () => (await plexo.all()).filter((state) => state.status === 'completed').length, {
-        timeout: 30_000
-      })
+      .poll(
+        async () => (await plexo.all()).filter((state) => state.status === 'completed').length,
+        {
+          timeout: 30_000
+        }
+      )
       .toBe(2)
     const finished = (await plexo.all()).filter((state) => state.status === 'completed')
     // The video's size was known ahead; the photo's size only the download itself learned.
@@ -71,6 +102,9 @@ test.describe('Telegram Saved Messages downloads', () => {
     const photo = finished.find((state) => state.fileName.startsWith('shot'))
     expect(video?.totalBytes).toBe(3 * KB * KB)
     expect(photo?.totalBytes).toBe(2 * KB * KB)
+    // And the bytes are the fake's, in the right places.
+    await expectDownloadedBytes(plexo, 'clip', 3 * KB * KB, 11)
+    await expectDownloadedBytes(plexo, 'shot', 2 * KB * KB, 22)
   })
 
   test('a flaky file survives a flood-wait, a stale file reference and region caps', async ({
@@ -80,6 +114,7 @@ test.describe('Telegram Saved Messages downloads', () => {
     const done = await plexo.waitForStatus('completed', 30_000)
     expect(done.id).toBe(id)
     expect(done.totalBytes).toBe(3 * KB * KB)
+    await expectDownloadedBytes(plexo, 'flaky', 3 * KB * KB, 33)
   })
 
   test('a paused download resumes after a relaunch', async ({ plexo }) => {

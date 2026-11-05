@@ -274,9 +274,6 @@ function asFileError(error: unknown): TelegramFileError {
   return new TelegramFileError('other', message)
 }
 
-const isFileReferenceError = (error: unknown): boolean =>
-  /FILE_REFERENCE/.test((error as { errorMessage?: string } | null)?.errorMessage ?? '')
-
 /** Telegram rejected the login itself — a revoked, expired or killed session. Sign-in is
  * genuinely required again; the app's job is to say so cleanly and keep the api registration. */
 const isAuthLossError = (error: unknown): boolean =>
@@ -854,6 +851,12 @@ export class TelegramService implements TelegramServiceApi {
         sourceDisposed = true
         await disposePool()
       },
+      refresh: async (): Promise<void> => {
+        // The reference went stale (Telegram's expire within a day): find the message again,
+        // so the next request carries a fresh reference. The transfer drives this — see
+        // telegramTransfer.ts.
+        located = await locateNow()
+      },
       async request(offset: number, limit: number, signal: AbortSignal): Promise<Buffer> {
         if (sourceDisposed) {
           throw new TelegramFileError('other', 'This download was stopped.')
@@ -866,11 +869,6 @@ export class TelegramService implements TelegramServiceApi {
           return await requestChunk(offset, limit, guard)
         } catch (error) {
           if (error instanceof TelegramFileError || signal.aborted) throw error
-          if (isFileReferenceError(error)) {
-            // The reference went stale: refetch the message and try the same chunk once more.
-            located = await locateNow()
-            return await requestChunk(offset, limit, guard)
-          }
           if (isAuthLossError(error)) {
             // Telegram rejected the login itself. The dialog goes back to sign-in — the stored
             // session is dead server-side either way, so it's cleared rather than reconnected

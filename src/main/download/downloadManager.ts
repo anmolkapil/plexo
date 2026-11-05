@@ -23,7 +23,6 @@ import {
   type HttpBlockState,
   type HttpDownloadNetwork,
   type HttpDownloadState,
-  type HttpDownloadUpdate,
   type NetworkInterfaceInfo,
   type NetworkPreferences,
   type NetworkStatus,
@@ -37,7 +36,6 @@ import {
   type StartTorrentDownloadRequest,
   type TelegramDownloadNetwork,
   type TelegramDownloadState,
-  type TelegramDownloadUpdate,
   type TorrentDownloadNetwork,
   type TorrentDownloadState,
   type TorrentFileEntry,
@@ -1404,7 +1402,7 @@ export class DownloadManager {
     }
     runtime.state.pausedAt = Date.now()
     clearSpeeds(runtime.state)
-    if (runtime.kind !== 'torrent') {
+    if (runtime.kind === 'http' || runtime.kind === 'nzb') {
       for (const stream of runtime.state.streams) {
         if (stream.status !== 'completed') {
           stream.status = 'paused'
@@ -1651,7 +1649,7 @@ export class DownloadManager {
       }
       if (unit.kind === 'torrent') unit.provisionalBytes = 0
     }
-    if (runtime.kind !== 'torrent') {
+    if (runtime.kind === 'http' || runtime.kind === 'nzb') {
       for (const stream of runtime.state.streams) {
         if (stream.status !== 'completed') {
           stream.status = 'pending'
@@ -1875,7 +1873,7 @@ export class DownloadManager {
       await runtime.file.discard()
       await this.removePersistedDownload(runtime, false)
       runtime.state.status = 'cancelled'
-      if (runtime.kind !== 'torrent') {
+      if (runtime.kind === 'http' || runtime.kind === 'nzb') {
         for (const stream of runtime.state.streams) stream.status = 'cancelled'
       }
       if (runtime.kind === 'telegram') {
@@ -2174,7 +2172,7 @@ export class DownloadManager {
     // Until the monitor has looked, nothing is known to be gone.
     const known = present !== null
     if (known) {
-      if (state.kind !== 'torrent') {
+      if (state.kind === 'http' || state.kind === 'nzb') {
         state.networks = state.networks.filter(
           (network) =>
             network.enabled ||
@@ -2325,7 +2323,19 @@ export class DownloadManager {
 
   /** What the window hasn't been sent yet: the download's state, and the work units that moved. */
   private takeUpdate(runtime: DownloadRuntime): DownloadUpdate {
-    if (runtime.kind === 'http' || runtime.kind === 'telegram' || runtime.kind === 'nzb') {
+    if (runtime.kind === 'http') {
+      const changed = this.changedUnits(runtime, runtime.blocks)
+      const { blocks: omittedBlocks, ...state } = runtime.state
+      void omittedBlocks
+      return structuredClone({ seq: ++runtime.sentUpdates, state, blocks: changed })
+    }
+    if (runtime.kind === 'telegram') {
+      const changed = this.changedUnits(runtime, runtime.blocks)
+      const { blocks: omittedBlocks, ...state } = runtime.state
+      void omittedBlocks
+      return structuredClone({ seq: ++runtime.sentUpdates, state, blocks: changed })
+    }
+    if (runtime.kind === 'nzb') {
       const changed = this.changedUnits(runtime, runtime.blocks)
       const { blocks: omittedBlocks, ...state } = runtime.state
       void omittedBlocks

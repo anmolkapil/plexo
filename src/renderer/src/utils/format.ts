@@ -236,7 +236,7 @@ export interface TorrentNetworkGroup extends TorrentDownloadNetwork {
 export type NetworkGroup = HttpNetworkGroup | TorrentNetworkGroup
 
 export function groupByNetwork(download: DownloadState): NetworkGroup[] {
-  if (download.kind !== 'torrent') {
+  if (download.kind === 'http' || download.kind === 'nzb') {
     return download.networks.map((network) => ({
       ...network,
       streams: download.streams.filter((stream) => stream.interfaceId === network.id)
