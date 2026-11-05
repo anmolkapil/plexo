@@ -404,7 +404,7 @@ export const DownloadingScreen = memo(function DownloadingScreen({
                     <TooltipTrigger
                       render={
                         <span tabIndex={0} className="text-destructive outline-none">
-                          backup unreachable
+                          backup server error
                         </span>
                       }
                     />

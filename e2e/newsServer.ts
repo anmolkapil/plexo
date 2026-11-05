@@ -170,9 +170,11 @@ export class NewsServer {
 
   /** On `port`, to start a stopped server again where it was; any free one by default. */
   async start(port = 0): Promise<this> {
-    await new Promise<void>((resolve) =>
+    // No IPv6 here (dualStack): failing at once says why, rather than at the test's timeout.
+    await new Promise<void>((resolve, reject) => {
+      this.server.once('error', reject)
       this.server.listen(port, this.options.dualStack ? '::' : '0.0.0.0', resolve)
-    )
+    })
     this.port = (this.server.address() as AddressInfo).port
     return this
   }
