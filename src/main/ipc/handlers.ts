@@ -21,7 +21,17 @@ import { DownloadManager } from '../download/downloadManager'
 import { getDefaultDownloadsDir, getHomeDir } from '../download/paths'
 import { listHistory } from '../download/history'
 import { probeUrl } from '../download/probe'
+import { FakeTelegramService } from '../telegram/fake'
+import { TelegramService, type TelegramServiceApi } from '../telegram/service'
+import { testUsenetServer } from '../download/nzb/nntp'
+import {
+  loadUsenetServer,
+  saveUsenetServer,
+  serverFromInput,
+  viewOf
+} from '../download/nzb/usenetServer'
 import { onMagnetCheckStatus } from '../download/torrent/metadata'
+import { testKnobs } from '../testKnobs'
 import { deviceBindingSupported } from '../network/deviceBinding'
 import { pendingLink, pendingLinks, releaseLink } from '../openLinks'
 import { NetworkMonitor } from '../network/interfaces'
@@ -77,7 +87,19 @@ export function registerIpcHandlers(getWindow: () => BrowserWindow | null): Down
     const window = getWindow()
     if (window && !window.isDestroyed()) window.webContents.send(IpcChannels.networksChanged, list)
   })
-  const manager = new DownloadManager(getWindow, networks)
+  // Telegram (Saved Messages): its sign-in state changes push to the window, and a stored
+  // session reconnects in the background at startup.
+  const telegram: TelegramServiceApi = testKnobs.telegramFake
+    ? new FakeTelegramService()
+    : new TelegramService()
+  telegram.onChange = (state) => {
+    const window = getWindow()
+    if (window && !window.isDestroyed()) {
+      window.webContents.send(IpcChannels.telegramAuthChanged, state)
+    }
+  }
+  void telegram.restore().catch((error) => console.error('[plexo] telegram restore', error))
+  const manager = new DownloadManager(getWindow, networks, telegram)
   // Waking from sleep, the networks may have changed without a poll in between to see it.
   powerMonitor.on('resume', () => {
     manager.systemResumed()
@@ -175,12 +197,16 @@ export function registerIpcHandlers(getWindow: () => BrowserWindow | null): Down
     return result.filePaths[0]
   })
 
-  handle('chooseTorrentFile', async () => {
+  handle('chooseDownloadFile', async () => {
     const window = getWindow()
     if (!window) return null
     const result = await dialog.showOpenDialog(window, {
       properties: ['openFile'],
-      filters: [{ name: 'Torrent', extensions: ['torrent'] }]
+      filters: [
+        { name: 'Torrent or NZB', extensions: ['torrent', 'nzb'] },
+        { name: 'Torrent', extensions: ['torrent'] },
+        { name: 'NZB', extensions: ['nzb'] }
+      ]
     })
     if (result.canceled || result.filePaths.length === 0) return null
     return result.filePaths[0]
@@ -250,8 +276,37 @@ export function registerIpcHandlers(getWindow: () => BrowserWindow | null): Down
     manager.remove(id, options?.trashFile === true)
   )
 
+  handle('usenetServer', async () => {
+    const server = await loadUsenetServer()
+    return server && viewOf(server)
+  })
+  handle('saveUsenetServer', async (_event, input) => saveUsenetServer(input))
+  handle('testUsenetServer', async (_event, input) =>
+    testUsenetServer(await serverFromInput(input))
+  )
+
   handle('updateState', () => updateState())
   handle('showUpdateMenu', () => showUpdateMenu())
+
+  handle('telegramState', () => telegram.authState())
+  handle('telegramStartLogin', async (_event, credentials) => {
+    await telegram.startLogin(credentials)
+  })
+  handle('telegramStartQrLogin', async () => {
+    await telegram.startQrLogin()
+  })
+  handle('telegramSubmitCode', async (_event, code) => {
+    await telegram.submitCode(code)
+  })
+  handle('telegramSubmitPassword', async (_event, password) => {
+    await telegram.submitPassword(password)
+  })
+  handle('telegramLogout', async () => {
+    await telegram.logout()
+  })
+  handle('telegramListMedia', async (_event, offsetId, limit) => {
+    return telegram.listMediaPage(offsetId, limit)
+  })
 
   return manager
 }

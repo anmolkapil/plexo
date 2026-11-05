@@ -11,15 +11,24 @@ export interface TaskbarDownload {
   status: DownloadStatus
   totalBytes: number
   bytesDownloaded: number
-  kind?: 'http' | 'torrent'
+  kind?: 'http' | 'torrent' | 'nzb' | 'telegram'
   skippedBytes?: number
+  missingBytes?: number
 }
 
-/** What a download fetches: all of it, bar a torrent's pieces no chosen file needs. */
+/** What a download fetches: all of it, bar a torrent's pieces no chosen file needs and an NZB's
+ * articles the server doesn't have. */
 export function wantedBytes(
-  download: Pick<TaskbarDownload, 'totalBytes' | 'kind' | 'skippedBytes'>
+  download: Pick<TaskbarDownload, 'totalBytes' | 'kind' | 'skippedBytes' | 'missingBytes'>
 ): number {
-  return download.totalBytes - (download.kind === 'torrent' ? (download.skippedBytes ?? 0) : 0)
+  return (
+    download.totalBytes -
+    (download.kind === 'torrent'
+      ? (download.skippedBytes ?? 0)
+      : download.kind === 'nzb'
+        ? (download.missingBytes ?? 0)
+        : 0)
+  )
 }
 
 /**
