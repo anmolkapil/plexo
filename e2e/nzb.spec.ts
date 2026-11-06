@@ -909,4 +909,37 @@ test.describe('NZB unpacking, stopped by a quit', () => {
     expect(done.postProcess?.unpacked).toBe(true)
     expect(await readdir(folder)).toEqual(['movie.mkv'])
   })
+
+  test('an unpack cut short by a quit isn’t resumed while Usenet is off', async ({ plexo }) => {
+    test.skip(process.platform === 'win32' || !SEVEN_ZIP, 'needs 7-Zip and a shell')
+    const files = await posted((run) =>
+      run(SEVEN_ZIP!, ['a', '-mx0', 'Test.Release.7z', 'movie.mkv', 'info.txt'])
+    )
+    const server = await newsServer({ files })
+    await useServer(plexo, server)
+
+    const id = await plexo.start(await nzbOnDisk(server), treeSha(CONTENT))
+    await plexo.waitUntil(
+      (state) => state.kind === 'nzb' && state.postProcess?.percent === 12,
+      30_000
+    )
+    await plexo.quit()
+    await rm(pidFile, { force: true })
+    await plexo.relaunch({ PATH: process.env.PATH ?? '' })
+    await plexo.waitForNzbStatus('paused')
+    await useServer(plexo, server, { enabled: false })
+
+    await plexo.api.resumeDownload(id)
+    const failed = await plexo.waitForNzbStatus('error', 10_000)
+    expect(failed.error).toMatch(/Usenet downloads are off/)
+    expect(failed.resumable).toBe(true)
+    expect(failed.postProcess).toMatchObject({ stage: 'unpacking' })
+    expect(failed.postProcess?.unpacked).toBeFalsy()
+
+    // Back on, it unpacks.
+    await useServer(plexo, server, { enabled: true })
+    await plexo.api.resumeDownload(id)
+    const done = await plexo.waitForNzbStatus('completed', 30_000)
+    expect(done.postProcess).toMatchObject({ unpacked: true })
+  })
 })

@@ -2259,6 +2259,11 @@ export class DownloadManager {
   private async postProcess(runtime: NzbDownloadRuntime): Promise<void> {
     const { state } = runtime
     const server = await loadUsenetServer().catch(() => null)
+    // Switched off: a resumed download whose repair or unpack was cut short waits, as it was.
+    if (server && !server.enabled) {
+      this.failDownload(runtime, USENET_OFF)
+      throw new Error(USENET_OFF)
+    }
     runtime.postProcessing = new AbortController()
     // Run again after a relaunch: from where it got to.
     const { repaired, unpacked, unpackedNames, unpackedFiles } = state.postProcess ?? {}
