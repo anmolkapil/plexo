@@ -660,6 +660,8 @@ export type StartDownloadRequest =
 
 /** The news server NZB downloads come from, as the window sees it: never its password. */
 export interface UsenetServer {
+  /** NZBs download from it; off, an NZB link downloads as a plain file. */
+  enabled: boolean
   host: string
   port: number
   tls: boolean
@@ -673,9 +675,10 @@ export interface UsenetServer {
   passwordInMemory?: boolean
 }
 
-/** What the window sends to set the news server, or to test one. `password` left out keeps the
- * one already saved. */
+/** What the window sends to set the news server, or to test one. `password` or `enabled` left out
+ * keeps the one already saved. */
 export interface UsenetServerInput {
+  enabled?: boolean
   host: string
   port: number
   tls: boolean
