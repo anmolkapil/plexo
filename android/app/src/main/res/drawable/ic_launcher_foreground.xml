@@ -1,0 +1,13 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- Two connections merging into one. -->
+    <path
+        android:strokeColor="#4EA89A"
+        android:strokeWidth="6"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:pathData="M32,38 L52,54 M32,70 L52,54 M52,54 L76,54 M66,44 L76,54 L66,64" />
+</vector>
