@@ -10,18 +10,25 @@ import { Switch } from './ui/switch'
 const labelClass = 'w-24 shrink-0 text-[12.5px] text-[var(--text-secondary)]'
 const hintClass = 'text-[12px] leading-snug text-muted-foreground'
 
-/** The news server NZB downloads come from: where it is, the account, and how many connections
- * the account allows. Set once, for every NZB; the password never comes back to the window. */
+/** A news server, as saved: the main one or its backup. */
+type SavedServer = Omit<UsenetServer, 'enabled' | 'backup'>
+
+/** The news server NZB downloads come from, or with `backup` the one for the articles it doesn't
+ * have: where it is, the account, and how many connections the account allows. Set once, for
+ * every NZB; the password never comes back to the window. */
 export function UsenetServerDialog({
+  backup = false,
   open,
   server,
   onOpenChange,
   onSaved
 }: {
+  backup?: boolean
   open: boolean
   /** As saved; null when there's none yet. */
-  server: UsenetServer | null
+  server: SavedServer | null
   onOpenChange: (open: boolean) => void
+  /** The news server as saved, its backup included. */
   onSaved: (server: UsenetServer) => void
 }): React.JSX.Element {
   return (
@@ -30,6 +37,7 @@ export function UsenetServerDialog({
         {/* Mounted only while open, so each opening starts from what's saved. */}
         {open && (
           <UsenetServerForm
+            backup={backup}
             server={server}
             onCancel={() => onOpenChange(false)}
             onSaved={(saved) => {
@@ -73,11 +81,13 @@ export function UsenetServerButton({ host }: { host: string }): React.JSX.Elemen
 }
 
 function UsenetServerForm({
+  backup,
   server,
   onCancel,
   onSaved
 }: {
-  server: UsenetServer | null
+  backup: boolean
+  server: SavedServer | null
   onCancel: () => void
   onSaved: (server: UsenetServer) => void
 }): React.JSX.Element {
@@ -86,8 +96,12 @@ function UsenetServerForm({
   const [tls, setTls] = useState(server?.tls ?? true)
   const [port, setPort] = useState(String(server?.port ?? 563))
   const [username, setUsername] = useState(server?.username ?? '')
-  // Left empty, the saved password stays.
+  // Left empty, the saved password stays, but only for the host and username it was saved with.
   const [password, setPassword] = useState('')
+  const keepsPassword =
+    server?.hasPassword === true &&
+    host.trim() === server.host &&
+    username.trim() === server.username
   const [connections, setConnections] = useState(String(server?.connections ?? 8))
   const [busy, setBusy] = useState<'test' | 'save' | null>(null)
   const [result, setResult] = useState<{ ok: boolean; text: string } | null>(null)
@@ -98,7 +112,8 @@ function UsenetServerForm({
     tls,
     username: username.trim(),
     connections: Number(connections),
-    // Blank keeps the stored password, also one this session can't unseal (hasPassword false).
+    // Blank keeps the stored password; the main process sends it only to the host and username
+    // it was saved for.
     password: password === '' ? undefined : password
   })
   const valid =
@@ -113,7 +128,7 @@ function UsenetServerForm({
     setBusy('test')
     setResult(null)
     try {
-      await window.plexo.testUsenetServer(input())
+      await window.plexo.testUsenetServer(input(), backup)
       setResult({ ok: true, text: 'Connected and signed in.' })
     } catch (error) {
       setResult({ ok: false, text: describeError(error) })
@@ -126,7 +141,11 @@ function UsenetServerForm({
     setBusy('save')
     setResult(null)
     try {
-      onSaved(await window.plexo.saveUsenetServer(input()))
+      onSaved(
+        await (backup
+          ? window.plexo.saveUsenetBackup(input())
+          : window.plexo.saveUsenetServer(input()))
+      )
     } catch (error) {
       setResult({ ok: false, text: describeError(error) })
       setBusy(null)
@@ -144,9 +163,13 @@ function UsenetServerForm({
       }}
     >
       <div className="border-b-[0.5px] border-border px-5 py-4">
-        <DialogTitle className="text-[16px] font-semibold">Usenet server</DialogTitle>
+        <DialogTitle className="text-[16px] font-semibold">
+          {backup ? 'Backup server' : 'Usenet server'}
+        </DialogTitle>
         <p className={`${hintClass} mt-1.5`}>
-          The news server your NZB downloads come from, as your Usenet provider gives it.
+          {backup
+            ? 'Where articles your news server doesn’t have are fetched from, as your other Usenet provider gives it.'
+            : 'The news server your NZB downloads come from, as your Usenet provider gives it.'}
         </p>
       </div>
 
@@ -210,10 +233,20 @@ function UsenetServerForm({
             type="password"
             value={password}
             onChange={(event) => setPassword(event.target.value)}
-            placeholder={server?.hasPassword ? 'Saved' : ''}
+            placeholder={keepsPassword ? 'Saved' : ''}
             autoComplete="off"
           />
         </div>
+        {server?.hasPassword && !keepsPassword && password === '' && (
+          <p className={hintClass}>
+            Enter the password: the saved one only goes to the server and username it was saved for.
+          </p>
+        )}
+        {server?.passwordUnread && keepsPassword && password === '' && (
+          <p className={hintClass}>
+            Saved, but this computer’s keychain can’t open it: enter it again.
+          </p>
+        )}
         <div className="flex items-center gap-3">
           <label htmlFor={`${id}-connections`} className={labelClass}>
             Connections

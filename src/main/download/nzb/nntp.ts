@@ -2,7 +2,7 @@ import { connect as netConnect, isIP, type Socket } from 'node:net'
 import { connect as tlsConnect } from 'node:tls'
 import { asConnectionError } from '../../network/routes'
 import { testKnobs } from '../../testKnobs'
-import type { UsenetServerConfig } from './usenetServer'
+import type { NewsServerConfig } from './usenetServer'
 
 /** The server answered a command with something other than what it should have. */
 export class NntpError extends Error {
@@ -282,7 +282,7 @@ const abortError = (): DOMException => new DOMException('Aborted', 'AbortError')
 
 /** Connects to `server` over the computer's default route and signs in, then says goodbye: what
  * the server settings check before they're used. Throws what went wrong, in words. */
-export async function testUsenetServer(server: UsenetServerConfig): Promise<void> {
+export async function testUsenetServer(server: NewsServerConfig): Promise<void> {
   const signal = AbortSignal.timeout(testKnobs.connectTimeoutMs)
   const socket = await new Promise<Socket>((resolve, reject) => {
     const { host, port } = server

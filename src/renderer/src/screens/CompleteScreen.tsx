@@ -20,18 +20,30 @@ const sectionHeaderClass =
 
 /** What's left to do with an NZB download, which Plexo leaves to the user's tools: a repair
  * where articles were missing, unpacking where it's an archive. Null when it's ready as it is. */
-function usenetNote(files: NzbFileState[]): { warning: boolean; text: string } | null {
+function usenetNote(
+  files: NzbFileState[],
+  backupError: string | undefined,
+  fromBackup = 0
+): { warning: boolean; text: string } | null {
+  const note = usenetTodo(files, backupError)
+  if (!fromBackup) return note
+  const backup = `${fromBackup} ${fromBackup === 1 ? 'article' : 'articles'} came from the backup server.`
+  return note ? { ...note, text: `${note.text} ${backup}` } : { warning: false, text: backup }
+}
+
+function usenetTodo(
+  files: NzbFileState[],
+  backupError: string | undefined
+): { warning: boolean; text: string } | null {
   const missing = files.reduce((sum, file) => sum + file.missing, 0)
   const par2 = files.some((file) => /\.par2$/i.test(file.name))
   const archive = files.some((file) => /\.(rar|r\d{2,3}|7z|zip|\d{3})$/i.test(file.name))
   const articles = missing === 1 ? 'article wasn’t' : 'articles weren’t'
   if (missing > 0) {
-    return {
-      warning: true,
-      text: par2
-        ? `${missing} ${articles} on the news server, so some files have gaps. Repair them with the download’s .par2 files${archive ? ' before unpacking' : ''}.`
-        : `${missing} ${articles} on the news server, so some files have gaps, and this download has no .par2 files to repair them with.`
-    }
+    const text = par2
+      ? `${missing} ${articles} on the news server, so some files have gaps. Repair them with the download’s .par2 files${archive ? ' before unpacking' : ''}.`
+      : `${missing} ${articles} on the news server, so some files have gaps, and this download has no .par2 files to repair them with.`
+    return { warning: true, text: backupError ? `${text} ${backupError}` : text }
   }
   if (archive) {
     return {
@@ -86,7 +98,10 @@ export function CompleteScreen({
       : download.kind === 'nzb'
         ? { chosen: download.nzbFiles.length, total: download.nzbFiles.length }
         : null
-  const note = download.kind === 'nzb' ? usenetNote(download.nzbFiles) : null
+  const note =
+    download.kind === 'nzb'
+      ? usenetNote(download.nzbFiles, download.backupError, download.fromBackup)
+      : null
 
   return (
     <div className="flex h-full flex-col bg-background">
