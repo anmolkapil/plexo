@@ -1,0 +1,5 @@
+<resources>
+    <style name="Theme.Plexo" parent="android:Theme.Material.NoActionBar">
+        <item name="android:windowBackground">#FF1B1E20</item>
+    </style>
+</resources>
