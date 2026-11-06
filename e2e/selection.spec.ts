@@ -333,9 +333,18 @@ test('search box maintains minimum usable width at 720px minimum window width wi
     const window = BrowserWindow.getAllWindows()[0]
     window.setSize(720, 620)
   }, null)
+  // The default schedule allows 0:00–7:00, so set the clock inside it: otherwise the download
+  // waits for the schedule and never starts.
+  await plexo.evaluateMain(() => {
+    const insideSchedule = new Date(2000, 0, 1, 3).getTime()
+    Date.now = () => insideSchedule
+  }, null)
   await plexo.api.updateSettings({
     downloadSchedule: { ...DEFAULT_DOWNLOAD_SCHEDULE, enabled: true }
   })
+  // The window reads the schedule when it loads, so reload it to show the schedule button.
+  await plexo.page.reload()
+  await expect(plexo.page.getByRole('button', { name: 'Download schedule enabled' })).toBeVisible()
 
   const origin = await serve({ size: 24 * BLOCK })
   const reached = origin.hold(6 * BLOCK)
