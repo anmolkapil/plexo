@@ -161,6 +161,10 @@ export function DownloadsScreen(): React.JSX.Element {
   const openRow = useCallback((id: string) => setView({ name: 'download', id }), [setView])
   // Keys for the selection: Esc clears it, Select all, and Delete takes
   // the selected off the list (with Cmd/Ctrl, moves their files to the Trash), each asking first.
+  // An open dialog or menu keeps its keys to itself. One that is closing doesn't: Base UI keeps a
+  // closed popup in the page, marked data-closed, until its exit animation has run, and that
+  // waits on an animation frame. Counting it as open made Cmd/Ctrl+A do nothing right after
+  // picking a filter whenever frames were slow to come, as in a hidden window.
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent): void => {
       const command = isMac ? event.metaKey : event.ctrlKey
@@ -169,7 +173,9 @@ export function DownloadsScreen(): React.JSX.Element {
         event.defaultPrevented ||
         (target instanceof HTMLElement &&
           (target.isContentEditable || ['INPUT', 'TEXTAREA'].includes(target.tagName))) ||
-        document.querySelector('[role="dialog"], [role="alertdialog"], [role="menu"]')
+        document.querySelector(
+          ':is([role="dialog"], [role="alertdialog"], [role="menu"]):not([data-closed])'
+        )
       )
         return
 
