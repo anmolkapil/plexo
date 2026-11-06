@@ -353,6 +353,37 @@ test('Cmd/Ctrl+A selects the list while a menu that was just closed is still fad
   await expect(page.getByRole('checkbox', { name: 'Select alpha-doc.bin' })).toBeChecked()
 })
 
+test('Esc that closes a menu or a dialog keeps the selection', async ({ plexo, serve }) => {
+  for (const fileName of ['one.bin', 'two.bin']) {
+    const origin = await serve({ size: BLOCK })
+    await plexo.start(origin.url(), origin.sha256, { fileName })
+    await plexo.waitForStatus('completed')
+  }
+  const page = plexo.page
+  const one = page.getByRole('checkbox', { name: 'Select one.bin', exact: true })
+  await one.check()
+
+  // A closing popup no longer holds the list's keys, so the Esc that closes it must not reach
+  // them as well.
+  await openMore(page)
+  await expect(page.getByRole('menu')).toBeVisible()
+  await page.keyboard.press('Escape')
+  await expect(page.getByRole('menu')).toHaveCount(0)
+  await expect(one).toBeChecked()
+
+  await page.getByRole('button', { name: 'Open two.bin', exact: true }).click({ button: 'right' })
+  await expect(page.getByRole('menu')).toBeVisible()
+  await page.keyboard.press('Escape')
+  await expect(page.getByRole('menu')).toHaveCount(0)
+  await expect(one).toBeChecked()
+
+  await page.keyboard.press('Delete')
+  await expect(page.getByRole('alertdialog')).toBeVisible()
+  await page.keyboard.press('Escape')
+  await expect(page.getByRole('alertdialog')).toHaveCount(0)
+  await expect(one).toBeChecked()
+})
+
 test('search box maintains minimum usable width at 720px minimum window width with active download', async ({
   plexo,
   serve
