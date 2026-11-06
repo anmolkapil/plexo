@@ -1,4 +1,5 @@
 import { useFormatSpeed } from '../hooks/useFormatSpeed'
+import { FLOW_STEPS } from '../utils/combineFlow'
 
 const ROW_HEIGHT = 36
 // Gaps between the label column and the rest of the diagram stay fixed — only the label
@@ -17,6 +18,23 @@ const MAX_LABEL_CHARS = 18
 const CHAR_WIDTH = 6.4
 const LABEL_EDGE_PAD = 4
 
+// How a network's path is drawn at each flow step (see flowStep): the bigger its share of the
+// total, the thicker, brighter and faster its dashes. Step 0 carries nothing and stands still.
+// Width and opacity carry the share on their own, so with reduced motion — when the dashes
+// don't move — the diagram still says which network is doing the work. The speeds are a few
+// fixed ones rather than one per byte a second: changing a running animation's duration makes
+// its dashes jump, and a share only changes step after it moves well past one (see
+// STEP_HYSTERESIS), so a jump is rare.
+const STEP_STYLES: readonly { width: number; opacity: number; seconds?: number }[] = [
+  { width: 1.75, opacity: 0.35 },
+  { width: 1.75, opacity: 0.6, seconds: 2.4 },
+  { width: 2.5, opacity: 0.75, seconds: 1.6 },
+  { width: 3.25, opacity: 0.9, seconds: 1.1 },
+  { width: 4, opacity: 1, seconds: 0.75 }
+]
+// Paused, or the empty-state illustration: every path alike, as they were before steps.
+const UNIFORM_WIDTH = 3
+
 export interface CombineDiagramNetwork {
   solid: string
   label: string
@@ -26,6 +44,19 @@ export interface CombineDiagramNetwork {
    * receiving). Drives the flow animation; derived from connection status rather than speed, so
    * the diagram agrees with the network rows. */
   active?: boolean
+  /** Identifies the network across updates: the paths' keys, and which one `change` is about. */
+  id?: string
+  /** Its part of the combined speed right now, 0 to 1. */
+  share?: number
+  /** The step its path is drawn at, 0 (still) to FLOW_STEPS (see flowStep). */
+  step?: number
+}
+
+/** A network that just joined the download (or dropped out), new `key` each time. */
+export interface CombineDiagramChange {
+  key: number
+  networkId: string
+  change: 'joined' | 'dropped'
 }
 
 /** Draws the multiple-links-into-one-stream diagram: individual networks with their
@@ -34,11 +65,14 @@ export interface CombineDiagramNetwork {
 export function CombineDiagram({
   networks,
   muted = false,
-  paused = false
+  paused = false,
+  change = null
 }: {
   networks: CombineDiagramNetwork[]
   muted?: boolean
   paused?: boolean
+  /** Draws the joining network's path in, and pulses the combine node, once per change. */
+  change?: CombineDiagramChange | null
 }): React.JSX.Element {
   const formatSpeed = useFormatSpeed()
   const height = Math.max(78, networks.length * ROW_HEIGHT + 10)
@@ -54,6 +88,13 @@ export function CombineDiagram({
   const COMBINE_X = CURVE_START_X + CURVE_LEN
   const STREAM_END_X = COMBINE_X + STREAM_LEN
   const WIDTH = STREAM_END_X + END_PAD
+  const rowY = (index: number): number => (index + 0.5) * (height / networks.length)
+  const curve = (y: number): string =>
+    `M${CURVE_START_X},${y.toFixed(1)} C${CURVE_START_X + 36},${y.toFixed(1)} ${COMBINE_X - 26},${midY.toFixed(1)} ${COMBINE_X},${midY.toFixed(1)}`
+  const joinedIndex =
+    change?.change === 'joined' && !muted && !paused
+      ? networks.findIndex((network) => network.id === change.networkId)
+      : -1
 
   return (
     <svg
@@ -61,30 +102,53 @@ export function CombineDiagram({
       className="block shrink-0"
       style={{ width: WIDTH, height }}
     >
-      <g fill="none" strokeWidth={3} strokeLinecap="round">
+      <g fill="none" strokeWidth={UNIFORM_WIDTH} strokeLinecap="round">
         {networks.map((network, index) => {
-          const y = (index + 0.5) * (height / networks.length)
           const color = muted ? 'var(--icon-muted)' : network.solid
           // Three deterministic states: paused (the whole download stopped), idle (the network
-          // is on but fetching nothing), or flowing (the network is carrying bytes). Muted is a
-          // static illustration — the empty-state diagram — so it never animates or dims.
+          // is on but fetching nothing), or flowing (the network is carrying bytes) at a step
+          // set by its share. Muted is a static illustration — the empty-state diagram — so it
+          // never animates or dims.
           const flowing = !muted && !paused && network.active === true
-          const opacity = muted ? 1 : paused ? 0.55 : flowing ? 1 : 0.35
+          const step = flowing ? Math.min(FLOW_STEPS, Math.max(1, network.step ?? 1)) : 0
+          const style = STEP_STYLES[step]
+          const uniform = muted || paused
           return (
             <path
-              key={network.label + index}
-              d={`M${CURVE_START_X},${y.toFixed(1)} C${CURVE_START_X + 36},${y.toFixed(1)} ${COMBINE_X - 26},${midY.toFixed(1)} ${COMBINE_X},${midY.toFixed(1)}`}
+              key={network.id ?? network.label + index}
+              d={curve(rowY(index))}
               stroke={color}
               strokeDasharray="6 8"
-              opacity={opacity}
+              strokeWidth={uniform ? UNIFORM_WIDTH : style.width}
+              opacity={muted ? 1 : paused ? 0.55 : style.opacity}
+              data-network={network.id}
+              data-share={muted ? undefined : Math.round((network.share ?? 0) * 100)}
+              data-flow-step={muted ? undefined : step}
               style={
-                flowing
-                  ? { animation: `plexo-dash ${1.1 + index * 0.2}s linear infinite` }
+                style.seconds !== undefined
+                  ? {
+                      animationName: 'plexo-dash',
+                      animationDuration: `${style.seconds}s`,
+                      animationTimingFunction: 'linear',
+                      animationIterationCount: 'infinite'
+                    }
                   : undefined
               }
             />
           )
         })}
+        {joinedIndex >= 0 && change && (
+          <path
+            key={`draw-in-${change.key}`}
+            d={curve(rowY(joinedIndex))}
+            stroke={networks[joinedIndex].solid}
+            strokeWidth={STEP_STYLES[FLOW_STEPS].width}
+            pathLength={1}
+            strokeDasharray="1 1"
+            data-testid="combine-draw-in"
+            style={{ animation: 'plexo-draw-in 900ms cubic-bezier(0.16, 1, 0.3, 1) forwards' }}
+          />
+        )}
         <path
           d={`M${COMBINE_X},${midY} L${STREAM_END_X},${midY}`}
           stroke={
@@ -109,6 +173,22 @@ export function CombineDiagram({
         strokeWidth={1.5}
         strokeDasharray={muted ? '3 4' : undefined}
       />
+      {joinedIndex >= 0 && change && (
+        <circle
+          key={`pulse-${change.key}`}
+          cx={COMBINE_X}
+          cy={midY}
+          r={9.5}
+          fill="none"
+          stroke="var(--node-accent)"
+          strokeWidth={1.5}
+          style={{
+            transformBox: 'fill-box',
+            transformOrigin: 'center',
+            animation: 'plexo-pulse 800ms ease-out forwards'
+          }}
+        />
+      )}
       <circle
         cx={COMBINE_X}
         cy={midY}
@@ -116,12 +196,11 @@ export function CombineDiagram({
         fill={muted ? 'var(--icon-muted)' : 'var(--node-accent)'}
       />
       {networks.map((network, index) => {
-        const y = (index + 0.5) * (height / networks.length)
         const color = muted ? 'var(--icon-muted)' : network.solid
-        return <circle key={`dot-${index}`} cx={DOT_X} cy={y} r={3.5} fill={color} />
+        return <circle key={`dot-${index}`} cx={DOT_X} cy={rowY(index)} r={3.5} fill={color} />
       })}
       {networks.map((network, index) => {
-        const y = (index + 0.5) * (height / networks.length)
+        const y = rowY(index)
         const label =
           network.label.trim().length > MAX_LABEL_CHARS
             ? `${network.label
