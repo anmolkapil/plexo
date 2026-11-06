@@ -40,7 +40,11 @@ export const testKnobs = {
   torrentDht: env['PLEXO_E2E_DHT'] !== '0',
   /** `PLEXO_E2E_DHT_BOOTSTRAP=127.0.0.1:9` starts the DHT from these nodes instead of the
    * internet's, so a test can have a DHT that reaches no one. */
-  torrentDhtBootstrap: env['PLEXO_E2E_DHT_BOOTSTRAP']?.split(',').filter(Boolean)
+  torrentDhtBootstrap: env['PLEXO_E2E_DHT_BOOTSTRAP']?.split(',').filter(Boolean),
+  /** Where the anonymous stats go in a test, which otherwise never sends them (see stats.ts). */
+  statsUrl: env['PLEXO_E2E_STATS_URL'],
+  /** How often queued stats are sent. */
+  statsSendEveryMs: positiveNumber('PLEXO_E2E_STATS_EVERY_MS', 15 * 60_000)
 }
 
 /** `PLEXO_E2E_STREAMS=2` fixes how many streams each network runs and turns the automatic

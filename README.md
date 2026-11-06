@@ -185,6 +185,10 @@ npm run dev
 
 Run platform packaging commands on the corresponding operating system. Local builds are unsigned unless signing credentials are configured. [CONTRIBUTING.md](CONTRIBUTING.md) covers packaging requirements, extension setup and testing.
 
+## Privacy
+
+Plexo sends anonymous usage and error stats: the app version, your system, and whether downloads finish or why they fail. It never sends links, file names or your IP address. Nothing is sent until you've seen the notice about it, and you can turn it off there or in Speed & data limits. [getplexo.app/privacy](https://getplexo.app/privacy/) lists exactly what's sent.
+
 ## Contributing
 
 Start with [open issues](https://github.com/anmolkapil/plexo/issues), or contribute a reproducible bug report, a fix, network compatibility testing or documentation improvements.

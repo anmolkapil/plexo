@@ -21,6 +21,8 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
 
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/
+
 const VALID_PROXY_TYPES: readonly ProxyType[] = ['http', 'https', 'socks4', 'socks5']
 
 function sanitizeProxyConfig(value: unknown): ProxyConfig | undefined {
@@ -126,6 +128,16 @@ function sanitizeSettings(parsed: unknown): AppSettings {
     settings.speedUnit = parsed.speedUnit
   }
   if (parsed.browserExtensionUsed === true) settings.browserExtensionUsed = true
+  if (parsed.shareStats === false) settings.shareStats = false
+  if (parsed.statsNoticeShown === true) settings.statsNoticeShown = true
+  // Turning the stats off deletes the id: back on, they start again under a new one.
+  if (
+    parsed.shareStats !== false &&
+    typeof parsed.statsInstallId === 'string' &&
+    UUID.test(parsed.statsInstallId)
+  ) {
+    settings.statsInstallId = parsed.statsInstallId
+  }
   return settings
 }
 

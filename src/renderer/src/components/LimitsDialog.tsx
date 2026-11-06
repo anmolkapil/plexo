@@ -31,6 +31,7 @@ import { Button } from './ui/button'
 import { Dialog, DialogContent, DialogTitle } from './ui/dialog'
 import { Input } from './ui/input'
 import { Switch } from './ui/switch'
+import { PRIVACY_URL } from '@shared/stats'
 import { ToggleGroup, ToggleGroupItem } from './ui/toggle-group'
 import { UsenetServerDialog } from './UsenetServerDialog'
 
@@ -218,14 +219,46 @@ function LimitChoice({
   )
 }
 
+function StatsSection({
+  sharing,
+  onChange
+}: {
+  sharing: boolean
+  onChange: (sharing: boolean) => void
+}): React.JSX.Element {
+  return (
+    <section className={sectionClass}>
+      <h4 className={headingClass}>Anonymous stats</h4>
+      <div className="flex items-start gap-3">
+        <p className={hintClass}>
+          App version, system, and whether downloads finish or why they fail. Never links, file
+          names or your IP address.{' '}
+          <a href={PRIVACY_URL} target="_blank" rel="noreferrer" className="underline">
+            What’s sent
+          </a>
+        </p>
+        <Switch
+          className="ml-auto shrink-0"
+          aria-label="Share anonymous usage and error stats"
+          checked={sharing}
+          onCheckedChange={onChange}
+        />
+      </div>
+    </section>
+  )
+}
+
 function GeneralPage({
   running,
   draft,
-  change
+  change,
+  stats
 }: {
   running: number
   draft: Draft
   change: (patch: Partial<Draft>) => void
+  /** Left out by a build that can't send stats. */
+  stats?: { sharing: boolean; onChange: (sharing: boolean) => void }
 }): React.JSX.Element {
   const { speedLimit, slowMode, slowModeSpeed, downloadsAtOnce } = draft
   const [confirmReset, setConfirmReset] = useState(false)
@@ -310,6 +343,7 @@ function GeneralPage({
         schedule={draft.downloadSchedule ?? DEFAULT_DOWNLOAD_SCHEDULE}
         onChange={(downloadSchedule) => change({ downloadSchedule })}
       />
+      {stats && <StatsSection {...stats} />}
       <div className="flex flex-wrap items-center gap-2 border-t-[0.5px] border-border pt-3">
         <Button
           variant="secondary"
@@ -734,6 +768,8 @@ function LimitsEditor({
   }, [])
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const statsAvailable = useAppStore((store) => store.stats.available)
+  const [shareStats, setShareStatsDraft] = useState(() => useAppStore.getState().stats.sharing)
   const valid = draft.downloadSchedule === undefined || validSchedule(draft.downloadSchedule)
   // Save one patch so the schedule and limits take effect together. Failed saves keep the draft.
   const save = async (): Promise<void> => {
@@ -757,6 +793,8 @@ function LimitsEditor({
     try {
       await window.plexo.updateSettings(patch)
       useAppStore.setState(patch)
+      const { stats, setShareStats } = useAppStore.getState()
+      if (statsAvailable && shareStats !== stats.sharing) setShareStats(shareStats)
       // Last, as switching off stops running NZBs: not done when the rest failed to save.
       if (usenet && usenetEnabled !== undefined && usenetEnabled !== usenet.enabled) {
         // The server as it is, every field kept. No password given: the saved one stays.
@@ -873,7 +911,14 @@ function LimitsEditor({
               change={(patch) => changeNetwork(shown.id, patch)}
             />
           ) : (
-            <GeneralPage running={running} draft={draft} change={change} />
+            <GeneralPage
+              running={running}
+              draft={draft}
+              change={change}
+              stats={
+                statsAvailable ? { sharing: shareStats, onChange: setShareStatsDraft } : undefined
+              }
+            />
           )}
         </fieldset>
       </div>

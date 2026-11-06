@@ -63,6 +63,8 @@ jobs:
           APPLE_API_KEY_P8: ${{ secrets.APPLE_API_KEY_P8 }}
           APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
           APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+          # Where the app sends its anonymous stats (stats-worker/README.md); unset, it sends none.
+          PLEXO_STATS_URL: ${{ vars.PLEXO_STATS_URL }}
         run: |
           signed=
           if [ "$RUNNER_OS" = macOS ] && [ -n "$MAC_CERTIFICATE_P12_BASE64" ]; then
