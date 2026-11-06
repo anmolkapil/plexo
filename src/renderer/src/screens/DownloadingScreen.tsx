@@ -1,11 +1,13 @@
 import { SPEED_HISTORY_SECONDS, type DownloadState } from '@shared/types'
-import { AlertTriangle, Folder } from 'lucide-react'
+import { Folder } from 'lucide-react'
 import { memo, useEffect, useState } from 'react'
 import { BlockGrid } from '../components/BlockGrid'
 import { ColorBadge } from '../components/ColorBadge'
 import { CombineDiagram } from '../components/CombineDiagram'
 import { CyclableChip } from '../components/CyclableChip'
 import { HeroBand } from '../components/HeroBand'
+import { LimitNote } from '../components/LimitNote'
+import { LimitsDialog } from '../components/LimitsDialog'
 import { NetworkRow } from '../components/NetworkRow'
 import { DetailHeader } from '../components/DetailHeader'
 import { ThroughputChart } from '../components/ThroughputChart'
@@ -37,6 +39,7 @@ import {
   wantedBytes
 } from '../utils/format'
 import { useFormatSpeed, useFormatSpeedLimit } from '../hooks/useFormatSpeed'
+import { describeLimit } from '../utils/limitedBy'
 
 /** Inline "·" separator between adjacent stats. `shrink` pins it at its natural width inside a
  * flex row that might otherwise squeeze it (footer rows), matching each call site's prior style. */
@@ -57,21 +60,17 @@ function BigStat({
   label,
   value,
   unit,
-  valueClass,
-  note
+  valueClass
 }: {
   label: string
   value: string | number
   unit?: string
   valueClass: string
-  /** Beside the label, e.g. a warning about what holds the value down. */
-  note?: React.ReactNode
 }): React.JSX.Element {
   return (
     <>
       <div className="flex items-center gap-1.5 font-mono text-[10px] leading-none font-medium tracking-[0.2em] text-muted-foreground">
         {label}
-        {note}
       </div>
       <div className="flex items-baseline gap-[7px]">
         <div
@@ -175,6 +174,13 @@ export const DownloadingScreen = memo(function DownloadingScreen({
   const totalDownloadedByNetworks = rows.reduce((sum, row) => sum + row.bytesDownloaded, 0)
   const [chipModeIndex, setChipModeIndex] = useState(0)
   const waiting = waitingFor(download)
+  // What holds it back, in the chip's place: while something does, that says more than the
+  // multiple. Never beside the wait or the error, which say more still.
+  const limit = isPaused || waiting ? null : describeLimit(download)
+  // Speed & data limits, opened from the limit's Change. Here rather than in the note, so a
+  // reason that changes while it's open doesn't close it.
+  const [limitsOpen, setLimitsOpen] = useState(false)
+  const [limitsPage, setLimitsPage] = useState<string | null>(null)
 
   const totalRetries = rows.reduce((sum, row) => sum + row.retries, 0)
   const remainingBytes = knownSize
@@ -246,28 +252,6 @@ export const DownloadingScreen = memo(function DownloadingScreen({
                 value={isPaused ? '—' : speedValue}
                 unit={isPaused ? undefined : speedUnit}
                 valueClass={isPaused ? 'text-muted-foreground' : 'text-foreground'}
-                note={
-                  !isPaused &&
-                  download.kind === 'http' &&
-                  download.diskLimited && (
-                    <Tooltip>
-                      <TooltipTrigger
-                        render={
-                          <span
-                            role="img"
-                            aria-label="Slow drive"
-                            className="inline-flex text-[var(--swatch-amber)]"
-                          >
-                            <AlertTriangle aria-hidden className="size-3" />
-                          </span>
-                        }
-                      />
-                      <TooltipContent>
-                        Your drive can’t save any faster, so this download is going slower.
-                      </TooltipContent>
-                    </Tooltip>
-                  )
-                }
               />
               <div className="flex items-center gap-2 font-mono text-[10px] leading-none font-medium tabular-nums text-muted-foreground">
                 <InlineStat label="AVG" value={formatSpeed(avgSpeedBytesPerSec)} />
@@ -280,26 +264,36 @@ export const DownloadingScreen = memo(function DownloadingScreen({
                   }
                 />
               </div>
-              {isPaused || waiting
-                ? (download.error || waiting) && (
-                    <div
-                      role="alert"
-                      className="mt-0.5 font-sans text-[11px] leading-[1.2] font-medium text-destructive"
-                    >
-                      {download.error ? describeError(download.error) : waiting}
-                    </div>
-                  )
-                : activeChipOption && (
-                    <CyclableChip
-                      label={activeChipOption.label}
-                      tooltip={`${activeChipOption.tooltip}${chipOptions.length > 1 ? ' (click to toggle)' : ''}`}
-                      bg={activeChipOption.visual.bg}
-                      border={activeChipOption.visual.border}
-                      color={activeChipOption.visual.text}
-                      cyclable={chipOptions.length > 1}
-                      onClick={() => setChipModeIndex((i) => (i + 1) % chipOptions.length)}
-                    />
-                  )}
+              {isPaused || waiting ? (
+                (download.error || waiting) && (
+                  <div
+                    role="alert"
+                    className="mt-0.5 font-sans text-[11px] leading-[1.2] font-medium text-destructive"
+                  >
+                    {download.error ? describeError(download.error) : waiting}
+                  </div>
+                )
+              ) : limit ? (
+                <LimitNote
+                  line={limit}
+                  onOpenLimits={(page) => {
+                    setLimitsPage(page)
+                    setLimitsOpen(true)
+                  }}
+                />
+              ) : (
+                activeChipOption && (
+                  <CyclableChip
+                    label={activeChipOption.label}
+                    tooltip={`${activeChipOption.tooltip}${chipOptions.length > 1 ? ' (click to toggle)' : ''}`}
+                    bg={activeChipOption.visual.bg}
+                    border={activeChipOption.visual.border}
+                    color={activeChipOption.visual.text}
+                    cyclable={chipOptions.length > 1}
+                    onClick={() => setChipModeIndex((i) => (i + 1) % chipOptions.length)}
+                  />
+                )
+              )}
             </>
           </div>
 
@@ -563,6 +557,12 @@ export const DownloadingScreen = memo(function DownloadingScreen({
           </div>
         </div>
       </div>
+      <LimitsDialog
+        open={limitsOpen}
+        onOpenChange={setLimitsOpen}
+        page={limitsPage}
+        onPageChange={setLimitsPage}
+      />
     </div>
   )
 })

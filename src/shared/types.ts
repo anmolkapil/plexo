@@ -1,3 +1,5 @@
+import type { LimitedBy } from './limitedBy'
+
 export type NetworkInterfaceKind = 'wifi' | 'usb' | 'ethernet' | 'bridge' | 'other'
 export type IpFamily = 4 | 6
 
@@ -344,6 +346,8 @@ interface DownloadStateBase {
   /** The best combined speed held for a few seconds, so it only ever rises; unset until it has
    * run that long. A download done sooner gets the best speed it showed. */
   peakSpeedBytesPerSec?: number
+  /** What holds it back while it downloads, when something does (see shared/limitedBy.ts). */
+  limitedBy?: LimitedBy
   /** The update this state is as of (see DownloadUpdate). */
   seq?: number
 }
