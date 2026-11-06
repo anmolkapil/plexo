@@ -31,3 +31,4 @@ kind (`ConnectivityManager.requestNetwork`) and sends each stream through one of
 CI builds it (`.github/workflows/android.yml`) and attaches `plexo-android.apk` as a build artifact;
 push a tag `android-v0.1.0` to publish it as a release. Locally: JDK 17, Android SDK 35, Gradle 8.11+,
 then `gradle -p android assembleRelease`.
+
