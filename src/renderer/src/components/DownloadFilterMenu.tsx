@@ -22,7 +22,7 @@ export function DownloadFilterMenu({
   return (
     <Menu.Root>
       <h1>
-        <Menu.Trigger className="flex h-8 items-center gap-2 rounded-lg px-2.5 font-sans text-[14px] leading-none font-semibold outline-none hover:bg-secondary focus-visible:ring-2 focus-visible:ring-ring">
+        <Menu.Trigger className="flex h-8 items-center gap-2 rounded-lg px-2.5 font-sans text-[14px] leading-none font-semibold whitespace-nowrap outline-none hover:bg-secondary focus-visible:ring-2 focus-visible:ring-ring">
           {label}
           <ChevronDown aria-hidden className="size-3.5 text-muted-foreground" />
         </Menu.Trigger>
