@@ -12,6 +12,7 @@ import {
 } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 import { useFormatSpeedLimit } from '../hooks/useFormatSpeed'
+import { useFreeSpace } from '../hooks/useFreeSpace'
 import { useNetworkUsage } from '../hooks/useNetworks'
 import { useNetworkVisuals } from '../hooks/useNetworkVisuals'
 import { useDownloadSchedule } from '../hooks/useDownloadSchedule'
@@ -145,6 +146,7 @@ function NewDownloadForm({ onDone }: { onDone: () => void }): React.JSX.Element 
   // The news server, for an NZB: undefined until it has been asked for, null when there's none.
   const [server, setServer] = useState<UsenetServer | null | undefined>(undefined)
   const [serverOpen, setServerOpen] = useState(false)
+  const freeSpace = useFreeSpace(destinationDir)
 
   // Opened with nothing in it: a link on the clipboard is most likely what it's for, as download
   // managers have long assumed. Anything else on the clipboard is left alone.
@@ -230,6 +232,12 @@ function NewDownloadForm({ onDone }: { onDone: () => void }): React.JSX.Element 
   const sizeToFetch = torrent
     ? chosenFiles.reduce((sum, index) => sum + torrent.files[index].length, 0)
     : (ready?.totalBytes ?? null)
+  const availableFreeSpace = destinationDir ? freeSpace : null
+  const hasInsufficientSpace =
+    availableFreeSpace !== null &&
+    sizeToFetch !== null &&
+    sizeToFetch > 0 &&
+    sizeToFetch > availableFreeSpace
   const multiChunkAllowed = ready !== null && ready.supportsRanges && ready.totalBytes !== null
   const isSingleStreamOnly = ready !== null && !multiChunkAllowed
 
@@ -259,6 +267,7 @@ function NewDownloadForm({ onDone }: { onDone: () => void }): React.JSX.Element 
     (!nzb || !!server) &&
     selectedInterfaceIds.length > 0 &&
     Boolean(destinationDir) &&
+    !hasInsufficientSpace &&
     !starting
   const startLabel = starting
     ? 'Starting'
@@ -609,8 +618,20 @@ function NewDownloadForm({ onDone }: { onDone: () => void }): React.JSX.Element 
 
         <div className="flex items-center gap-3">
           <div className={labelClass}>Save to</div>
-          <div className="min-w-0 flex-1 truncate font-mono text-[12.5px]">
-            {toDisplayPath(destinationDir, homeDir)}
+          <div className="flex min-w-0 flex-1 items-baseline gap-2 truncate font-mono text-[12.5px]">
+            <span className="truncate">{toDisplayPath(destinationDir, homeDir)}</span>
+            {availableFreeSpace !== null && (
+              <span
+                className={cn(
+                  'shrink-0 text-[11.5px] tabular-nums',
+                  hasInsufficientSpace
+                    ? 'font-medium text-[var(--color-danger)]'
+                    : 'text-muted-foreground'
+                )}
+              >
+                ({formatBytes(availableFreeSpace)} free)
+              </span>
+            )}
           </div>
           <Button type="button" variant="secondary" size="sm" onClick={handleBrowse}>
             Change
@@ -772,6 +793,18 @@ function NewDownloadForm({ onDone }: { onDone: () => void }): React.JSX.Element 
             <AlertTriangle className="mt-0.5 size-3.5 shrink-0" />
             {subnetConflict.names.join(' and ')} share a subnet ({subnetConflict.subnet}), so the
             computer sends both down one route and they can’t be combined.
+          </div>
+        )}
+        {hasInsufficientSpace && (
+          <div
+            role="alert"
+            className="flex items-start gap-2 text-[12px] leading-snug text-[var(--color-danger)]"
+          >
+            <AlertTriangle className="mt-0.5 size-3.5 shrink-0" />
+            <span>
+              Not enough disk space: this download needs {formatBytes(sizeToFetch)}, but only{' '}
+              {formatBytes(availableFreeSpace)} is free on this drive.
+            </span>
           </div>
         )}
         {usedUpPick.length > 0 && (

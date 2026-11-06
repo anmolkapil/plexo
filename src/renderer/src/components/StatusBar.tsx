@@ -1,5 +1,5 @@
 import type { SpeedUnit } from '@shared/types'
-import { useEffect, useState } from 'react'
+import { useFreeSpace } from '../hooks/useFreeSpace'
 import { useAppStore } from '../store/useAppStore'
 import { formatBytes } from '../utils/format'
 import { useFormatSpeedLimit } from '../hooks/useFormatSpeed'
@@ -10,8 +10,6 @@ import { Switch } from './ui/switch'
 import { ToggleGroup, ToggleGroupItem } from './ui/toggle-group'
 import { Tooltip, TooltipContent, TooltipTrigger } from './ui/tooltip'
 import { UpdateIndicator } from './UpdateIndicator'
-
-const FREE_SPACE_POLL_MS = 30_000
 
 /** MB/s or Mbps for every speed in the app; sits with the theme toggle as a view preference. */
 function SpeedUnitToggle(): React.JSX.Element {
@@ -64,23 +62,7 @@ export function StatusBar(): React.JSX.Element {
   const slowModeSpeed = useAppStore((store) => store.slowModeSpeed)
   const setSlowMode = useAppStore((store) => store.setSlowMode)
   const destinationDir = useAppStore((store) => store.destinationDir)
-  const [free, setFree] = useState<number | null>(null)
-
-  useEffect(() => {
-    let disposed = false
-    const load = (): void => {
-      void window.plexo
-        .freeSpace(destinationDir)
-        .then((bytes) => !disposed && setFree(bytes))
-        .catch(() => {})
-    }
-    load()
-    const interval = setInterval(load, FREE_SPACE_POLL_MS)
-    return () => {
-      disposed = true
-      clearInterval(interval)
-    }
-  }, [destinationDir])
+  const free = useFreeSpace(destinationDir)
 
   // Limits show by the speeds they cap (the Downloading screen, the networks menu), not here.
   const status = [
