@@ -305,6 +305,12 @@ test('search and filter interaction with selection: no crash on empty query filt
 
   // 3. Press Cmd+A / Ctrl+A: selects only the matching row (alpha-doc.bin)
   const modifier = process.platform === 'darwin' ? 'Meta' : 'Control'
+  // In the search box it selects the text instead, and no row.
+  await page.keyboard.press(`${modifier}+a`)
+  expect(
+    await search.evaluate((input: HTMLInputElement) => [input.selectionStart, input.selectionEnd])
+  ).toEqual([0, 'alpha'.length])
+  await expect(page.getByRole('checkbox', { name: 'Select alpha-doc.bin' })).not.toBeChecked()
   await search.blur()
   await page.keyboard.press(`${modifier}+a`)
   await expect(page.getByRole('checkbox', { name: 'Select alpha-doc.bin' })).toBeChecked()
@@ -322,6 +328,60 @@ test('search and filter interaction with selection: no crash on empty query filt
   await expect(page.getByRole('checkbox', { name: 'Select alpha-doc.bin' })).not.toBeChecked()
   await expect(search).toBeVisible()
   await expect(search).toBeFocused()
+})
+
+test('Cmd/Ctrl+A selects the list while a menu that was just closed is still fading out', async ({
+  plexo,
+  serve
+}) => {
+  const origin = await serve({ size: BLOCK })
+  await plexo.start(origin.url(), origin.sha256, { fileName: 'alpha-doc.bin' })
+  await plexo.waitForStatus('completed')
+
+  const page = plexo.page
+  // A closed menu stays in the page until its exit animation ends, which waits on a frame: in
+  // a hidden window on Windows and Linux that can take seconds. A long fade holds it there on
+  // every platform.
+  await page.addStyleTag({
+    content: '[role="menu"][data-ending-style] { opacity: 0; transition: opacity 60s !important; }'
+  })
+  await page.getByRole('button', { name: 'All downloads' }).click()
+  await page.getByRole('menuitemradio', { name: 'Finished' }).click()
+  await expect(page.locator('[role="menu"][data-closed]')).toHaveCount(1)
+
+  await page.keyboard.press(`${process.platform === 'darwin' ? 'Meta' : 'Control'}+a`)
+  await expect(page.getByRole('checkbox', { name: 'Select alpha-doc.bin' })).toBeChecked()
+})
+
+test('Esc that closes a menu or a dialog keeps the selection', async ({ plexo, serve }) => {
+  for (const fileName of ['one.bin', 'two.bin']) {
+    const origin = await serve({ size: BLOCK })
+    await plexo.start(origin.url(), origin.sha256, { fileName })
+    await plexo.waitForStatus('completed')
+  }
+  const page = plexo.page
+  const one = page.getByRole('checkbox', { name: 'Select one.bin', exact: true })
+  await one.check()
+
+  // A closing popup no longer holds the list's keys, so the Esc that closes it must not reach
+  // them as well.
+  await openMore(page)
+  await expect(page.getByRole('menu')).toBeVisible()
+  await page.keyboard.press('Escape')
+  await expect(page.getByRole('menu')).toHaveCount(0)
+  await expect(one).toBeChecked()
+
+  await page.getByRole('button', { name: 'Open two.bin', exact: true }).click({ button: 'right' })
+  await expect(page.getByRole('menu')).toBeVisible()
+  await page.keyboard.press('Escape')
+  await expect(page.getByRole('menu')).toHaveCount(0)
+  await expect(one).toBeChecked()
+
+  await page.keyboard.press('Delete')
+  await expect(page.getByRole('alertdialog')).toBeVisible()
+  await page.keyboard.press('Escape')
+  await expect(page.getByRole('alertdialog')).toHaveCount(0)
+  await expect(one).toBeChecked()
 })
 
 test('search box maintains minimum usable width at 720px minimum window width with active download', async ({
@@ -355,10 +415,24 @@ test('search box maintains minimum usable width at 720px minimum window width wi
   const searchInput = page.getByRole('textbox', { name: 'Search downloads' })
   await expect(searchInput).toBeVisible()
 
-  // Verify bounding box width is at least 130px (container is w-40 = 160px; was ~2px before fix)
-  const box = await searchInput.boundingBox()
+  // The field keeps its narrowest width, w-44 (176px); it once collapsed to about 2px here. The
+  // text box inside it shares that with the icon and the shortcut hint, which is wider as
+  // "Ctrl+F" than as "⌘F", so check what the text box needs instead of a fixed number: room
+  // for the whole placeholder.
+  const field = page.locator('[data-slot="input-group"]', { has: searchInput })
+  const box = await field.boundingBox()
   expect(box).not.toBeNull()
-  expect(box!.width).toBeGreaterThanOrEqual(130)
+  expect(box!.width).toBeGreaterThanOrEqual(176)
+  const { room, placeholder } = await searchInput.evaluate((input: HTMLInputElement) => {
+    const style = getComputedStyle(input)
+    const context = document.createElement('canvas').getContext('2d')!
+    context.font = `${style.fontStyle} ${style.fontWeight} ${style.fontSize} ${style.fontFamily}`
+    return {
+      room: input.clientWidth - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight),
+      placeholder: context.measureText(input.placeholder).width
+    }
+  })
+  expect(room).toBeGreaterThanOrEqual(placeholder)
   await expect(page.getByRole('button', { name: 'New download' })).toBeInViewport({ ratio: 1 })
   expect(
     await page.evaluate(
