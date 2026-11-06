@@ -22,7 +22,7 @@ import {
 } from '../transfer'
 import { ArticleMissingError, NntpAuthError, NntpConnection, NntpRefusedError } from './nntp'
 import type { NzbSegment } from './nzbFile'
-import type { UsenetServerConfig } from './usenetServer'
+import { USENET_OFF, type UsenetServerConfig } from './usenetServer'
 import { decodeYenc, YencError } from './yenc'
 
 // Set PLEXO_DEBUG=1 to log every article's outcome.
@@ -118,6 +118,10 @@ export class NzbTransfer implements Transfer {
           if (this.runtime.stop.signal.aborted) return
           if (!server) {
             this.host.failDownload('Set up a news server in Plexo to download from Usenet.')
+            return
+          }
+          if (!server.enabled) {
+            this.host.failDownload(USENET_OFF)
             return
           }
           this.server = server

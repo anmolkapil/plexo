@@ -100,7 +100,8 @@ function UsenetServerForm({
     username: username.trim(),
     connections: Number(connections),
     deleteArchives,
-    password: password === '' && server?.hasPassword ? undefined : password
+    // Blank keeps the stored password, also one this session can't unseal (hasPassword false).
+    password: password === '' ? undefined : password
   })
   const valid =
     host.trim() !== '' &&

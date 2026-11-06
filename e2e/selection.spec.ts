@@ -2,6 +2,7 @@ import { existsSync } from 'node:fs'
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { basename, dirname, join } from 'node:path'
 import type { Page } from '@playwright/test'
+import { DEFAULT_DOWNLOAD_SCHEDULE } from '../src/shared/downloadSchedule'
 import { BLOCK, expect, test, treeSha } from './fixtures'
 import { seededBytes } from './origin'
 import { named, Swarm, torrentFileOnDisk } from './torrentSwarm'
@@ -273,4 +274,97 @@ test('a removal that fails for one download still removes the rest, and asks aga
   await expect(dialog.getByRole('heading', { name: 'Delete file?' })).toBeVisible()
   await expect(page.getByRole('checkbox', { name: 'Select goes.bin' })).toHaveCount(0)
   expect(existsSync(join(trashed, 'goes.bin'))).toBe(true)
+})
+
+test('search and filter interaction with selection: no crash on empty query filter, Cmd+A selects matching only, Esc clears selection', async ({
+  plexo,
+  serve
+}) => {
+  const first = await serve({ size: BLOCK })
+  await plexo.start(first.url(), first.sha256, { fileName: 'alpha-doc.bin' })
+  await plexo.waitForStatus('completed')
+
+  const second = await serve({ size: BLOCK })
+  await plexo.start(second.url(), second.sha256, { fileName: 'beta-video.bin' })
+  await plexo.waitForStatus('completed')
+
+  const page = plexo.page
+  const search = page.getByRole('textbox', { name: 'Search downloads' })
+
+  // 1. Pick a status filter ('Finished') and type a query matching nothing ('zzz').
+  // Verifies bug 1: no white screen / crash occurs when a group has 0 matches.
+  await page.getByRole('button', { name: 'All downloads' }).click()
+  await page.getByRole('menuitemradio', { name: 'Finished' }).click()
+  await search.fill('zzz')
+  await expect(page.getByText(/No downloads matching/)).toBeVisible()
+
+  // 2. Search for 'alpha': only alpha-doc.bin shows
+  await search.fill('alpha')
+  await expect(page.getByText('alpha-doc.bin')).toBeVisible()
+  await expect(page.getByText('beta-video.bin')).toHaveCount(0)
+
+  // 3. Press Cmd+A / Ctrl+A: selects only the matching row (alpha-doc.bin)
+  const modifier = process.platform === 'darwin' ? 'Meta' : 'Control'
+  await search.blur()
+  await page.keyboard.press(`${modifier}+a`)
+  await expect(page.getByRole('checkbox', { name: 'Select alpha-doc.bin' })).toBeChecked()
+
+  // 4. Press Escape with a selection: first Esc clears selection (not the hidden query)
+  await page.keyboard.press('Escape')
+  await expect(page.getByRole('checkbox', { name: 'Select alpha-doc.bin' })).not.toBeChecked()
+  // Search box is visible again with 'alpha' still in it
+  await expect(search).toHaveValue('alpha')
+
+  // 5. Select row again and press Cmd+F: selection is cleared and search box is focused
+  await page.getByRole('checkbox', { name: 'Select alpha-doc.bin' }).check()
+  await expect(search).toBeHidden()
+  await page.keyboard.press(`${modifier}+f`)
+  await expect(page.getByRole('checkbox', { name: 'Select alpha-doc.bin' })).not.toBeChecked()
+  await expect(search).toBeVisible()
+  await expect(search).toBeFocused()
+})
+
+test('search box maintains minimum usable width at 720px minimum window width with active download', async ({
+  plexo,
+  serve
+}) => {
+  // Set window to minimum 720px width
+  await plexo.evaluateMain(({ BrowserWindow }) => {
+    const window = BrowserWindow.getAllWindows()[0]
+    window.setSize(720, 620)
+  }, null)
+  // The default schedule allows 0:00–7:00, so set the clock inside it: otherwise the download
+  // waits for the schedule and never starts.
+  await plexo.evaluateMain(() => {
+    const insideSchedule = new Date(2000, 0, 1, 3).getTime()
+    Date.now = () => insideSchedule
+  }, null)
+  await plexo.api.updateSettings({
+    downloadSchedule: { ...DEFAULT_DOWNLOAD_SCHEDULE, enabled: true }
+  })
+  // The window reads the schedule when it loads, so reload it to show the schedule button.
+  await plexo.page.reload()
+  await expect(plexo.page.getByRole('button', { name: 'Download schedule enabled' })).toBeVisible()
+
+  const origin = await serve({ size: 24 * BLOCK })
+  const reached = origin.hold(6 * BLOCK)
+  await plexo.start(origin.url(), origin.sha256, { fileName: 'active-download.bin' })
+  await reached
+
+  const page = plexo.page
+  const searchInput = page.getByRole('textbox', { name: 'Search downloads' })
+  await expect(searchInput).toBeVisible()
+
+  // Verify bounding box width is at least 130px (container is w-40 = 160px; was ~2px before fix)
+  const box = await searchInput.boundingBox()
+  expect(box).not.toBeNull()
+  expect(box!.width).toBeGreaterThanOrEqual(130)
+  await expect(page.getByRole('button', { name: 'New download' })).toBeInViewport({ ratio: 1 })
+  expect(
+    await page.evaluate(
+      () => document.documentElement.scrollWidth <= document.documentElement.clientWidth
+    )
+  ).toBe(true)
+
+  origin.release()
 })

@@ -7,6 +7,7 @@ import { testKnobs } from '../testKnobs'
 import { requestHeaders } from './browserContext'
 import { parseContentDispositionFilename } from './contentDisposition'
 import { describeNzb, downloadNzbFile, indexerError, readNzbFile, sniffXml } from './nzb/nzbFile'
+import { USENET_OFF, usenetEnabled } from './nzb/usenetServer'
 import { normalizeEtag } from './fileVersion'
 import {
   describeTorrent,
@@ -21,6 +22,9 @@ const MAX_REDIRECTS = 5
 // redirects included, so a chain of slow hops can't stretch it.
 const PROBE_TIMEOUT_MS = testKnobs.stallTimeoutMs
 const NO_RESPONSE = 'The server did not respond — check the link and try again'
+/** The last byte the probe asks for. Not 0 or 1: some file hosts answer a range that ends there
+ * with the whole file while serving every real chunk as asked (#101). */
+const PROBE_RANGE_END = 1023
 
 type Headers = Record<string, string | string[] | undefined>
 
@@ -43,7 +47,7 @@ function requestFirstBytes(
   deadline: number,
   browser: BrowserContext | undefined,
   ranged: boolean,
-  range = 'bytes=0-1023'
+  range = `bytes=0-${PROBE_RANGE_END}`
 ): Promise<ProbeResponse> {
   return new Promise((resolve, reject) => {
     const requester = url.protocol === 'https:' ? httpsRequest : httpRequest
@@ -181,6 +185,7 @@ export async function probeUrl(rawUrl: string, browser?: BrowserContext): Promis
     return describeTorrent(await readTorrentFile(rawUrl), rawUrl)
   }
   if (isAbsolute(rawUrl) && /\.nzb$/i.test(rawUrl)) {
+    if (!(await usenetEnabled())) throw new Error(USENET_OFF)
     return describeNzb(await readNzbFile(rawUrl), rawUrl, basename(rawUrl))
   }
 
@@ -221,7 +226,8 @@ export async function probeUrl(rawUrl: string, browser?: BrowserContext): Promis
   }
 
   const suggestedFileName = fileNameFromHeaders(response.headers, current)
-  if (isNzbLink(response.headers, current, suggestedFileName)) {
+  // Off, an NZB is a file like any other: for another newsreader to take.
+  if (isNzbLink(response.headers, current, suggestedFileName) && (await usenetEnabled())) {
     const finalUrl = current.toString()
     const nzbFile = await downloadNzbFile(
       finalUrl,
@@ -238,7 +244,7 @@ export async function probeUrl(rawUrl: string, browser?: BrowserContext): Promis
     const start = await sniffXml(finalUrl, PROBE_TIMEOUT_MS, headers)
     const refusal = indexerError(start)
     if (refusal) throw new Error(refusal)
-    if (/<(?:[\w-]+:)?nzb\b/i.test(start)) {
+    if (/<(?:[\w-]+:)?nzb\b/i.test(start) && (await usenetEnabled())) {
       const nzbFile = await downloadNzbFile(finalUrl, PROBE_TIMEOUT_MS, headers)
       return describeNzb(nzbFile, finalUrl, suggestedFileName)
     }
@@ -248,7 +254,18 @@ export async function probeUrl(rawUrl: string, browser?: BrowserContext): Promis
   // A server that supports range requests must answer our range GET with 206 Partial Content.
   // If it returned 200 OK, it ignored the Range header and sent the whole file — even if its headers
   // statically claim `Accept-Ranges: bytes`.
-  const supportsRanges = response.statusCode === 206
+  //
+  // A 206 is only a promise if it sends us the bytes we asked for. Most say so in Content-Range,
+  // but some hosts (Cloudflare-fronted file hosts among them) put the end of the *file* there
+  // while setting Content-Length to the range they actually send. Trust whichever says the body
+  // is bounded, so those keep their parallel streams instead of falling back to one.
+  const served = /^bytes\s+(\d+)-(\d+)\//i.exec(contentRange ?? '')
+  const contentLength = Number(headerValue(response.headers, 'content-length') ?? NaN)
+  const servesOnlyProbe =
+    served !== null &&
+    Number(served[1]) === 0 &&
+    (Number(served[2]) <= PROBE_RANGE_END || contentLength === PROBE_RANGE_END + 1)
+  const supportsRanges = response.statusCode === 206 && servesOnlyProbe
 
   let totalBytes: number | null = null
   if (contentRange) {
@@ -262,7 +279,7 @@ export async function probeUrl(rawUrl: string, browser?: BrowserContext): Promis
     if (contentLength) totalBytes = Number(contentLength)
   }
 
-  const perRange = await etagIsPerRange(current, browser, response)
+  const perRange = supportsRanges ? await etagIsPerRange(current, browser, response) : false
 
   return {
     kind: 'http',
