@@ -8,6 +8,7 @@ import { app, Notification, powerSaveBlocker, safeStorage, shell } from 'electro
 import { scheduleWindow } from '../../shared/downloadSchedule'
 import { IpcChannels } from '../../shared/ipc-channels'
 import { taskbarProgress, type TaskbarDownload } from '../../shared/taskbarProgress'
+import { describeTimeSaved, timeSavedOf } from '../../shared/timeSaved'
 import {
   DOWNLOADS_AT_ONCE,
   SPEED_HISTORY_SECONDS,
@@ -246,6 +247,24 @@ function sampleSpeeds(state: DownloadState): void {
   for (const [id, series] of Object.entries(history)) {
     series.push(state.networks.find((network) => network.id === id)?.speedBytesPerSec ?? 0)
     if (series.length > SPEED_HISTORY_SECONDS) series.shift()
+  }
+}
+
+/** Adds `elapsedMs`, the time since the last tick, to each network that had bytes arrive over it
+ * in that time: its active time, which with its bytes is its speed while it took part (see
+ * timeSaved.ts). Read off its meter, which counts bytes as they arrive — a torrent's bytes only
+ * reach the network's own count once their piece checks out, in bursts. `lastBytes` is each
+ * meter's count at the last tick, for this run: the meters start over with each one. */
+function sampleActive(
+  runtime: DownloadRuntime,
+  lastBytes: Map<string, number>,
+  elapsedMs: number
+): void {
+  for (const network of runtime.state.networks) {
+    const bytes = runtime.meters.networks.get(network.id)?.bytes ?? 0
+    const before = lastBytes.get(network.id) ?? 0
+    lastBytes.set(network.id, bytes)
+    if (bytes > before) network.activeMs = (network.activeMs ?? 0) + elapsedMs
   }
 }
 
@@ -2111,6 +2130,7 @@ export class DownloadManager {
     const watched = new WeakSet<Promise<void>>()
     let wake: { resolve: () => void; reject: (error: unknown) => void } | null = null
     let tickedAt = Date.now()
+    const meteredBytes = new Map<string, number>()
     // Readings carry over a pause, moved up to now: time paused isn't time downloading, so a
     // stretch can run across one, and runs too short for a stretch of their own still count — as
     // they do in AVG, which a reset here let read above PEAK.
@@ -2145,6 +2165,7 @@ export class DownloadManager {
       // The only place speeds are read: on this clock, never as bytes arrive (see Meter).
       const speedsChanged = updateSpeeds(runtime, now)
       const timeLeftChanged = updateTimeLeft(runtime.state, (now - tickedAt) / 1000)
+      sampleActive(runtime, meteredBytes, now - tickedAt)
       tickedAt = now
       if (speedsChanged || timeLeftChanged) this.scheduleUpdate(runtime)
       if (now - runtime.speedSampledAt >= 1000) {
@@ -2209,7 +2230,7 @@ export class DownloadManager {
       await runtime.file.discardLeftover().catch(() => {})
       this.notify(
         'Download complete',
-        `${runtime.state.fileName} has finished downloading. Click to show in folder.`,
+        `${runtime.state.fileName} has finished downloading${this.timeSavedNote(runtime.state)}. Click to show in folder.`,
         runtime.state.id
       )
     } catch (error) {
@@ -2344,6 +2365,16 @@ export class DownloadManager {
     }
 
     runtime.transfer.reconcile()
+  }
+
+  /** ", about 4 min sooner than Wi-Fi alone", as the Complete screen says it, the network by the
+   * name the user gave it there; empty when that screen says nothing either. */
+  private timeSavedNote(state: DownloadState): string {
+    const saved = timeSavedOf(state)
+    if (!saved) return ''
+    const { network } = saved
+    const name = this.networkPreferences[network.id]?.customName?.trim() || network.label
+    return `, ${describeTimeSaved(saved.seconds, name)}`
   }
 
   private notify(title: string, body: string, downloadId?: string): void {

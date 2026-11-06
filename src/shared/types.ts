@@ -296,6 +296,10 @@ interface DownloadNetworkBase {
   error?: string
   /** Bytes of the file it delivered. */
   bytesDownloaded: number
+  /** How long, in ms, it was delivering them: the download's ticks that had bytes arrive over it
+   * (see sampleActive). What the Complete screen reads its speed alone from (see timeSaved.ts).
+   * Unset in a download from before it was kept. */
+  activeMs?: number
   speedBytesPerSec: number
   /** Requests over it that failed and were tried again. */
   retries: number
