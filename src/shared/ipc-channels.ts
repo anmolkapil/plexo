@@ -48,5 +48,7 @@ export const IpcChannels = {
   telegramAuthChanged: 'telegram:auth-changed',
   usenetServer: 'usenet:server',
   saveUsenetServer: 'usenet:save-server',
-  testUsenetServer: 'usenet:test-server'
+  testUsenetServer: 'usenet:test-server',
+  statsNoticeShown: 'stats:notice-shown',
+  reportError: 'stats:report-error'
 } as const

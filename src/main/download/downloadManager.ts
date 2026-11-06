@@ -48,6 +48,7 @@ import { Limits } from '../network/limits'
 import { loadSettings } from '../settings'
 import type { TelegramServiceApi } from '../telegram/service'
 import { addToHistory, findInHistory, removeFromHistory } from './history'
+import { downloadFailed, downloadFinished } from '../stats'
 import { testKnobs } from '../testKnobs'
 import { DownloadFile } from './downloadFile'
 import { compareSamples, HttpTransfer, pickedStreams, splittable } from './httpTransfer'
@@ -2207,6 +2208,7 @@ export class DownloadManager {
         runtime.state.totalBytes - unwantedBytes(runtime.state) || runtime.state.bytesDownloaded
       await this.persistNow(runtime)
       await runtime.file.discardLeftover().catch(() => {})
+      downloadFinished(runtime.state)
       this.notify(
         'Download complete',
         `${runtime.state.fileName} has finished downloading. Click to show in folder.`,
@@ -2215,6 +2217,7 @@ export class DownloadManager {
     } catch (error) {
       runtime.state.status = 'error'
       runtime.state.error = error instanceof Error ? error.message : String(error)
+      downloadFailed(runtime.state)
       this.notify(
         'Download failed',
         `${runtime.state.fileName}: ${describeError(runtime.state.error)}`
@@ -2242,6 +2245,7 @@ export class DownloadManager {
     runtime.state.resumable = !discard
     // Switched off by the user, who needs no telling; the download's error still says so.
     if (message !== USENET_OFF) {
+      downloadFailed(runtime.state)
       this.notify('Download failed', `${runtime.state.fileName}: ${describeError(message)}`)
     }
     this.stopRun(runtime)

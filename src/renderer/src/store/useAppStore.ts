@@ -10,6 +10,7 @@ import type {
   NetworkPreferences,
   PendingLink,
   SpeedUnit,
+  StatsSettings,
   ThemeSource
 } from '@shared/types'
 import { create } from 'zustand'
@@ -56,6 +57,11 @@ interface AppStore {
   slowModeSpeed: number
   /** Persisted — MB/s or Mbps, for every speed shown. */
   speedUnit: SpeedUnit
+  /** Anonymous usage and error stats (see main/stats.ts). */
+  stats: StatsSettings
+  setShareStats: (on: boolean) => void
+  /** The notice about them is on screen: it's never shown again. */
+  statsNoticeSeen: () => void
 
   /** Lifted out of the Idle screen so it survives a swap to/from the No-connections screen. */
   draftUrl: string
@@ -140,6 +146,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
   slowMode: initial.slowMode,
   slowModeSpeed: initial.slowModeSpeed,
   speedUnit: initial.speedUnit,
+  stats: initial.stats,
 
   draftUrl: '',
   links: [],
@@ -259,6 +266,18 @@ export const useAppStore = create<AppStore>((set, get) => ({
   setSpeedLimit: (speedLimit) => {
     set({ speedLimit })
     persist({ speedLimit })
+  },
+
+  setShareStats: (on) => {
+    set((store) => ({ stats: { ...store.stats, sharing: on, noticeDue: false } }))
+    // Only ever saved as false (see AppSettings.shareStats).
+    persist({ shareStats: on ? undefined : false })
+    // Turned on by hand, after Turn off on the notice: read, whatever it said.
+    if (on) void window.plexo.statsNoticeShown().catch(() => {})
+  },
+
+  statsNoticeSeen: () => {
+    void window.plexo.statsNoticeShown().catch(() => {})
   },
 
   setSlowMode: (slowMode) => {

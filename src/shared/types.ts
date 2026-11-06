@@ -551,6 +551,15 @@ export interface AppSettings {
   /** How speeds are shown everywhere; sizes stay in bytes either way. */
   speedUnit?: SpeedUnit
   browserExtensionUsed?: boolean
+  /** Only ever saved as false: anonymous usage and error stats are shared unless turned off
+   * (see main/stats.ts). */
+  shareStats?: boolean
+  /** Set once the notice about those stats has been read (OK, or a minute on screen); nothing
+   * is sent before. */
+  statsNoticeShown?: boolean
+  /** A random id for the stats alone, made on the first send and deleted when they're turned
+   * off. Main's only: never sent to the window, and a patch from it can't set it. */
+  statsInstallId?: string
 }
 
 /** bytes: MB/s. bits: Mbps, as internet plans and speed tests count them. */
@@ -577,6 +586,21 @@ export interface InitialState {
   speedUnit: SpeedUnit
   /** The last folder picked, if it still exists — otherwise the renderer uses downloadsDir. */
   destinationDir?: string
+  /** Anonymous usage and error stats: whether this build can send them at all, whether they're
+   * on, and whether the one-time notice about them is still to be shown. */
+  stats: StatsSettings
+}
+
+export interface ReportedError {
+  name: string
+  message: string
+  stack?: string
+}
+
+export interface StatsSettings {
+  available: boolean
+  sharing: boolean
+  noticeDue: boolean
 }
 
 interface StartDownloadRequestBase {

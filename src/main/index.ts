@@ -16,6 +16,7 @@ import { keepsRunningForBrowser, startBridge } from './browserBridge'
 import { acceptedLink, bringForward, linkFromArgs, offerLink } from './openLinks'
 import { loadSettings, loadThemeSource, migrateLegacyNetworkPreferences } from './settings'
 import { startUpdater } from './updater'
+import { errorCaught, processGone, sendStats, startStats } from './stats'
 import { testKnobs } from './testKnobs'
 import type { DownloadManager } from './download/downloadManager'
 
@@ -26,6 +27,20 @@ app.setName('Plexo')
 
 // Each e2e test runs against its own throwaway userData folder (downloads, manifests, settings).
 if (testKnobs.userDataDir) app.setPath('userData', testKnobs.userDataDir)
+
+// Recorded for the anonymous stats (see stats.ts) without changing what happens next: a thrown
+// error still gets Electron's error dialog, and a rejected promise is still only logged.
+process.on('uncaughtExceptionMonitor', (error) => errorCaught('main', error))
+process.on('unhandledRejection', (reason) => {
+  console.error('[plexo] unhandled rejection', reason)
+  errorCaught('main', reason)
+})
+app.on('render-process-gone', (_event, _contents, details) =>
+  processGone('renderer', details.reason, details.exitCode)
+)
+app.on('child-process-gone', (_event, details) =>
+  processGone(details.type, details.reason, details.exitCode)
+)
 
 // One Plexo at a time (per userData folder, so parallel e2e runs each have their own): a second
 // launch — a magnet link clicked, a .torrent opened — hands its link to the first and exits.
@@ -218,6 +233,7 @@ app.whenReady().then(async () => {
   // Applied before the window is created so the initial background/icon already match —
   // the saved preference otherwise only takes effect on the next 'updated' event.
   nativeTheme.themeSource = await loadThemeSource()
+  await startStats().catch((error) => console.error('[plexo] stats failed to start', error))
 
   app.on('browser-window-created', (_, window) => {
     optimizer.watchWindowShortcuts(window)
@@ -263,7 +279,8 @@ app.on('before-quit', (event) => {
     app.exit(0)
   }, 3000)
 
-  void downloadManager.suspendAll().finally(() => {
+  // The stats go within the same few seconds, or not at all.
+  void Promise.all([downloadManager.suspendAll(), sendStats()]).finally(() => {
     clearTimeout(forceQuitTimeout)
     quitAfterSuspending = true
     app.exit(0)

@@ -13,6 +13,12 @@ const telegramDefine = {
   __PLEXO_TG_API_HASH__: JSON.stringify(process.env.TELEGRAM_API_HASH || undefined)
 }
 
+// Where anonymous usage and error stats go (see src/main/stats.ts and stats-worker/). Set only
+// when a release is built; without it the app never sends them.
+const statsDefine = {
+  __PLEXO_STATS_URL__: JSON.stringify(process.env.PLEXO_STATS_URL || undefined)
+}
+
 export default defineConfig({
   main: {
     resolve: {
@@ -20,7 +26,7 @@ export default defineConfig({
         '@shared': resolve('src/shared')
       }
     },
-    define: telegramDefine
+    define: { ...telegramDefine, ...statsDefine }
   },
   preload: {
     resolve: {

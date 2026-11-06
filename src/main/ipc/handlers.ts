@@ -12,6 +12,7 @@ import {
 import { IpcChannels } from '../../shared/ipc-channels'
 import type { IpcContract } from '../../shared/ipc-contract'
 import {
+  type AppSettings,
   DEFAULT_SLOW_MODE_SPEED,
   DOWNLOADS_AT_ONCE,
   type InitialState,
@@ -36,6 +37,13 @@ import { deviceBindingSupported } from '../network/deviceBinding'
 import { pendingLink, pendingLinks, releaseLink } from '../openLinks'
 import { NetworkMonitor } from '../network/interfaces'
 import { loadSettings, saveSettings } from '../settings'
+import {
+  appStarted,
+  errorCaught,
+  statsNoticeShown,
+  statsSettings,
+  statsSettingsChanged
+} from '../stats'
 import { showUpdateMenu, updateState } from '../updater'
 
 async function openNetworkSettings(): Promise<void> {
@@ -107,6 +115,7 @@ export function registerIpcHandlers(getWindow: () => BrowserWindow | null): Down
   })
 
   handle('listInterfaces', () => networks.refresh())
+  void networks.refresh().then(appStarted, () => {})
 
   // Started now so it has settled before the first download needs it.
   const bindingSupport = deviceBindingSupported()
@@ -124,9 +133,23 @@ export function registerIpcHandlers(getWindow: () => BrowserWindow | null): Down
     if (patch?.themeSource === 'light' || patch?.themeSource === 'dark') {
       nativeTheme.themeSource = patch.themeSource
     }
-    await saveSettings(patch)
+    // Main's own: the window can't set or clear these.
+    const allowed: AppSettings = { ...patch }
+    delete allowed.statsInstallId
+    delete allowed.statsNoticeShown
+    await saveSettings(allowed)
     // Read back rather than taken from the patch: what was saved is what passed the checks.
-    await manager.applySettings(await loadSettings())
+    const saved = await loadSettings()
+    statsSettingsChanged(saved)
+    await manager.applySettings(saved)
+  })
+
+  handle('statsNoticeShown', () => statsNoticeShown())
+  handle('reportError', (_event, error) => {
+    const rebuilt = new Error(String(error?.message ?? ''))
+    rebuilt.name = String(error?.name ?? 'Error')
+    rebuilt.stack = typeof error?.stack === 'string' ? error.stack : undefined
+    errorCaught('renderer', rebuilt)
   })
 
   // Answered via sendSync from the preload, which blocks the page until returnValue is set — so a
@@ -157,7 +180,8 @@ export function registerIpcHandlers(getWindow: () => BrowserWindow | null): Down
         slowMode: settings.slowMode ?? false,
         slowModeSpeed: settings.slowModeSpeed ?? DEFAULT_SLOW_MODE_SPEED,
         speedUnit: settings.speedUnit ?? 'bytes',
-        destinationDir: destinationExists ? destinationDir : undefined
+        destinationDir: destinationExists ? destinationDir : undefined,
+        stats: statsSettings(settings)
       } satisfies InitialState
     } catch (error) {
       console.error('[plexo] failed to read initial state', error)
@@ -170,7 +194,8 @@ export function registerIpcHandlers(getWindow: () => BrowserWindow | null): Down
         downloadsAtOnce: DOWNLOADS_AT_ONCE.default,
         slowMode: false,
         slowModeSpeed: DEFAULT_SLOW_MODE_SPEED,
-        speedUnit: 'bytes'
+        speedUnit: 'bytes',
+        stats: statsSettings({})
       } satisfies InitialState
     }
   })

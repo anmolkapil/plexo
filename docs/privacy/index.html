@@ -1,0 +1,240 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <meta name="theme-color" content="#0A0A0B" />
+    <meta
+      name="description"
+      content="What the Plexo app sends in its anonymous usage and error stats, and how to turn them off."
+    />
+    <title>App Privacy — Plexo</title>
+    <link rel="canonical" href="https://getplexo.app/privacy/" />
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <style>
+      @font-face {
+        font-family: 'Archivo';
+        src: url('/assets/fonts/Archivo-Variable.woff2') format('woff2');
+        font-weight: 100 900;
+        font-stretch: 62% 125%;
+        font-display: swap;
+      }
+      @font-face {
+        font-family: 'Geist';
+        src: url('/assets/fonts/Geist-Variable.woff2') format('woff2');
+        font-weight: 100 900;
+        font-display: swap;
+      }
+      html {
+        color-scheme: dark;
+      }
+      body {
+        margin: 0;
+        padding: 64px 24px 96px;
+        background: #0a0a0b;
+        color: #a1a1a8;
+        font-family: 'Geist', system-ui, sans-serif;
+        line-height: 1.65;
+      }
+      main {
+        max-width: 680px;
+        margin: 0 auto;
+      }
+      h1,
+      h2 {
+        color: #ededef;
+        font-family: 'Archivo', 'Helvetica Neue', sans-serif;
+        font-stretch: 118%;
+        font-weight: 600;
+        letter-spacing: -0.02em;
+        text-transform: uppercase;
+      }
+      h1 {
+        margin: 0 0 8px;
+        font-size: clamp(32px, 6vw, 56px);
+        color: #f36712;
+      }
+      h2 {
+        margin: 48px 0 12px;
+        font-size: 20px;
+      }
+      strong,
+      dt {
+        color: #ededef;
+        font-weight: 600;
+      }
+      dd {
+        margin: 0 0 12px;
+      }
+      code {
+        color: #ededef;
+        font-size: 0.9em;
+      }
+      a {
+        color: #f36712;
+      }
+      a:hover {
+        color: #ff8a3d;
+      }
+      table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 14px;
+      }
+      th,
+      td {
+        padding: 8px 10px 8px 0;
+        border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+        text-align: left;
+        vertical-align: top;
+      }
+      th {
+        color: #ededef;
+        font-weight: 600;
+      }
+      .summary {
+        margin: 32px 0 0;
+        padding: 20px 24px;
+        border: 1px solid rgba(255, 255, 255, 0.1);
+        border-radius: 16px;
+        color: #ededef;
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>Privacy</h1>
+      <p>The Plexo app</p>
+      <p>Last updated: November 6, 2026</p>
+
+      <p class="summary">
+        Plexo sends anonymous stats to help fix problems: the app version, your system, and whether
+        downloads finish or why they fail. It never sends links, file names or your IP address. You
+        can turn them off at any time.
+      </p>
+
+      <h2>When stats are sent</h2>
+      <p>
+        Stats are on unless you turn them off. Plexo tells you about them the first time you open
+        it, and nothing is sent until you click <strong>OK</strong> on that notice or it has been on
+        screen for a minute. Stats are collected in memory and sent about every 15 minutes, and when
+        Plexo quits. If your computer is offline they are dropped, never saved for later. At most
+        200 events a day are sent.
+      </p>
+      <p>
+        Plexo sends nothing if the <code>DO_NOT_TRACK</code> environment variable is set, and builds
+        you make yourself from the source code never send stats.
+      </p>
+
+      <h2>What every batch includes</h2>
+      <dl>
+        <dt>A random install ID</dt>
+        <dd>
+          Made for these stats alone, and not taken from your computer, accounts or hardware.
+          Turning stats off deletes it; turning them back on makes a new one.
+        </dd>
+        <dt>App version, operating system and its major version, and processor type</dt>
+        <dd>
+          For example <code>1.0.0</code>, <code>win32</code>, <code>11</code>, <code>x64</code>.
+        </dd>
+        <dt>Language</dt>
+        <dd>
+          The language your system uses, for example <code>zh-CN</code>, to decide which
+          translations to add.
+        </dd>
+      </dl>
+
+      <h2>The events</h2>
+      <table>
+        <thead>
+          <tr>
+            <th>Event</th>
+            <th>What it contains</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><code>app_start</code></td>
+            <td>
+              How many networks of each kind the computer has (Wi-Fi, Ethernet, USB, bridge, other),
+              whether the browser extension has been used, and whether automatic updates are on.
+            </td>
+          </tr>
+          <tr>
+            <td><code>download_finished</code></td>
+            <td>
+              The kind of download (web, torrent, Usenet, Telegram), its size, how long it took and
+              its average speed, each as a range such as <code>100MB-1GB</code>, and the kinds of
+              network that downloaded part of it.
+            </td>
+          </tr>
+          <tr>
+            <td><code>download_failed</code></td>
+            <td>
+              The kind of download, a short code for why it failed (such as <code>dns</code>,
+              <code>no_space</code> or <code>http_403</code>, never the error's own text), the
+              server's status code if it gave one, how much had downloaded as a range, and the kinds
+              of network used.
+            </td>
+          </tr>
+          <tr>
+            <td><code>app_error</code></td>
+            <td>
+              An error Plexo didn't handle: which part of the app it happened in, the error's type
+              (such as <code>TypeError</code>), a short code, and up to five places in Plexo's own
+              code, as file name and line number. Never the error's message.
+            </td>
+          </tr>
+          <tr>
+            <td><code>process_gone</code></td>
+            <td>Part of the app stopped unexpectedly: which part, the reason and the exit code.</td>
+          </tr>
+          <tr>
+            <td><code>update_failed</code></td>
+            <td>A short code for why an update failed.</td>
+          </tr>
+        </tbody>
+      </table>
+
+      <h2>What is never sent</h2>
+      <ul>
+        <li>Links, website or server names, or any part of a link</li>
+        <li>File and folder names, torrent names, magnet links or hashes</li>
+        <li>Cookies, sign-in details, proxy settings or network names</li>
+        <li>Your IP address or any local address</li>
+        <li>Exact file sizes, or when exactly you downloaded something</li>
+        <li>Anything you type into Plexo</li>
+      </ul>
+      <p>
+        The server that receives the stats checks every event against the list above and drops
+        anything that doesn't match. It doesn't store the IP address the request came from. Stats
+        are kept for three months.
+      </p>
+
+      <h2>Turning stats off</h2>
+      <p>
+        Click <strong>Turn off</strong> on the notice, or open the networks menu, choose
+        <strong>Speed &amp; data limits</strong>, and switch off <strong>Anonymous stats</strong>.
+        Anything not yet sent is dropped, and the install ID is deleted.
+      </p>
+
+      <h2>The source</h2>
+      <p>
+        Plexo is open source. The list of events is in
+        <a href="https://github.com/anmolkapil/plexo/blob/main/src/shared/stats.ts"
+          ><code>src/shared/stats.ts</code></a
+        >, and the server that receives them is in
+        <a href="https://github.com/anmolkapil/plexo/tree/main/stats-worker"
+          ><code>stats-worker/</code></a
+        >. Any change to what is sent changes this page too.
+      </p>
+
+      <h2>Contact</h2>
+      <p>
+        For privacy questions, contact Anmol Kapil through the
+        <a href="https://github.com/anmolkapil/plexo/issues">Plexo GitHub issue tracker</a>.
+      </p>
+      <p><a href="/">Back to Plexo</a></p>
+    </main>
+  </body>
+</html>

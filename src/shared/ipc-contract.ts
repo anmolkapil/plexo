@@ -1,4 +1,5 @@
 import type {
+  ReportedError,
   AppSettings,
   DownloadUpdate,
   FinishedDownload,
@@ -96,4 +97,8 @@ export interface IpcContract {
   saveUsenetServer: { args: [server: UsenetServerInput]; result: UsenetServer }
   /** Connects and signs in, over the computer's default route; throws what went wrong. */
   testUsenetServer: { args: [server: UsenetServerInput]; result: void }
+  /** The notice about anonymous stats has been on screen (see main/stats.ts). */
+  statsNoticeShown: { args: []; result: void }
+  /** An error the window didn't catch, for the anonymous stats: its message stays in main. */
+  reportError: { args: [error: ReportedError]; result: void }
 }

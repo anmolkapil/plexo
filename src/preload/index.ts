@@ -6,6 +6,7 @@ import type {
   DownloadUpdate,
   InitialState,
   MagnetCheckStatus,
+  ReportedError,
   NetworkInterfaceInfo,
   TelegramAuthState,
   TelegramCredentials,
@@ -71,6 +72,8 @@ const plexoApi = {
   usenetServer: () => invoke('usenetServer'),
   saveUsenetServer: (server: UsenetServerInput) => invoke('saveUsenetServer', server),
   testUsenetServer: (server: UsenetServerInput) => invoke('testUsenetServer', server),
+  statsNoticeShown: () => invoke('statsNoticeShown'),
+  reportError: (error: ReportedError) => invoke('reportError', error),
 
   telegramState: () => invoke('telegramState'),
   telegramStartLogin: (credentials: TelegramCredentials) =>

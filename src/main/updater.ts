@@ -10,6 +10,7 @@ import { autoUpdater } from 'electron-updater'
 import { IpcChannels } from '../shared/ipc-channels'
 import type { UpdateState } from '../shared/types'
 import { saveSettings } from './settings'
+import { updateFailed } from './stats'
 
 const CHECK_EVERY_MS = 4 * 60 * 60_000
 /** Where an update the app couldn't install itself is downloaded from instead. */
@@ -162,6 +163,7 @@ export function startUpdater(window: () => BrowserWindow | null, autoUpdate: boo
   autoUpdater.on('update-downloaded', ({ version }) => set({ status: 'ready', version }))
   autoUpdater.on('error', (error) => {
     console.error('[plexo] update failed', error)
+    updateFailed(error)
     // Before an update is found (offline, GitHub down) there's nothing to show. After, the
     // website still has it — the way an unsigned Mac build, which can't install it, gets it.
     set({ status: state.version ? 'error' : 'idle' })

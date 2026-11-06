@@ -1,0 +1,18 @@
+# Plexo's anonymous stats endpoint. See README.md to deploy it.
+name = "plexo-stats"
+main = "src/index.ts"
+compatibility_date = "2026-10-01"
+
+# Requests aren't logged: they'd hold the IP address the stats never keep.
+[observability]
+enabled = false
+
+[[analytics_engine_datasets]]
+binding = "EVENTS"
+dataset = "plexo_events"
+
+# At most 10 batches a minute from one install (one is sent every 15 minutes).
+[[ratelimits]]
+name = "LIMITER"
+namespace_id = "1001"
+simple = { limit = 10, period = 60 }

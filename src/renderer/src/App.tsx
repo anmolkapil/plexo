@@ -2,6 +2,7 @@ import type { DownloadState, FinishedDownload } from '@shared/types'
 import { DownloadActionsProvider } from './components/DownloadActionsProvider'
 import { NetworkBindingDialog } from './components/NetworkBindingDialog'
 import { NewDownloadDialog } from './components/NewDownloadDialog'
+import { StatsNotice } from './components/StatsNotice'
 import { StatusBar } from './components/StatusBar'
 import { TelegramDialog } from './components/TelegramDialog'
 import { TitleBar } from './components/TitleBar'
@@ -71,6 +72,7 @@ function App(): React.JSX.Element {
           <NewDownloadDialog />
           <TelegramDialog />
           <NetworkBindingDialog />
+          <StatsNotice />
         </div>
       </DownloadActionsProvider>
     </TooltipProvider>
