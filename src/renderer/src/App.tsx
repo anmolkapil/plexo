@@ -1,5 +1,6 @@
 import type { DownloadState, FinishedDownload } from '@shared/types'
 import { DownloadActionsProvider } from './components/DownloadActionsProvider'
+import { LimitsDialog } from './components/LimitsDialog'
 import { NetworkBindingDialog } from './components/NetworkBindingDialog'
 import { NewDownloadDialog } from './components/NewDownloadDialog'
 import { StatusBar } from './components/StatusBar'
@@ -8,7 +9,11 @@ import { TitleBar } from './components/TitleBar'
 import { TooltipProvider } from './components/ui/tooltip'
 import { useDownloadEvents } from './hooks/useDownloadEvents'
 import { useNetworkEvents } from './hooks/useNetworks'
-import { useNewDownloadShortcuts, useOpenedLinks } from './hooks/useOpenedLinks'
+import {
+  useNewDownloadShortcuts,
+  useOpenedLinks,
+  useSettingsShortcuts
+} from './hooks/useOpenedLinks'
 import { CompleteScreen } from './screens/CompleteScreen'
 import { DownloadingScreen } from './screens/DownloadingScreen'
 import { DownloadsScreen } from './screens/DownloadsScreen'
@@ -53,10 +58,29 @@ function CurrentScreen(): React.JSX.Element {
   return shown && !cancelled ? renderDownload(shown) : <DownloadsScreen />
 }
 
+function SettingsModal(): React.JSX.Element {
+  const open = useAppStore((store) => store.settingsOpen)
+  const page = useAppStore((store) => store.settingsPage)
+  const showSchedule = useAppStore((store) => store.settingsShowSchedule)
+  const setPage = useAppStore((store) => store.setSettingsPage)
+  const close = useAppStore((store) => store.closeSettings)
+
+  return (
+    <LimitsDialog
+      open={open}
+      showSchedule={showSchedule}
+      onOpenChange={(next) => !next && close()}
+      page={page}
+      onPageChange={setPage}
+    />
+  )
+}
+
 function App(): React.JSX.Element {
   useDownloadEvents()
   useOpenedLinks()
   useNewDownloadShortcuts()
+  useSettingsShortcuts()
   useNetworkEvents()
 
   return (
@@ -71,6 +95,7 @@ function App(): React.JSX.Element {
           <NewDownloadDialog />
           <TelegramDialog />
           <NetworkBindingDialog />
+          <SettingsModal />
         </div>
       </DownloadActionsProvider>
     </TooltipProvider>
