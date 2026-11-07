@@ -110,6 +110,12 @@ function sanitizeSettings(parsed: unknown): AppSettings {
   if (typeof destinationDir === 'string' && isAbsolute(destinationDir)) {
     settings.destinationDir = destinationDir
   }
+  if (
+    typeof parsed.defaultDestinationDir === 'string' &&
+    isAbsolute(parsed.defaultDestinationDir)
+  ) {
+    settings.defaultDestinationDir = parsed.defaultDestinationDir
+  }
   // Clamped rather than dropped: a count saved under an older, higher limit keeps the most allowed.
   if (Number.isInteger(downloadsAtOnce) && (downloadsAtOnce as number) >= DOWNLOADS_AT_ONCE.min) {
     settings.downloadsAtOnce = Math.min(downloadsAtOnce as number, DOWNLOADS_AT_ONCE.max)
@@ -147,9 +153,13 @@ export function saveSettings(patch: unknown): Promise<void> {
   ) {
     return Promise.reject(new Error('Choose different start and stop times and at least one day.'))
   }
-  return updateJson(settingsPath(), (current) =>
-    sanitizeSettings({ ...sanitizeSettings(current), ...(isRecord(patch) ? patch : {}) })
-  )
+  return updateJson(settingsPath(), (current) => {
+    const merged = { ...sanitizeSettings(current), ...(isRecord(patch) ? patch : {}) }
+    if (isRecord(patch) && 'defaultDestinationDir' in patch && !patch.defaultDestinationDir) {
+      delete (merged as Record<string, unknown>).defaultDestinationDir
+    }
+    return sanitizeSettings(merged)
+  })
 }
 
 export async function loadThemeSource(): Promise<ThemeSource> {
