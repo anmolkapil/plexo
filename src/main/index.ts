@@ -17,6 +17,7 @@ import { acceptedLink, bringForward, linkFromArgs, offerLink } from './openLinks
 import { loadSettings, loadThemeSource, migrateLegacyNetworkPreferences } from './settings'
 import { startUpdater } from './updater'
 import { testKnobs } from './testKnobs'
+import type { AppSettings } from '../shared/types'
 import type { DownloadManager } from './download/downloadManager'
 
 // In dev mode the app runs as the raw `electron` binary, which otherwise shows "Electron" in
@@ -104,7 +105,19 @@ function titleBarOverlay(): Electron.TitleBarOverlayOptions {
   }
 }
 
-function createWindow(): void {
+function shouldStartMinimized(settings: AppSettings): boolean {
+  const argv = process.argv
+  if (
+    argv.includes('--minimized') ||
+    argv.includes('--start-minimized') ||
+    argv.includes('--hidden')
+  ) {
+    return true
+  }
+  return Boolean(settings.startMinimized)
+}
+
+function createWindow(startMinimized = false): void {
   mainWindow = new BrowserWindow({
     width: 760,
     height: 640,
@@ -134,6 +147,10 @@ function createWindow(): void {
   })
 
   mainWindow.on('ready-to-show', () => {
+    if (startMinimized) {
+      ensureTray()
+      return
+    }
     if (!testKnobs.hideWindow) mainWindow?.show()
   })
 
@@ -237,9 +254,11 @@ app.whenReady().then(async () => {
     if (process.platform !== 'darwin') mainWindow?.setTitleBarOverlay(titleBarOverlay())
   })
 
-  createWindow()
+  const settings = await loadSettings()
+  const startMinimized = shouldStartMinimized(settings)
+  createWindow(startMinimized)
   if (testKnobs.hideWindow) app.dock?.hide()
-  startUpdater(() => mainWindow, (await loadSettings()).autoUpdate !== false)
+  startUpdater(() => mainWindow, settings.autoUpdate !== false)
 
   app.on('activate', function () {
     if (mainWindow && !mainWindow.isDestroyed()) {

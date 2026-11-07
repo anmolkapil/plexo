@@ -126,6 +126,8 @@ function sanitizeSettings(parsed: unknown): AppSettings {
     settings.speedUnit = parsed.speedUnit
   }
   if (parsed.browserExtensionUsed === true) settings.browserExtensionUsed = true
+  if (typeof parsed.openAtLogin === 'boolean') settings.openAtLogin = parsed.openAtLogin
+  if (typeof parsed.startMinimized === 'boolean') settings.startMinimized = parsed.startMinimized
   return settings
 }
 

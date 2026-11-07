@@ -36,6 +36,7 @@ import { deviceBindingSupported } from '../network/deviceBinding'
 import { pendingLink, pendingLinks, releaseLink } from '../openLinks'
 import { NetworkMonitor } from '../network/interfaces'
 import { loadSettings, saveSettings } from '../settings'
+import { applyAutostart, isAutostartRegistered } from '../autostart'
 import { showUpdateMenu, updateState } from '../updater'
 
 async function openNetworkSettings(): Promise<void> {
@@ -126,7 +127,14 @@ export function registerIpcHandlers(getWindow: () => BrowserWindow | null): Down
     }
     await saveSettings(patch)
     // Read back rather than taken from the patch: what was saved is what passed the checks.
-    await manager.applySettings(await loadSettings())
+    const applied = await loadSettings()
+    if (patch?.openAtLogin !== undefined || patch?.startMinimized !== undefined) {
+      await applyAutostart({
+        openAtLogin: Boolean(applied.openAtLogin),
+        startMinimized: Boolean(applied.startMinimized)
+      })
+    }
+    await manager.applySettings(applied)
   })
 
   // Answered via sendSync from the preload, which blocks the page until returnValue is set — so a
@@ -157,7 +165,9 @@ export function registerIpcHandlers(getWindow: () => BrowserWindow | null): Down
         slowMode: settings.slowMode ?? false,
         slowModeSpeed: settings.slowModeSpeed ?? DEFAULT_SLOW_MODE_SPEED,
         speedUnit: settings.speedUnit ?? 'bytes',
-        destinationDir: destinationExists ? destinationDir : undefined
+        destinationDir: destinationExists ? destinationDir : undefined,
+        openAtLogin: settings.openAtLogin ?? isAutostartRegistered(),
+        startMinimized: settings.startMinimized ?? false
       } satisfies InitialState
     } catch (error) {
       console.error('[plexo] failed to read initial state', error)
