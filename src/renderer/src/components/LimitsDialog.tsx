@@ -46,6 +46,8 @@ type Draft = Pick<
   | 'downloadsAtOnce'
   | 'networkPreferences'
   | 'downloadSchedule'
+  | 'openAtLogin'
+  | 'startMinimized'
 >
 
 /** All downloads as a fresh install has them. */
@@ -54,7 +56,9 @@ const GENERAL_DEFAULTS = {
   speedLimit: undefined,
   slowMode: false,
   slowModeSpeed: DEFAULT_SLOW_MODE_SPEED,
-  downloadsAtOnce: DOWNLOADS_AT_ONCE.default
+  downloadsAtOnce: DOWNLOADS_AT_ONCE.default,
+  openAtLogin: false,
+  startMinimized: false
 } satisfies Partial<Draft>
 
 const MB = 1024 ** 2
@@ -227,7 +231,8 @@ function GeneralPage({
   draft: Draft
   change: (patch: Partial<Draft>) => void
 }): React.JSX.Element {
-  const { speedLimit, slowMode, slowModeSpeed, downloadsAtOnce } = draft
+  const { speedLimit, slowMode, slowModeSpeed, downloadsAtOnce, openAtLogin, startMinimized } =
+    draft
   const [confirmReset, setConfirmReset] = useState(false)
   const atDefaults = Object.entries(GENERAL_DEFAULTS).every(
     ([key, value]) => draft[key as keyof typeof GENERAL_DEFAULTS] === value
@@ -310,6 +315,35 @@ function GeneralPage({
         schedule={draft.downloadSchedule ?? DEFAULT_DOWNLOAD_SCHEDULE}
         onChange={(downloadSchedule) => change({ downloadSchedule })}
       />
+      <section className={sectionClass}>
+        <div className="flex items-center justify-between gap-4">
+          <div className="flex flex-col gap-1">
+            <h4 className={headingClass}>Launch on startup</h4>
+            <p className={hintClass}>Automatically start Plexo when your computer turns on.</p>
+          </div>
+          <Switch
+            checked={openAtLogin}
+            onCheckedChange={(openAtLogin) => change({ openAtLogin })}
+            aria-label="Launch on startup"
+          />
+        </div>
+      </section>
+
+      <section className={sectionClass}>
+        <div className="flex items-center justify-between gap-4">
+          <div className="flex flex-col gap-1">
+            <h4 className={headingClass}>Start minimized</h4>
+            <p className={hintClass}>
+              Open Plexo in the system tray without showing the main window.
+            </p>
+          </div>
+          <Switch
+            checked={startMinimized}
+            onCheckedChange={(startMinimized) => change({ startMinimized })}
+            aria-label="Start minimized"
+          />
+        </div>
+      </section>
       <div className="flex flex-wrap items-center gap-2 border-t-[0.5px] border-border pt-3">
         <Button
           variant="secondary"
@@ -325,8 +359,8 @@ function GeneralPage({
           <AlertDialogHeader>
             <AlertDialogTitle>Reset all downloads to defaults?</AlertDialogTitle>
             <AlertDialogDescription>
-              This resets total speed, slow mode, downloads at once and the download schedule.
-              Network limits stay unchanged.
+              This resets total speed, slow mode, downloads at once, startup options, and the
+              download schedule. Network limits stay unchanged.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
@@ -701,7 +735,9 @@ function LimitsEditor({
       slowModeSpeed,
       downloadsAtOnce,
       networkPreferences,
-      downloadSchedule
+      downloadSchedule,
+      openAtLogin,
+      startMinimized
     } = useAppStore.getState()
     return {
       speedLimit,
@@ -709,7 +745,9 @@ function LimitsEditor({
       slowModeSpeed,
       downloadsAtOnce,
       networkPreferences,
-      downloadSchedule
+      downloadSchedule,
+      openAtLogin,
+      startMinimized
     }
   })
   const change = (patch: Partial<Draft>): void =>
@@ -748,6 +786,8 @@ function LimitsEditor({
       patch.downloadsAtOnce = draft.downloadsAtOnce
     if (draft.downloadSchedule !== store.downloadSchedule)
       patch.downloadSchedule = draft.downloadSchedule
+    if (draft.openAtLogin !== store.openAtLogin) patch.openAtLogin = draft.openAtLogin
+    if (draft.startMinimized !== store.startMinimized) patch.startMinimized = draft.startMinimized
     for (const [id, preference] of Object.entries(draft.networkPreferences)) {
       if (preference !== store.networkPreferences[id]) {
         patch.networkPreferences ??= { ...store.networkPreferences }

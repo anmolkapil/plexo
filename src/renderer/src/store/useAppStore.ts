@@ -100,6 +100,10 @@ interface AppStore {
   setSpeedUnit: (unit: SpeedUnit) => void
   setDraftUrl: (url: string) => void
   setDestinationDir: (dir: string) => void
+  openAtLogin: boolean
+  startMinimized: boolean
+  setOpenAtLogin: (openAtLogin: boolean) => void
+  setStartMinimized: (startMinimized: boolean) => void
 }
 
 // Settings saved by the main process, read once before the first paint (see InitialState).
@@ -147,6 +151,8 @@ export const useAppStore = create<AppStore>((set, get) => ({
   formKey: 0,
   startedUrl: '',
   destinationDir: initial.destinationDir ?? initial.downloadsDir,
+  openAtLogin: initial.openAtLogin ?? false,
+  startMinimized: initial.startMinimized ?? false,
 
   loadInterfaces: async () => {
     // A re-scan keeps showing the last result rather than flashing back to 'loading'.
@@ -280,5 +286,13 @@ export const useAppStore = create<AppStore>((set, get) => ({
   setDestinationDir: (destinationDir) => {
     set({ destinationDir })
     persist({ destinationDir })
+  },
+  setOpenAtLogin: (openAtLogin) => {
+    set({ openAtLogin })
+    persist({ openAtLogin })
+  },
+  setStartMinimized: (startMinimized) => {
+    set({ startMinimized })
+    persist({ startMinimized })
   }
 }))
