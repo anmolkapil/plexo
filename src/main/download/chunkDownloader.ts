@@ -84,10 +84,9 @@ export function retryAfterMs(value: string | undefined, now = Date.now()): numbe
 // detect or retry it.
 const STALL_TIMEOUT_MS = testKnobs.stallTimeoutMs
 
-// Only the initial probe resolves redirects today — if a CDN reissues a
-// redirect mid-download (e.g. a signed URL rotates), a chunk needs to be
-// able to follow it too instead of failing outright.
-const MAX_REDIRECTS = 5
+// Some download hosts use several redirects before serving a chunk. Keep a generous finite cap
+// so those chains work while redirect loops still end as an error.
+const MAX_REDIRECTS = 20
 
 // A socket hands over what it has as it arrives — often 16 KiB at a time — and each write is a
 // trip through libuv's thread pool and back to the main thread. Body chunks are gathered into
