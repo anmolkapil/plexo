@@ -1,0 +1,47 @@
+# Maintainer: Anmol Kapil <anmolkapil@users.noreply.github.com>
+# Contributor: Pranav Kannur <kannnurpranav67@gmail.com>
+
+pkgname=plexo-bin
+_pkgname=plexo
+_realver="1.0.0-rc.15"
+# Arch package versions cannot contain hyphens
+pkgver="${_realver//-/.}"
+pkgrel=1
+pkgdesc="Speed up downloads by combining multiple network connections in parallel"
+arch=('x86_64' 'aarch64')
+url="https://github.com/anmolkapil/plexo"
+license=('MIT')
+depends=(
+  'alsa-lib'
+  'gtk3'
+  'nss'
+  'libnotify'
+  'libxss'
+  'xdg-utils'
+)
+provides=('plexo')
+conflicts=('plexo')
+options=('!strip' '!debug')
+
+source=('plexo.sh')
+source_x86_64=("${pkgname}-${_realver}-x86_64.deb::https://github.com/anmolkapil/plexo/releases/download/v${_realver}/plexo_${_realver}_amd64.deb")
+source_aarch64=("${pkgname}-${_realver}-aarch64.deb::https://github.com/anmolkapil/plexo/releases/download/v${_realver}/plexo_${_realver}_arm64.deb")
+
+sha256sums=('d2367a0515175e5f9bc38912eaa87164199889e1322f1cb860f4d297e0b51fcb')
+sha256sums_x86_64=('7ab2e0a5ec57c26bb4a6b4a7dcd2b43c3a367cca2e0351ef0de116808bb39057')
+sha256sums_aarch64=('6cae1d2478f427403f443dd45d3fc2b9d812ef01cf046f7a073812c677699cf8')
+
+package() {
+  # Extract deb data archive without failing on ownership inside fakeroot
+  bsdtar -xf "${srcdir}/data.tar.xz" --no-same-owner -C "${pkgdir}/"
+
+  # Replace raw binary symlink with the launcher wrapper
+  install -Dm755 "${srcdir}/plexo.sh" "${pkgdir}/usr/bin/plexo"
+
+  # Normalize permissions
+  chmod -R u=rwX,go=rX "${pkgdir}"/
+
+  # Install license
+  install -d "${pkgdir}/usr/share/licenses/${pkgname}"
+  ln -s "/opt/Plexo/LICENSE.electron.txt" "${pkgdir}/usr/share/licenses/${pkgname}/LICENSE"
+}

@@ -1,0 +1,26 @@
+pkgbase = plexo-bin
+	pkgdesc = Speed up downloads by combining multiple network connections in parallel
+	pkgver = 1.0.0.rc.15
+	pkgrel = 1
+	url = https://github.com/anmolkapil/plexo
+	arch = x86_64
+	arch = aarch64
+	license = MIT
+	depends = alsa-lib
+	depends = gtk3
+	depends = nss
+	depends = libnotify
+	depends = libxss
+	depends = xdg-utils
+	provides = plexo
+	conflicts = plexo
+	options = !strip
+	options = !debug
+	source = plexo.sh
+	sha256sums = d2367a0515175e5f9bc38912eaa87164199889e1322f1cb860f4d297e0b51fcb
+	source_x86_64 = plexo-bin-1.0.0-rc.15-x86_64.deb::https://github.com/anmolkapil/plexo/releases/download/v1.0.0-rc.15/plexo_1.0.0-rc.15_amd64.deb
+	sha256sums_x86_64 = 7ab2e0a5ec57c26bb4a6b4a7dcd2b43c3a367cca2e0351ef0de116808bb39057
+	source_aarch64 = plexo-bin-1.0.0-rc.15-aarch64.deb::https://github.com/anmolkapil/plexo/releases/download/v1.0.0-rc.15/plexo_1.0.0-rc.15_arm64.deb
+	sha256sums_aarch64 = 6cae1d2478f427403f443dd45d3fc2b9d812ef01cf046f7a073812c677699cf8
+
+pkgname = plexo-bin

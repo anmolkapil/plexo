@@ -7,3 +7,7 @@ out
 test-results
 playwright-report
 *.tsbuildinfo
+packaging/aur/pkg/
+packaging/aur/src/
+packaging/aur/*.pkg.tar.*
+packaging/aur/*.deb

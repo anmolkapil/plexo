@@ -35,6 +35,7 @@
     linux: [
       'AppImage: `chmod +x plexo-*.AppImage`, then run it. Recent Ubuntu needs FUSE 2 first: `sudo apt install libfuse2t64` (older releases call it `libfuse2`) — or use the .deb, which needs nothing extra.',
       '.deb: `sudo apt install ./plexo_*.deb`.',
+      'Arch Linux (AUR): `yay -S plexo-bin` or `paru -S plexo-bin`.',
       '.rpm (Fedora / RHEL): `sudo dnf install ./plexo-*.rpm`.',
       '.tar.gz (Arch, or anywhere without FUSE): `tar xzf plexo-*.tar.gz`, then run `./plexo` inside the extracted folder.',
       'Don’t open the AppImage with Disks (it isn’t a disk image — an “image is smaller than the target device” message means it was opened there). Make it executable and run it as above.',

@@ -41,6 +41,20 @@
 
 https://github.com/user-attachments/assets/e57728f4-fb63-441f-839c-174eef954b17
 
+## Installation
+
+Pre-built binaries are available on the [Releases](https://github.com/anmolkapil/plexo/releases/latest) page.
+
+### Arch Linux (AUR)
+
+Plexo is available in the Arch User Repository (AUR) as [`plexo-bin`](https://aur.archlinux.org/packages/plexo-bin):
+
+```bash
+yay -S plexo-bin
+# or
+paru -S plexo-bin
+```
+
 ## Features
 
 ### Multi-network downloads
