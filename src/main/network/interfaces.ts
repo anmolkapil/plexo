@@ -1,10 +1,10 @@
 import { execFile } from 'node:child_process'
-import { existsSync } from 'node:fs'
-import { readdir, readFile, readlink, realpath } from 'node:fs/promises'
 import { networkInterfaces } from 'node:os'
 import { promisify } from 'node:util'
 import type { NetworkAddress, NetworkInterfaceInfo, NetworkInterfaceKind } from '../../shared/types'
 import { testInterfaces } from '../testKnobs'
+import { classifyInterface } from './classifyInterface'
+import { getLinuxAdapters, type LinuxAdapter } from './linuxAdapters'
 
 const execFileAsync = promisify(execFile)
 const DISCOVERY_TIMEOUT_MS = 5000
@@ -13,26 +13,6 @@ interface WindowsAdapter {
   Name: string
   InterfaceDescription: string
   NdisPhysicalMedium: number
-}
-
-interface LinuxAdapter {
-  displayName: string
-  kind: NetworkInterfaceKind
-  /** The USB serial of the device behind a USB network adapter, such as a tethered phone. */
-  usbSerial?: string
-}
-
-/** A phone shared over USB gets a random MAC each time it's plugged in, and so a new enx… name
- * that matches nothing saved for it. The serial its USB device reports doesn't change: the network
- * function is …/usb1/1-2/1-2:1.0, and its parent, 1-2, is the phone. */
-async function readUsbSerial(sysPath: string): Promise<string | undefined> {
-  try {
-    const usbDevice = await realpath(`${sysPath}/device/..`)
-    if (!usbDevice.includes('/usb')) return undefined
-    return (await readFile(`${usbDevice}/serial`, 'utf8')).trim() || undefined
-  } catch {
-    return undefined
-  }
 }
 
 /**
@@ -77,16 +57,6 @@ function classifyLinuxDevice(device: string): NetworkInterfaceKind {
   return 'other'
 }
 
-function classifyInterface(hardwarePortName: string): NetworkInterfaceKind {
-  const name = hardwarePortName.toLowerCase()
-  if (/wi-?fi|wireless|wlan|802\.11|airport/.test(name)) return 'wifi'
-  if (/rndis|remote ndis|tether|apple mobile device/.test(name)) return 'usb'
-  if (name.includes('iphone') || name.includes('ipad') || name.includes('usb')) return 'usb'
-  if (name.includes('bridge')) return 'bridge'
-  if (name.includes('ethernet') || name.includes('lan')) return 'ethernet'
-  return 'other'
-}
-
 /** Adapter aliases ("Wi-Fi", "Ethernet 2") match Node's interface names, and are what Windows shows
  * people; the description ("Intel(R) Wi-Fi 6 AX201 160MHz") and physical medium only tell what kind
  * of network a renamed or localized adapter is. */
@@ -115,109 +85,6 @@ async function getWindowsAdapters(): Promise<Map<string, WindowsAdapter>> {
     // Restricted PowerShell or unavailable metadata must not prevent downloads.
     return new Map()
   }
-}
-
-/**
- * Queries Linux sysfs and udev to detect hardware interfaces (PCI, USB, Wi-Fi, Ethernet)
- * and filter out virtual host/container bridges (e.g. docker0, br-*, veth*).
- */
-async function getLinuxAdapters(): Promise<Map<string, LinuxAdapter>> {
-  const adapters = new Map<string, LinuxAdapter>()
-  if (process.platform !== 'linux') return adapters
-
-  let devices: string[]
-  try {
-    devices = await readdir('/sys/class/net')
-  } catch {
-    return adapters
-  }
-
-  await Promise.all(
-    devices.map(async (device) => {
-      if (device === 'lo') return
-      // Filter out internal container, hypervisor, and dummy bridges/interfaces
-      if (/^(docker|br-|veth|virbr|vboxnet|vmnet|cni|flannel|cbr|dummy)/i.test(device)) return
-
-      const sysPath = `/sys/class/net/${device}`
-      let isVirtual = false
-      try {
-        const link = await readlink(sysPath)
-        isVirtual = link.includes('/devices/virtual/')
-      } catch {
-        /* ignore */
-      }
-
-      // Pure virtual devices with no hardware backing and no wireless/phy capabilities
-      if (
-        isVirtual &&
-        !existsSync(`${sysPath}/device`) &&
-        !existsSync(`${sysPath}/wireless`) &&
-        !existsSync(`${sysPath}/phy80211`)
-      ) {
-        return
-      }
-
-      let isWireless =
-        existsSync(`${sysPath}/wireless`) ||
-        existsSync(`${sysPath}/phy80211`) ||
-        /^wl/i.test(device)
-
-      let isUsb = /^usb|^rndis/i.test(device)
-      try {
-        const link = await readlink(sysPath)
-        if (link.includes('/usb')) isUsb = true
-      } catch {
-        /* ignore */
-      }
-
-      let udevModel = ''
-      try {
-        const { stdout } = await execFileAsync('udevadm', ['info', '-q', 'property', sysPath], {
-          timeout: 1000
-        })
-        for (const line of stdout.split('\n')) {
-          if (line.startsWith('ID_BUS=usb')) isUsb = true
-          if (line.startsWith('DEVTYPE=wlan')) isWireless = true
-          if (line.startsWith('ID_MODEL_FROM_DATABASE=')) {
-            udevModel = line.slice('ID_MODEL_FROM_DATABASE='.length).trim()
-          }
-        }
-      } catch {
-        /* ignore */
-      }
-
-      let kind: NetworkInterfaceKind = 'other'
-      if (isWireless) kind = 'wifi'
-      else if (isUsb) kind = 'usb'
-      else if (/^(eth|en)/i.test(device)) kind = 'ethernet'
-      else kind = classifyInterface(device)
-
-      const displayName =
-        udevModel ||
-        (kind === 'wifi'
-          ? 'Wi-Fi'
-          : kind === 'ethernet'
-            ? 'Ethernet'
-            : kind === 'usb'
-              ? 'USB Network'
-              : device)
-
-      const usbSerial = kind === 'usb' ? await readUsbSerial(sysPath) : undefined
-      adapters.set(device, { displayName, kind, usbSerial })
-    })
-  )
-
-  // Ids must be unique: a serial two devices share (cheap phones that all report
-  // 0123456789ABCDEF, or one phone with two network functions) names neither of them.
-  const serials = [...adapters.values()].flatMap((adapter) =>
-    adapter.usbSerial ? [adapter.usbSerial] : []
-  )
-  const shared = new Set(serials.filter((serial, i) => serials.indexOf(serial) !== i))
-  for (const adapter of adapters.values()) {
-    if (adapter.usbSerial && shared.has(adapter.usbSerial)) delete adapter.usbSerial
-  }
-
-  return adapters
 }
 
 /** Computes the CIDR subnet (e.g. "192.168.1.0/24") from an IPv4 address and netmask. */
@@ -330,7 +197,9 @@ export class NetworkMonitor {
   private list: NetworkInterfaceInfo[] | null = null
   private polling: Promise<NetworkInterfaceInfo[]> = Promise.resolve([])
 
-  constructor(private readonly onChange: (networks: NetworkInterfaceInfo[]) => void) {
+  constructor(
+    private readonly onChange: (networks: NetworkInterfaceInfo[]) => void | Promise<void>
+  ) {
     void this.refresh()
     setInterval(() => void this.refresh(), POLL_MS).unref()
   }
@@ -353,7 +222,7 @@ export class NetworkMonitor {
         const next = await listActiveInterfaces().catch(() => this.list ?? [])
         if (JSON.stringify(next) !== JSON.stringify(this.list)) {
           this.list = next
-          this.onChange(next)
+          await this.onChange(next)
         }
         return next
       })
