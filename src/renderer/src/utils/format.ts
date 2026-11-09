@@ -1,3 +1,4 @@
+import { describeError, linkRefused } from '@shared/errors'
 import type {
   DownloadNetwork,
   DownloadState,
@@ -135,9 +136,17 @@ export function pathInTorrent(path: string): string {
   return path.split(/[\\/]/).slice(1).join('/') || path
 }
 
-/** What a download fetches: all of it, bar a torrent's pieces no chosen file needs. */
+/** What a download fetches: all of it, bar a torrent's pieces no chosen file needs and an NZB's
+ * articles the server doesn't have. */
 export function wantedBytes(download: DownloadState | FinishedDownload): number {
-  return download.totalBytes - (download.kind === 'torrent' ? download.skippedBytes : 0)
+  return (
+    download.totalBytes -
+    (download.kind === 'torrent'
+      ? download.skippedBytes
+      : download.kind === 'nzb'
+        ? download.missingBytes
+        : 0)
+  )
 }
 
 export function formatPercent(bytesDownloaded: number, totalBytes: number): number {
@@ -153,9 +162,9 @@ export function fileNameFromPath(path: string): string {
 }
 
 /** Short uppercase file-type badge from a name's extension, e.g. "Xcode_16.2.xip" -> "XIP", "photo.jpeg" -> "JPEG". */
-/** A download that is a folder: a torrent's, of its files. */
+/** A download that is a folder: a torrent's, or an NZB's, of its files. */
 export function isFolder(download: DownloadState | FinishedDownload): boolean {
-  return download.kind === 'torrent' && download.folder
+  return (download.kind === 'torrent' && download.folder) || download.kind === 'nzb'
 }
 
 export function fileExtensionBadge(fileName: string): string {
@@ -180,11 +189,12 @@ export function formatWhen(time: number, now: number): string {
   return date.toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' })
 }
 
-/** What Plexo can download: a web link, a magnet link, or a .torrent file on this computer. */
+/** What Plexo can download: a web link, a magnet link, or a .torrent or .nzb file on this
+ * computer. */
 export function acceptedLink(text: string): string | null {
   const link = text.trim()
   if (/^(https?:\/\/|magnet:\?)/i.test(link)) return link
-  if (/^(\/|[a-z]:\\).*\.torrent$/i.test(link)) return link
+  if (/^(\/|[a-z]:\\).*\.(torrent|nzb)$/i.test(link)) return link
   return null
 }
 
@@ -226,10 +236,21 @@ export interface TorrentNetworkGroup extends TorrentDownloadNetwork {
 export type NetworkGroup = HttpNetworkGroup | TorrentNetworkGroup
 
 export function groupByNetwork(download: DownloadState): NetworkGroup[] {
-  if (download.kind === 'http') {
+  if (download.kind === 'http' || download.kind === 'nzb') {
     return download.networks.map((network) => ({
       ...network,
       streams: download.streams.filter((stream) => stream.interfaceId === network.id)
+    }))
+  }
+  if (download.kind === 'telegram') {
+    // Telegram isn't reached through any one network the OS picks for it, so its readers are
+    // shown as the rows a download's networks table knows (their bytes attributed per block).
+    return download.networks.map((network) => ({
+      ...network,
+      transfer: 'http',
+      streams: download.readers
+        .filter((reader) => reader.interfaceId === network.id)
+        .map((reader) => ({ ...reader, rangeStart: 0, rangeEnd: null }))
     }))
   }
   return download.networks.map((network) => ({
@@ -253,34 +274,35 @@ export function networkActive(group: NetworkGroup): boolean {
     : group.peers.some((peer) => peer.status === 'receiving')
 }
 
-/** Shortens an absolute path under the user's home directory to a "~/..." form for display. */
-export function toDisplayPath(path: string, homeDir: string): string {
-  const normalize = (value: string): string => {
-    const normalized = value.replace(/\\/g, '/').replace(/\/$/, '')
-    return /^[a-z]:/i.test(normalized) || normalized.startsWith('//')
-      ? normalized.toLowerCase()
-      : normalized
-  }
-  const home = normalize(homeDir)
-  const target = normalize(path)
-  if (home && (target === home || target.startsWith(`${home}/`))) {
-    return `~${path.slice(home.length)}`
-  }
-  return path
+function canonicalPath(value: string): string {
+  return value.normalize('NFC').replace(/\\/g, '/').replace(/\/$/, '')
 }
 
-export { describeError } from '@shared/errors'
+function windowsPath(value: string): boolean {
+  return /^[a-z]:/i.test(value) || value.startsWith('//')
+}
 
-const LINK_REFUSED = /status (401|403|404|410|416) for range request/
+/** Shortens an absolute path under the user's home directory to a "~/..." form for display. */
+export function toDisplayPath(path: string, homeDir: string): string {
+  const home = canonicalPath(homeDir)
+  const target = canonicalPath(path)
+  if (!home) return path
+  const fold = (value: string): string => (windowsPath(value) ? value.toLowerCase() : value)
+  const homeKey = fold(home)
+  const targetKey = fold(target)
+  if (targetKey !== homeKey && !targetKey.startsWith(`${homeKey}/`)) return path
+  const suffix = target.slice(home.length)
+  if (!suffix) return '~'
+  const sep = path.includes('\\') ? '\\' : '/'
+  return `~${suffix.replace(/\//g, sep)}`
+}
+
+export { describeError }
 
 /** A download whose link the server now refuses: a fresh link to the same file picks it up.
  * 416 (Range Not Satisfiable) belongs here too: the server is saying the byte range this
  * download was resuming no longer exists, same as a 404/410 — retrying the same range would
  * just repeat the same 416 forever. */
 export function linkExpired(download: DownloadState): boolean {
-  return (
-    download.kind === 'http' &&
-    download.status === 'error' &&
-    LINK_REFUSED.test(download.error ?? '')
-  )
+  return download.kind === 'http' && download.status === 'error' && linkRefused(download.error)
 }

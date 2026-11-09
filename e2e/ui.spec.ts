@@ -272,6 +272,12 @@ test.describe('UI journeys @smoke', () => {
     await expect(page.getByRole('button', { name: 'Download' })).toBeDisabled()
   })
 
+  test('New download dialog shows free space on destination folder', async ({ plexo }) => {
+    await plexo.newDownload()
+    const dialog = plexo.page.getByRole('dialog', { name: 'New download' })
+    await expect(dialog.getByText(/\(\d+(\.\d+)?\s*(B|KB|MB|GB|TB)\s*free\)/)).toBeVisible()
+  })
+
   test('a completed download is shown again after a restart', async ({ plexo, serve }) => {
     const origin = await serve({ size: SIZE })
     await plexo.start(origin.url(), origin.sha256)
@@ -301,7 +307,9 @@ test.describe('settings @smoke', () => {
     await plexo.newDownload()
     await page().getByRole('button', { name: 'Change' }).click()
     const destinationRow = (): Locator => page().getByText('Save to', { exact: true }).locator('..')
-    const chosenDestination = await destinationRow().innerText()
+    const destination = async (): Promise<string> =>
+      (await destinationRow().innerText()).replace(/\s*\([^)]*free\)/, '')
+    const chosenDestination = await destination()
     await page().keyboard.press('Escape')
     // A function: the window, and so the page, is a new one after a relaunch.
     const networksMenu = (): Locator =>
@@ -322,17 +330,14 @@ test.describe('settings @smoke', () => {
     const expectAllKept = async (): Promise<void> => {
       await expect(page().getByRole('button', { name: labelAfterSwitch })).toBeVisible()
       await plexo.newDownload()
-      await expect(destinationRow()).toHaveText(chosenDestination, { useInnerText: true })
+      await expect.poll(destination).toBe(chosenDestination)
       // Presentation may abbreviate home; persistence must retain the usable absolute path.
       const saved = JSON.parse(await readFile(join(dirs.userData, 'app-settings.json'), 'utf8'))
       expect(saved.destinationDir).toBe(dirs.dest)
       await page().keyboard.press('Escape')
       await networksMenu().click()
       await expect(page().getByText('Office fibre')).toBeVisible()
-      await page()
-        .getByRole('button', { name: /^Edit / })
-        .first()
-        .click()
+      await page().getByRole('button', { name: 'Edit Office fibre' }).click()
       await expect(page().getByRole('button', { name: 'Violet' })).toHaveAttribute(
         'aria-pressed',
         'true'
@@ -359,7 +364,8 @@ test.describe('settings @smoke', () => {
       await plexo.newDownload()
       const row = await plexo.page.getByText('Save to', { exact: true }).locator('..').innerText()
       await plexo.page.keyboard.press('Escape')
-      return row
+      // Free space shows up when it's ready; only the folder is compared.
+      return row.replace(/\s*\([^)]*free\)/, '')
     }
     const fresh = await choices()
 
@@ -377,6 +383,18 @@ test.describe('settings @smoke', () => {
 
 test.describe('no networks', () => {
   test.use({ appEnv: { PLEXO_E2E_INTERFACES: '' } })
+
+  test('New download says why it has no network to offer @smoke', async ({ plexo }) => {
+    await plexo.newDownload()
+    const dialog = plexo.page.getByRole('dialog', { name: 'New download' })
+    await expect(
+      dialog.getByText(
+        'No networks connected. Join a Wi-Fi network, plug in Ethernet, or connect your phone using USB tethering.'
+      )
+    ).toBeVisible()
+    await expect(dialog.getByRole('button', { name: 'Scan again', exact: true })).toBeVisible()
+    await expect(dialog.getByRole('button', { name: 'Download', exact: true })).toBeDisabled()
+  })
 
   test('a network appearing makes the list ready for downloads @smoke', async ({ plexo }) => {
     await expect(plexo.page.getByText('No networks connected')).toBeVisible()

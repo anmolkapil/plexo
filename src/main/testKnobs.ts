@@ -13,6 +13,11 @@ function positiveNumber(name: string, fallback: number): number {
 
 export const testKnobs = {
   userDataDir: env['PLEXO_USER_DATA'],
+  /** The Telegram service's e2e double (src/main/telegram/fake.ts): instant sign-in, fake
+   * Saved Messages media, and a file source that inflicts the DC's faults on demand. */
+  telegramFake: env['PLEXO_E2E_TELEGRAM_FAKE'] === '1',
+  /** Milliseconds the fake source's every chunk takes — a pause window for tests. */
+  telegramDelayMs: positiveNumber('PLEXO_E2E_TELEGRAM_DELAY_MS', 0),
   /** Keeps the window off-screen so a test run doesn't pop windows up over the desktop. */
   hideWindow: env['PLEXO_E2E_HIDE_WINDOW'] === '1',
   blockBytes: positiveNumber('PLEXO_E2E_BLOCK_BYTES', 8 * 1024 * 1024),

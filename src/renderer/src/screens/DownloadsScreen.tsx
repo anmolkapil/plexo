@@ -1,7 +1,7 @@
 import type { DownloadState, FinishedDownload } from '@shared/types'
-import { ChevronRight, Plus, X } from 'lucide-react'
+import { ChevronRight, Plus, Search, Send, X } from 'lucide-react'
 import { cn } from 'cn'
-import { Fragment, memo, useCallback, useEffect, useState } from 'react'
+import { Fragment, memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { DownloadContextMenu } from '../components/DownloadContextMenu'
 import { useDownloadActions, useDownloadActionsState } from '../components/downloadActionsContext'
 import { ACTION_META, toolbarLabel } from '../components/downloadActionMeta'
@@ -12,10 +12,18 @@ import { LimitsDialog } from '../components/LimitsDialog'
 import { ScheduleIndicator } from '../components/ScheduleIndicator'
 import { networkStatusText } from '../components/NetworkRow'
 import { scheduleMessage, scheduleWindow } from '@shared/downloadSchedule'
+import { matchesSearch, searchTokens } from '@shared/downloadSearch'
 import { NetworksMenu } from '../components/NetworksMenu'
 import { TorrentBadge } from '../components/TorrentBadge'
+import { UsenetBadge } from '../components/UsenetBadge'
 import { Button } from '../components/ui/button'
 import { Checkbox } from '../components/ui/checkbox'
+import {
+  InputGroup,
+  InputGroupAddon,
+  InputGroupButton,
+  InputGroupInput
+} from '../components/ui/input-group'
 import { Tooltip, TooltipContent, TooltipTrigger } from '../components/ui/tooltip'
 import { useNetworkVisuals, type ResolveNetworkVisual } from '../hooks/useNetworkVisuals'
 import { useAppStore, type DownloadFilter } from '../store/useAppStore'
@@ -90,6 +98,7 @@ export function DownloadsScreen(): React.JSX.Element {
   const history = useAppStore((store) => store.history)
   const setView = useAppStore((store) => store.setView)
   const openNewDownload = useAppStore((store) => store.openNewDownload)
+  const openTelegram = useAppStore((store) => store.openTelegram)
   const filter = useAppStore((store) => store.downloadFilter)
   const setFilter = useAppStore((store) => store.setDownloadFilter)
   const [selected, setSelected] = useState<Set<string>>(new Set())
@@ -98,6 +107,11 @@ export function DownloadsScreen(): React.JSX.Element {
   const [limitsOpen, setLimitsOpen] = useState(false)
   const [showSchedule, setShowSchedule] = useState(false)
   const [limitsPage, setLimitsPage] = useState<string | null>(null)
+  const [searchQuery, setSearchQuery] = useState('')
+  const searchInputRef = useRef<HTMLInputElement>(null)
+  const isMac = window.plexo.platform === 'darwin'
+  const tokens = useMemo(() => searchTokens(searchQuery), [searchQuery])
+  const isSearching = tokens.length > 0
   const [now, setNow] = useState(() => Date.now())
 
   useEffect(() => {
@@ -117,9 +131,14 @@ export function DownloadsScreen(): React.JSX.Element {
     failed: 0
   }
   for (const item of allItems) counts[filterOf(item)]++
-  const groups = allGroups.filter(
-    (group) => filter === 'all' || filterOf(group.items[0]) === filter
-  )
+  const groups = allGroups
+    .map((group) => ({
+      ...group,
+      items: isSearching ? group.items.filter((item) => matchesSearch(item, tokens)) : group.items
+    }))
+    .filter(
+      (group) => group.items.length > 0 && (filter === 'all' || filterOf(group.items[0]) === filter)
+    )
   const items = groups.flatMap((group) => group.items)
   // Only what's still listed counts: one that finished or went is no longer selected.
   const chosen = items.filter((item) => selected.has(item.id))
@@ -144,6 +163,7 @@ export function DownloadsScreen(): React.JSX.Element {
   // the selected off the list (with Cmd/Ctrl, moves their files to the Trash), each asking first.
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent): void => {
+      const command = isMac ? event.metaKey : event.ctrlKey
       const target = event.target
       if (
         event.defaultPrevented ||
@@ -152,9 +172,22 @@ export function DownloadsScreen(): React.JSX.Element {
         document.querySelector('[role="dialog"], [role="alertdialog"], [role="menu"]')
       )
         return
-      const command = window.plexo.platform === 'darwin' ? event.metaKey : event.ctrlKey
-      if (event.key === 'Escape') setSelected(new Set())
-      else if (command && event.key.toLowerCase() === 'a') {
+
+      if (event.key === 'Escape') {
+        setSelected(new Set())
+      } else if (command && event.key.toLowerCase() === 'f') {
+        event.preventDefault()
+        if (chosen.length > 0) {
+          setSelected(new Set())
+          requestAnimationFrame(() => {
+            searchInputRef.current?.focus()
+            searchInputRef.current?.select()
+          })
+        } else {
+          searchInputRef.current?.focus()
+          searchInputRef.current?.select()
+        }
+      } else if (command && event.key.toLowerCase() === 'a') {
         event.preventDefault()
         setSelected(new Set(items.map((item) => item.id)))
       } else if (event.key === 'Delete' || event.key === 'Backspace') {
@@ -169,7 +202,7 @@ export function DownloadsScreen(): React.JSX.Element {
     }
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
-  }, [items, chosen, perform])
+  }, [items, chosen, perform, isMac])
 
   // What the toolbar offers: the two actions most needed for what's selected as buttons, and
   // the rest of what the menu does for the selection behind More, so six never need more room.
@@ -184,7 +217,7 @@ export function DownloadsScreen(): React.JSX.Element {
   return (
     <div className="flex h-full flex-col bg-background">
       {chosen.length === 0 ? (
-        <div className="flex h-12 shrink-0 items-center gap-3 border-b-[0.5px] border-border px-5">
+        <div className="relative flex h-12 shrink-0 items-center gap-2 border-b-[0.5px] border-border px-3 sm:gap-3 sm:px-5">
           <DownloadFilterMenu
             value={filter}
             counts={counts}
@@ -195,11 +228,55 @@ export function DownloadsScreen(): React.JSX.Element {
           />
           {/* One group already says it in its header. */}
           {allGroups.length > 1 && (
-            <div className="font-mono text-[11.5px] leading-none text-muted-foreground">
+            <div className="hidden font-mono text-[11.5px] leading-none whitespace-nowrap text-muted-foreground lg:block">
               {summaryOf(downloads)}
             </div>
           )}
           <div className="flex-1" />
+          <div className="relative w-44 shrink-0 sm:w-48 md:w-52 min-[900px]:absolute min-[900px]:left-1/2 min-[900px]:-translate-x-1/2 lg:w-60">
+            <InputGroup className="h-7 w-full border-border/70 bg-secondary/30">
+              <InputGroupAddon align="inline-start">
+                <Search className="size-3.5 text-muted-foreground" />
+              </InputGroupAddon>
+              <InputGroupInput
+                ref={searchInputRef}
+                type="text"
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === 'Escape') {
+                    event.preventDefault()
+                    if (searchQuery) {
+                      setSearchQuery('')
+                    } else {
+                      searchInputRef.current?.blur()
+                    }
+                  }
+                }}
+                placeholder="Search downloads"
+                className="h-7 text-xs placeholder:text-muted-foreground/70"
+                aria-label="Search downloads"
+              />
+              <InputGroupAddon align="inline-end">
+                {searchQuery ? (
+                  <InputGroupButton
+                    size="icon-xs"
+                    onClick={() => {
+                      setSearchQuery('')
+                      searchInputRef.current?.focus()
+                    }}
+                    aria-label="Clear search"
+                  >
+                    <X className="size-3" />
+                  </InputGroupButton>
+                ) : (
+                  <kbd className="hidden font-mono text-[10px] text-muted-foreground/60 select-none sm:inline-block">
+                    {isMac ? '⌘F' : 'Ctrl+F'}
+                  </kbd>
+                )}
+              </InputGroupAddon>
+            </InputGroup>
+          </div>
           <ScheduleIndicator onClick={openSchedule} />
           <NetworksMenu
             onOpenLimits={(page) => {
@@ -208,6 +285,23 @@ export function DownloadsScreen(): React.JSX.Element {
               setLimitsOpen(true)
             }}
           />
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <Button
+                  type="button"
+                  variant="secondary"
+                  onClick={() => openTelegram()}
+                  aria-label="Telegram"
+                  className="px-2.5"
+                >
+                  <Send className="size-3.5" />
+                  <span className="hidden lg:inline">Telegram</span>
+                </Button>
+              }
+            />
+            <TooltipContent>Telegram Saved Messages</TooltipContent>
+          </Tooltip>
           <Button type="button" onClick={() => openNewDownload()}>
             <Plus data-icon="inline-start" />
             New download
@@ -271,7 +365,17 @@ export function DownloadsScreen(): React.JSX.Element {
 
       <div className="min-h-0 flex-1 overflow-y-auto px-5 pb-5">
         {groups.length === 0 &&
-          (filter === 'all' ? (
+          (isSearching ? (
+            <div role="status" className="flex flex-col items-center gap-2 px-5 py-16 text-center">
+              <Search className="size-8 stroke-[1.5] text-muted-foreground opacity-40" />
+              <p className="text-[16px] font-semibold">
+                No downloads matching &ldquo;{searchQuery.trim()}&rdquo;
+              </p>
+              <Button type="button" variant="secondary" onClick={() => setSearchQuery('')}>
+                Clear search
+              </Button>
+            </div>
+          ) : filter === 'all' ? (
             <EmptyState />
           ) : (
             <div role="status" className="flex flex-col items-center gap-2 px-5 py-16 text-center">
@@ -309,7 +413,7 @@ export function DownloadsScreen(): React.JSX.Element {
                   <span className="ml-2.5 tracking-normal">{group.items.length}</span>
                 </h2>
                 <div className="flex-1" />
-                {group.label === 'Finished' && history.length > 0 && (
+                {group.label === 'Finished' && history.length > 0 && !isSearching && (
                   <button
                     type="button"
                     className="text-[12.5px] text-[var(--text-secondary)] hover:text-foreground"
@@ -368,6 +472,7 @@ function EmptyState(): React.JSX.Element {
   )
   const loadInterfaces = useAppStore((store) => store.loadInterfaces)
   const openNewDownload = useAppStore((store) => store.openNewDownload)
+  const openTelegram = useAppStore((store) => store.openTelegram)
 
   return (
     <div className="flex flex-col items-center gap-4 px-5 pt-16 pb-10 text-center">
@@ -396,13 +501,19 @@ function EmptyState(): React.JSX.Element {
         <>
           <div className="font-sans text-[16px] leading-[1.2] font-bold">No downloads yet</div>
           <div className="max-w-[380px] text-[12.5px] leading-[1.6] text-[var(--text-secondary)]">
-            Paste a link ({PASTE_SHORTCUT}) or drop a .torrent anywhere in this window.
+            Paste a link ({PASTE_SHORTCUT}) or drop a .torrent or .nzb anywhere in this window.
           </div>
-          <Button type="button" className="mt-1" onClick={() => openNewDownload()}>
-            <Plus data-icon="inline-start" />
-            New download
-            <span className="ml-1 font-mono text-[11px] opacity-70">{NEW_SHORTCUT}</span>
-          </Button>
+          <div className="mt-1 flex gap-2">
+            <Button type="button" variant="secondary" onClick={() => openTelegram()}>
+              <Send data-icon="inline-start" />
+              Telegram
+            </Button>
+            <Button type="button" onClick={() => openNewDownload()}>
+              <Plus data-icon="inline-start" />
+              New download
+              <span className="ml-1 font-mono text-[11px] opacity-70">{NEW_SHORTCUT}</span>
+            </Button>
+          </div>
         </>
       )}
     </div>
@@ -574,6 +685,7 @@ const DownloadRow = memo(function DownloadRow({
               {item.fileName}
             </span>
             {item.kind === 'torrent' && <TorrentBadge />}
+            {item.kind === 'nzb' && <UsenetBadge />}
             {(dots || speed) && (
               <div className="ml-auto flex shrink-0 items-center gap-2.5 pl-2">
                 {dots && (

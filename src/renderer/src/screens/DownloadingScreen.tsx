@@ -12,11 +12,14 @@ import { ThroughputChart } from '../components/ThroughputChart'
 import { TorrentFiles } from '../components/TorrentFiles'
 import { TorrentBadge } from '../components/TorrentBadge'
 import { TruncatedText } from '../components/TruncatedText'
+import { UsenetBadge } from '../components/UsenetBadge'
+import { UsenetServerButton } from '../components/UsenetServerDialog'
 import { Button } from '../components/ui/button'
 import { Tooltip, TooltipContent, TooltipTrigger } from '../components/ui/tooltip'
 import { useNetworkVisuals } from '../hooks/useNetworkVisuals'
 import { useDownloadSchedule } from '../hooks/useDownloadSchedule'
 import { useAppStore } from '../store/useAppStore'
+import { useDownloadActions } from '../components/downloadActionsContext'
 import { KIND_PALETTE, NETWORK_ROW_GRID_COLUMNS } from '../theme'
 import {
   describeError,
@@ -94,7 +97,9 @@ function waitingFor(download: DownloadState): string | null {
   if (enabled.some((network) => network.status === 'unreachable')) {
     return download.kind === 'torrent'
       ? 'Can’t reach peers. Retrying…'
-      : 'Can’t reach the server. Retrying…'
+      : download.kind === 'nzb'
+        ? 'Can’t reach the news server. Retrying…'
+        : 'Can’t reach the server. Retrying…'
   }
   return enabled.length > 0 && enabled.every((network) => network.status === 'limit')
     ? 'Every network in use has reached its data limit. Raise one in Speed & data limits.'
@@ -118,12 +123,15 @@ export const DownloadingScreen = memo(function DownloadingScreen({
   const peakSpeedBytesPerSec = download.peakSpeedBytesPerSec
   const networkVisual = useNetworkVisuals()
   const { window: scheduleWindow, message: scheduleMessage } = useDownloadSchedule()
+  const { perform } = useDownloadActions()
   const isQueued = download.status === 'queued'
   // Waiting in the queue looks like a pause: nothing moves.
   const isPaused = download.status === 'paused' || isQueued
   const isTorrent = download.kind === 'torrent'
   const percent = formatPercent(download.bytesDownloaded, wantedBytes(download))
   const knownSize = download.totalBytes > 0
+  const missingArticles =
+    download.kind === 'nzb' ? download.nzbFiles.reduce((sum, file) => sum + file.missing, 0) : 0
   const [now, setNow] = useState(() => Date.now())
 
   useEffect(() => {
@@ -333,6 +341,7 @@ export const DownloadingScreen = memo(function DownloadingScreen({
                 className="font-sans text-[15px] leading-[1.3] font-semibold tracking-[-0.01em] text-foreground"
               />
               {isTorrent && <TorrentBadge />}
+              {download.kind === 'nzb' && <UsenetBadge />}
             </div>
             <div className="flex min-w-0 items-center gap-[7px] font-mono text-[12.5px] leading-[1.2] tabular-nums text-[var(--text-secondary)]">
               <span>
@@ -353,6 +362,35 @@ export const DownloadingScreen = memo(function DownloadingScreen({
                   </span>
                 </>
               )}
+              {download.kind === 'nzb' && (
+                <>
+                  <Dot />
+                  <span>
+                    {describeFileCount(download.nzbFiles.length, download.nzbFiles.length)}
+                  </span>
+                  <Dot />
+                  <UsenetServerButton host={download.server} />
+                </>
+              )}
+              {missingArticles > 0 && (
+                <>
+                  <Dot />
+                  <Tooltip>
+                    <TooltipTrigger
+                      render={
+                        <span tabIndex={0} className="text-destructive outline-none">
+                          {missingArticles} missing
+                        </span>
+                      }
+                    />
+                    <TooltipContent>
+                      The news server doesn’t have{' '}
+                      {missingArticles === 1 ? 'this article' : 'these articles'}. Once the download
+                      is done, repair its files with their .par2 files.
+                    </TooltipContent>
+                  </Tooltip>
+                </>
+              )}
               {/* Several files: they open below. One is the name above. */}
               {download.kind === 'torrent' && download.files.total > 1 && (
                 <>
@@ -369,6 +407,20 @@ export const DownloadingScreen = memo(function DownloadingScreen({
                     <span aria-hidden className="text-[7.5px] opacity-75">
                       {filesOpen ? '▲' : '▼'}
                     </span>
+                  </Button>
+                </>
+              )}
+              {download.kind === 'torrent' && (
+                <>
+                  <Dot />
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="xs"
+                    onClick={() => void perform('trackers', [download])}
+                    className="h-auto cursor-default rounded-[4px] border-[0.5px] bg-card px-[7px] py-[3px] font-mono text-[10.5px] leading-none font-medium text-[var(--text-secondary)] hover:bg-secondary dark:bg-card"
+                  >
+                    Trackers
                   </Button>
                 </>
               )}
@@ -432,13 +484,14 @@ export const DownloadingScreen = memo(function DownloadingScreen({
       {/* Block grid: pinned with the file info. It's capped in height and scrolls itself. */}
       <div className="shrink-0 px-5 pt-3">
         <BlockGrid
-          blocks={download.kind === 'http' ? download.blocks : download.pieces}
+          blocks={download.kind === 'torrent' ? download.pieces : download.blocks}
           groups={groups}
           visuals={visuals}
           knownSize={knownSize}
           remainingBytes={remainingBytes}
           isPaused={isPaused}
           pieces={isTorrent}
+          articles={download.kind === 'nzb'}
         />
       </div>
 
@@ -500,7 +553,8 @@ export const DownloadingScreen = memo(function DownloadingScreen({
                     : 0
                 }
                 totalBytes={wantedBytes(download)}
-                blocks={download.kind === 'http' ? download.blocks : undefined}
+                blocks={download.kind === 'torrent' ? undefined : download.blocks}
+                usenet={download.kind === 'nzb'}
                 onSwitch={(enabled) =>
                   void window.plexo.setDownloadNetwork(download.id, row.id, enabled)
                 }

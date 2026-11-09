@@ -8,6 +8,7 @@ import {
 } from 'node:http'
 import { Agent as HttpsAgent, request as httpsRequest } from 'node:https'
 import { isIP, type Socket } from 'node:net'
+import { connect as tlsConnect } from 'node:tls'
 import type { Duplex } from 'node:stream'
 import type { IpFamily, NetworkInterfaceInfo, ProxyConfig } from '../../shared/types'
 import { connectRoute } from './deviceBinding'
@@ -344,6 +345,27 @@ async function connectOnInterface(
     signal.addEventListener('abort', onAbort, { once: true })
     launch()
   })
+}
+
+/**
+ * A socket to `host` through `iface` for a protocol other than HTTP (NNTP, see nzb/nntp.ts):
+ * raced over the network's routes as an HTTP stream's is, with TLS on top when `tls` is set,
+ * verified against `host`, and through the network's `proxy` when one is set.
+ */
+export function connectThrough(
+  iface: NetworkInterfaceInfo,
+  host: string,
+  port: number,
+  tls: boolean,
+  timeoutMs: number,
+  signal: AbortSignal,
+  proxy?: ProxyConfig
+): Promise<Socket> {
+  const secure = tls
+    ? (socket: Socket): Socket =>
+        tlsConnect({ socket, servername: isIP(host) ? undefined : host, host })
+    : null
+  return connectOnInterface(iface, host, port, secure, timeoutMs, signal, undefined, proxy)
 }
 
 /** What a request passes its agent: Node hands a request's options to the agent's
