@@ -62,6 +62,12 @@ export interface NetworkSnapshot {
   refused: number
   /** Its streams that received data since the last snapshot. */
   served: number
+  /** Aggregated throughput across its active streams (bytes/sec). */
+  speedBytesPerSec?: number
+  /** Round-trip time / latency (TTFB) in ms. */
+  rttMs?: number
+  /** Consecutive connection/routing failures on this interface. */
+  consecutiveFailures?: number
 }
 
 /** What DiskWatch reads, and since when without a break. */
@@ -166,10 +172,40 @@ export class ConcurrencyController {
       const ceiling = this.limit(id)
       if (streams > ceiling) {
         actions.push({ kind: 'retire', networkId: id, count: streams - ceiling })
-        continue
       }
-      // Not while the server is turning requests away, or the disk isn't keeping up.
-      if (network.refused > 0 || diskHolds || streams === 0 || network.answered < streams) continue
+    }
+
+    const eligible = snapshot.networks.filter((n) => {
+      const ceiling = this.limit(n.id)
+      return !(
+        n.streams >= ceiling ||
+        n.refused > 0 ||
+        diskHolds ||
+        n.streams === 0 ||
+        n.answered < n.streams
+      )
+    })
+
+    const sortedEligible = [...eligible].sort((a, b) => {
+      const failDiff = (a.consecutiveFailures ?? 0) - (b.consecutiveFailures ?? 0)
+      if (failDiff !== 0) return failDiff
+      const speedA = a.speedBytesPerSec ?? 0
+      const speedB = b.speedBytesPerSec ?? 0
+      if (speedA > 0 || speedB > 0) {
+        const ratio = speedB / Math.max(1, speedA)
+        if (ratio > 1.2 || ratio < 0.8) return speedB - speedA
+      }
+      const rttA = a.rttMs ?? 0
+      const rttB = b.rttMs ?? 0
+      if (rttA > 0 && rttB > 0 && Math.abs(rttA - rttB) > 50) {
+        return rttA - rttB
+      }
+      return 0
+    })
+
+    for (const network of sortedEligible) {
+      const { id, streams } = network
+      const ceiling = this.limit(id)
       const count = Math.min(this.grows ? streams : Infinity, ceiling - streams, spare)
       if (count < 1) continue
       spare -= count

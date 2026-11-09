@@ -68,6 +68,57 @@ test.describe('stream count', () => {
     ])
   })
 
+  test('dynamically prioritizes faster network for spare streams when throughput differs', () => {
+    const controller = new ConcurrencyController(MAX)
+    expect(
+      controller.tick({
+        now: 0,
+        networks: [
+          network('a', 8, { speedBytesPerSec: 500 * 1024 }),
+          network('b', 8, { speedBytesPerSec: 25 * 1024 * 1024 })
+        ],
+        spareWork: 10
+      })
+    ).toEqual([
+      { kind: 'add', networkId: 'b', count: 8 },
+      { kind: 'add', networkId: 'a', count: 2 }
+    ])
+  })
+
+  test('prioritizes lower-latency network when speeds are comparable but jitter/RTT differs', () => {
+    const controller = new ConcurrencyController(MAX)
+    expect(
+      controller.tick({
+        now: 0,
+        networks: [
+          network('a', 8, { speedBytesPerSec: 10 * 1024 * 1024, rttMs: 250 }),
+          network('b', 8, { speedBytesPerSec: 10 * 1024 * 1024, rttMs: 20 })
+        ],
+        spareWork: 10
+      })
+    ).toEqual([
+      { kind: 'add', networkId: 'b', count: 8 },
+      { kind: 'add', networkId: 'a', count: 2 }
+    ])
+  })
+
+  test('deprioritizes network with connection failures when allocating spare streams', () => {
+    const controller = new ConcurrencyController(MAX)
+    expect(
+      controller.tick({
+        now: 0,
+        networks: [
+          network('a', 8, { consecutiveFailures: 2 }),
+          network('b', 8, { consecutiveFailures: 0 })
+        ],
+        spareWork: 10
+      })
+    ).toEqual([
+      { kind: 'add', networkId: 'b', count: 8 },
+      { kind: 'add', networkId: 'a', count: 2 }
+    ])
+  })
+
   test('streams the server refuses close, and it never grows past the ones left again', () => {
     const controller = new ConcurrencyController(MAX)
     expect(
