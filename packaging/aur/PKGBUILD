@@ -4,8 +4,8 @@
 pkgname=plexo-bin
 _pkgname=plexo
 _realver="1.0.0-rc.15"
-# Arch package versions cannot contain hyphens
-pkgver="${_realver//-/.}"
+# Arch package versions cannot contain hyphens; remove hyphen so prereleases sort before final release
+pkgver="${_realver//-/}"
 pkgrel=1
 pkgdesc="Speed up downloads by combining multiple network connections in parallel"
 arch=('x86_64' 'aarch64')

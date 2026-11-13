@@ -1,6 +1,6 @@
 pkgbase = plexo-bin
 	pkgdesc = Speed up downloads by combining multiple network connections in parallel
-	pkgver = 1.0.0.rc.15
+	pkgver = 1.0.0rc.15
 	pkgrel = 1
 	url = https://github.com/anmolkapil/plexo
 	arch = x86_64
