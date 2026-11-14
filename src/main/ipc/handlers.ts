@@ -1,5 +1,6 @@
 import { stat, statfs } from 'node:fs/promises'
 import {
+  app,
   clipboard,
   dialog,
   ipcMain,
@@ -148,6 +149,9 @@ export function registerIpcHandlers(getWindow: () => BrowserWindow | null): Down
           new Promise<boolean>((resolve) => setTimeout(resolve, DESTINATION_CHECK_MS, false))
         ]))
       event.returnValue = {
+        appVersion: app.getVersion(),
+        os: process.platform,
+        architecture: process.arch,
         downloadSchedule: settings.downloadSchedule,
         homeDir: getHomeDir(),
         downloadsDir: getDefaultDownloadsDir(),
@@ -165,6 +169,9 @@ export function registerIpcHandlers(getWindow: () => BrowserWindow | null): Down
       console.error('[plexo] failed to read initial state', error)
       // No getPath() here — it may be what threw. An empty destination just keeps Start disabled.
       event.returnValue = {
+        appVersion: app.getVersion(),
+        os: process.platform,
+        architecture: process.arch,
         homeDir: '',
         downloadsDir: '',
         themeSource: currentThemeSource(),
