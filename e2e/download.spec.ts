@@ -167,18 +167,24 @@ test.describe('happy paths @smoke', () => {
     await plexo.start(origin.url('/start'), origin.sha256)
     await plexo.waitForHttpStatus('completed')
 
-    // The chunk requests follow redirects too (a signed CDN URL rotating mid-download).
+    // Chunk requests follow redirects too, including a longer Telegram-style redirect chain.
     const next = await serve({ size: 12 * BLOCK, seed: 7 })
     let redirected = 0
     next.setRule(({ path, range }) => {
-      if (path === '/files/test.bin' && range && range.start > 0 && redirected++ < 3) {
-        return { redirect: '/files/moved.bin' }
+      if (path === '/files/test.bin' && range && range.start > 0) {
+        redirected += 1
+        return { redirect: '/files/hop-1' }
+      }
+      const hop = /^\/files\/hop-(\d+)$/.exec(path)
+      if (hop && Number(hop[1]) < 6) {
+        redirected += 1
+        return { redirect: `/files/hop-${Number(hop[1]) + 1}` }
       }
       return 'ok'
     })
     await plexo.start(next.url(), next.sha256)
     await plexo.waitForHttpStatus('completed')
-    expect(redirected).toBeGreaterThan(0)
+    expect(redirected).toBeGreaterThan(5)
   })
 })
 
