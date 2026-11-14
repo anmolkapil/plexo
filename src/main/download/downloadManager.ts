@@ -1738,6 +1738,12 @@ export class DownloadManager {
       changed.add(iface.id)
       if (before?.some((address) => !addresses.includes(address))) moved.add(iface.id)
     }
+    for (const [id] of this.seenAddresses) {
+      if (!seen.has(id)) {
+        changed.add(id)
+        moved.add(id)
+      }
+    }
     this.seenAddresses = seen
 
     for (const runtime of this.runtimes.values()) {

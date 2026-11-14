@@ -95,6 +95,7 @@ interface ChunkRuntime {
   /** When this connection last (re)connected; it isn't judged until SLOW_WARMUP_MS after. */
   warmSince: number
   slowSince: number | null
+  lastTtfbMs?: number
   /** Speed of its last finished block, start to end — 0 until it finishes one. */
   lastBlockSpeed: number
   /** Everything it has received, bytes another attempt already had included: what its speed is
@@ -156,6 +157,23 @@ const SILENT_AFTER_MS = testKnobs.silentAfterMs
 // Bounds every case where refreshing can't help (the whole network got slower, a stale
 // reference): at worst a block pays for a couple of cheap reconnects, then is left alone.
 const MAX_REFRESHES_PER_BLOCK = 2
+function isRouteDownError(error: unknown): boolean {
+  if (!(error instanceof ConnectionError)) return false
+  const code = (error.cause as NodeJS.ErrnoException)?.code
+  const msg = (error.message || '').toLowerCase()
+  return (
+    code === 'ENETUNREACH' ||
+    code === 'ENETDOWN' ||
+    code === 'EHOSTUNREACH' ||
+    code === 'EADDRNOTAVAIL' ||
+    code === 'ENOTFOUND' ||
+    msg.includes('unreachable') ||
+    msg.includes('network is down') ||
+    msg.includes('not available') ||
+    msg.includes('could not resolve the download host')
+  )
+}
+
 const SCHEDULER_POLICY: SchedulerPolicy = {
   hedgeAfterMs: testKnobs.hedgeAfterMs,
   maxHedgesPerBlock: 2,
@@ -325,6 +343,10 @@ export class HttpTransfer implements Transfer {
   private concurrency: ConcurrencyController | null
   /** Whether the disk is what holds the download back, for Auto, the user and hedges. */
   private readonly disk = new DiskWatch()
+  /** Consecutive connection failures on a network before it is marked unreachable. */
+  private networkFailures = new Map<string, number>()
+  /** Rolling average latency (TTFB ms) by network id. */
+  private networkRtt = new Map<string, number>()
 
   constructor(
     private readonly runtime: HttpTransferTarget,
@@ -575,11 +597,24 @@ export class HttpTransfer implements Transfer {
 
   /** Marks a network in use that has received nothing for SILENT_AFTER_MS as unable to reach the
    * server. Whether it did. */
-  private markUnreachable(network: DownloadNetwork, now: number): boolean {
+  /** Marks a network in use that has received nothing for SILENT_AFTER_MS, or has suffered repeated
+   * or explicit route connection drops, as unable to reach the server. Whether it did. */
+  private markUnreachable(network: DownloadNetwork, now: number, force = false): boolean {
     if (network.status !== 'on') return false
-    if (now - this.trafficOf(network.id).aliveAt < SILENT_AFTER_MS) return false
+    if (!force && now - this.trafficOf(network.id).aliveAt < SILENT_AFTER_MS) return false
     network.status = 'unreachable'
     return true
+  }
+
+  private nudgeSurvivingStreams(failedNetworkId: string): void {
+    for (const chunk of this.runtime.state.streams) {
+      if (chunk.interfaceId !== failedNetworkId && chunk.status === 'pending') {
+        const self = this.chunkRuntimes.get(chunk.id)
+        if (self && !self.retiring) {
+          self.nudge.abort()
+        }
+      }
+    }
   }
 
   private isSilent(attempt: Attempt, now: number): boolean {
@@ -758,7 +793,13 @@ export class HttpTransfer implements Transfer {
         createDestination: () => this.runtime.file.writer(block.rangeStart + startOffset),
         signal: AbortSignal.any([self.controller.signal, attempt.abort.signal]),
         acceptedVersions: this.acceptedVersions,
-        onResponse: (info) => (attempt.response = info),
+        onResponse: (info) => {
+          attempt.response = info
+          self.lastTtfbMs = info.ttfbMs
+          const prev = this.networkRtt.get(attempt.networkId)
+          const updated = prev ? Math.round(0.7 * prev + 0.3 * info.ttfbMs) : info.ttfbMs
+          this.networkRtt.set(attempt.networkId, updated)
+        },
         throttle: (bytes) => this.host.limits.take(attempt.networkId, bytes),
         onWriteWait: (waiting) => (attempt.writeWaiting = waiting),
         onNetworkProgress: (bytesThisRun) => {
@@ -795,11 +836,13 @@ export class HttpTransfer implements Transfer {
     const traffic = this.trafficOf(chunk.interfaceId)
     traffic.received += deltaBytes
     traffic.aliveAt = now
+    this.networkFailures.delete(chunk.interfaceId)
     const network = this.network(chunk.interfaceId)
     if (network.status === 'unreachable') {
       // Through again: the next reconcile gives it back its streams.
       network.status = 'on'
       self.failures = 0
+      this.host.reconcile()
     }
     // Read as speeds on the download's clock (see updateSpeeds).
     this.runtime.meters.add(chunk.id, chunk.interfaceId, deltaBytes)
@@ -1091,8 +1134,14 @@ export class HttpTransfer implements Transfer {
     // What the server's answer says about the network: a connection failing while the whole
     // network has gone quiet means the network can't reach the server — dropped, or connected
     // with no way through. It stops being used, bar one stream that keeps trying (see reconcile).
-    if (error instanceof ConnectionError && this.markUnreachable(network, Date.now())) {
-      this.host.reconcile()
+    if (error instanceof ConnectionError) {
+      const fails = (this.networkFailures.get(network.id) ?? 0) + 1
+      this.networkFailures.set(network.id, fails)
+      const force = isRouteDownError(error) || fails >= 2
+      if (this.markUnreachable(network, Date.now(), force)) {
+        this.host.reconcile()
+        this.nudgeSurvivingStreams(network.id)
+      }
     }
 
     // A hedge is optional work: its failure isn't retried, and what it did write stays.
@@ -1111,8 +1160,12 @@ export class HttpTransfer implements Transfer {
       self.busySince = null
     }
     self.failures += 1
+    const shouldAvoid = deliveredNothing || error instanceof ConnectionError
     // Back to the queue, so any available worker can pick it up.
-    this.letGo(chunk, self, attempt, deliveredNothing)
+    this.letGo(chunk, self, attempt, shouldAvoid)
+    if (shouldAvoid) {
+      this.nudgeSurvivingStreams(network.id)
+    }
 
     // A connection that failed is the network's doing, and is tried again for as long as the
     // network is there. A server that answered wrongly gets MAX_CHUNK_RETRIES in a row, and one
@@ -1196,6 +1249,7 @@ export class HttpTransfer implements Transfer {
       let answered = 0
       let refused = 0
       let served = 0
+      let chunkSpeed = 0
       for (const chunk of this.liveStreams(id)) {
         const self = this.chunkRuntimes.get(chunk.id)
         streams++
@@ -1204,8 +1258,18 @@ export class HttpTransfer implements Transfer {
         if (self?.served) served++
         if (self?.attempt) writing++
         if (self?.attempt?.writeWaiting) held++
+        chunkSpeed += chunk.speedBytesPerSec
       }
-      return { id, streams, answered, refused, served }
+      return {
+        id,
+        streams,
+        answered,
+        refused,
+        served,
+        speedBytesPerSec: chunkSpeed,
+        rttMs: this.networkRtt.get(id),
+        consecutiveFailures: this.networkFailures.get(id) ?? 0
+      }
     })
     this.noteDisk(now, writing, held)
     // A new stream takes a waiting block the moment it starts.

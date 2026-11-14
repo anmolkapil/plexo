@@ -152,6 +152,11 @@ function nextWaitingBlock(state: SchedulerState, networkId: string): HttpBlockSt
   const otherNetworkFree = state.streams.some(
     (stream) => stream.interfaceId !== networkId && stream.status === 'pending'
   )
+  const fresh = state.blocks.find(
+    (block) => block.status === 'pending' && state.avoid.get(block.index) !== networkId
+  )
+  if (fresh) return fresh
+
   return state.blocks.find(
     (block) =>
       block.status === 'pending' &&
