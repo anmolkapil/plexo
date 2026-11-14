@@ -17,6 +17,9 @@ import { UsenetServerButton } from '../components/UsenetServerDialog'
 import { Button } from '../components/ui/button'
 import { Tooltip, TooltipContent, TooltipTrigger } from '../components/ui/tooltip'
 import { useNetworkVisuals } from '../hooks/useNetworkVisuals'
+import { useCombineFlow, type ShownFlowChange } from '../hooks/useCombineFlow'
+import { flowStep } from '../utils/combineFlow'
+import type { NetworkVisual } from '../theme'
 import { useDownloadSchedule } from '../hooks/useDownloadSchedule'
 import { useAppStore } from '../store/useAppStore'
 import { useDownloadActions } from '../components/downloadActionsContext'
@@ -58,7 +61,8 @@ function BigStat({
   value,
   unit,
   valueClass,
-  note
+  note,
+  aside
 }: {
   label: string
   value: string | number
@@ -66,6 +70,8 @@ function BigStat({
   valueClass: string
   /** Beside the label, e.g. a warning about what holds the value down. */
   note?: React.ReactNode
+  /** After the value and its unit, e.g. how much a network that just joined added to it. */
+  aside?: React.ReactNode
 }): React.JSX.Element {
   return (
     <>
@@ -84,8 +90,43 @@ function BigStat({
             {unit}
           </div>
         )}
+        {aside}
       </div>
     </>
+  )
+}
+
+/** "+12 MB/s" beside the total speed for a moment after a network joins the download, or
+ * "−8 MB/s" after one drops out: the moment the total changed, and why. Always rendered, so it
+ * is a live region a screen reader is already watching when the text arrives; its text comes
+ * and goes with useCombineFlow, and only its arrival is animated (see plexo-rise-in). */
+function SpeedChange({
+  change,
+  visual,
+  formatSpeed
+}: {
+  change: ShownFlowChange | null
+  visual: NetworkVisual | undefined
+  formatSpeed: (bytesPerSec: number) => string
+}): React.JSX.Element {
+  const joined = change?.change === 'joined'
+  return (
+    <span role="status" className="self-baseline">
+      {change && visual && (
+        <span
+          key={change.key}
+          data-testid="speed-change"
+          className="inline-block font-mono text-[11px] leading-none font-semibold whitespace-nowrap tabular-nums"
+          style={{
+            color: joined ? visual.solid : 'var(--text-tertiary)',
+            animation: 'plexo-rise-in 240ms cubic-bezier(0.16, 1, 0.3, 1) both'
+          }}
+        >
+          <span className="sr-only">{`${visual.name} ${joined ? 'joined' : 'dropped out'}: `}</span>
+          {`${joined ? '+' : '−'}${formatSpeed(change.bytesPerSec)}`}
+        </span>
+      )}
+    </span>
   )
 }
 
@@ -175,6 +216,14 @@ export const DownloadingScreen = memo(function DownloadingScreen({
   const totalDownloadedByNetworks = rows.reduce((sum, row) => sum + row.bytesDownloaded, 0)
   const [chipModeIndex, setChipModeIndex] = useState(0)
   const waiting = waitingFor(download)
+  // Each network's path in the diagram is drawn by its share of the total right now, and the
+  // moment one joins or drops out is marked (see useCombineFlow). Its steps lag the speeds by an
+  // update at most; until it has one, a network's step comes straight from its share.
+  const flow = useCombineFlow(download.id)
+  const groupsSpeed = groups.reduce((sum, group) => sum + group.speedBytesPerSec, 0)
+  const changedVisual = flow.change
+    ? visuals[groups.findIndex((group) => group.id === flow.change?.networkId)]
+    : undefined
 
   const totalRetries = rows.reduce((sum, row) => sum + row.retries, 0)
   const remainingBytes = knownSize
@@ -230,13 +279,21 @@ export const DownloadingScreen = memo(function DownloadingScreen({
             (ml-auto) rather than stretching the merge into rails or the chart into a ribbon. */}
         <div className="flex items-center gap-[14px]">
           <CombineDiagram
-            networks={groups.map((group, index) => ({
-              solid: visuals[index].solid,
-              label: visuals[index].name,
-              speedBytesPerSec: isPaused ? 0 : group.speedBytesPerSec,
-              active: networkActive(group)
-            }))}
+            networks={groups.map((group, index) => {
+              const active = networkActive(group)
+              const share = !isPaused && groupsSpeed > 0 ? group.speedBytesPerSec / groupsSpeed : 0
+              return {
+                id: group.id,
+                solid: visuals[index].solid,
+                label: visuals[index].name,
+                speedBytesPerSec: isPaused ? 0 : group.speedBytesPerSec,
+                active,
+                share,
+                step: flow.steps[group.id] ?? flowStep(share, active)
+              }
+            })}
             paused={isPaused}
+            change={flow.change}
           />
 
           <div className="flex min-w-[130px] shrink-0 flex-col gap-[7px]">
@@ -246,6 +303,13 @@ export const DownloadingScreen = memo(function DownloadingScreen({
                 value={isPaused ? '—' : speedValue}
                 unit={isPaused ? undefined : speedUnit}
                 valueClass={isPaused ? 'text-muted-foreground' : 'text-foreground'}
+                aside={
+                  <SpeedChange
+                    change={isPaused ? null : flow.change}
+                    visual={changedVisual}
+                    formatSpeed={formatSpeed}
+                  />
+                }
                 note={
                   !isPaused &&
                   download.kind === 'http' &&
