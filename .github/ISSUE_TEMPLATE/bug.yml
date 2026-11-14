@@ -66,6 +66,7 @@ body:
         - Direct link
         - Torrent / magnet
         - Captured by the browser extension
+        - NZB / Usenet
         - Not download-related
     validations:
       required: true

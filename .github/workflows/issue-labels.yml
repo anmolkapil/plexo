@@ -30,12 +30,14 @@ jobs:
               'What were you downloading?': {
                 'Direct link': 'area: download-engine',
                 'Torrent / magnet': 'area: torrent',
-                'Captured by the browser extension': 'area: browser-extension'
+                'Captured by the browser extension': 'area: browser-extension',
+                'NZB / Usenet': 'area: usenet'
               },
               'Which part of Plexo is this about?': {
                 'Using several networks together': 'area: networking',
                 'Downloading files (links, speed, resume)': 'area: download-engine',
                 'Torrents and magnet links': 'area: torrent',
+                'NZB / Usenet': 'area: usenet',
                 'Browser extension': 'area: browser-extension',
                 'Installing and updating': 'area: install',
                 "The app's screens and settings": 'area: ui',
