@@ -539,6 +539,9 @@ export interface AppSettings {
   autoUpdate?: boolean
   /** The last destination folder picked. */
   destinationDir?: string
+  /** Pinned default destination folder. When set, new downloads start here rather than
+   * remembering one-off folder changes. */
+  defaultDestinationDir?: string
   /** User customizations (name/color) per network interface id. */
   networkPreferences?: NetworkPreferences
   /** How many downloads run at once; the rest wait in the queue. */
@@ -577,6 +580,7 @@ export interface InitialState {
   speedUnit: SpeedUnit
   /** The last folder picked, if it still exists — otherwise the renderer uses downloadsDir. */
   destinationDir?: string
+  defaultDestinationDir?: string
 }
 
 interface StartDownloadRequestBase {

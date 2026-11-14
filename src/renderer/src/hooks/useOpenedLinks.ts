@@ -64,3 +64,19 @@ export function useNewDownloadShortcuts(): void {
     }
   }, [openNewDownload])
 }
+
+/** Global ⌘, / Ctrl+, shortcut to open Settings / Speed & data limits. */
+export function useSettingsShortcuts(): void {
+  const openSettings = useAppStore((store) => store.openSettings)
+
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent): void => {
+      if (event.key === ',' && (isMac ? event.metaKey : event.ctrlKey)) {
+        event.preventDefault()
+        openSettings()
+      }
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [openSettings])
+}

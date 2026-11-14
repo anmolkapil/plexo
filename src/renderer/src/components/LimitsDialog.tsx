@@ -14,7 +14,7 @@ import { useEffect, useId, useRef, useState } from 'react'
 import { useNetworkUsage } from '../hooks/useNetworks'
 import { useNetworkVisuals } from '../hooks/useNetworkVisuals'
 import { useAppStore } from '../store/useAppStore'
-import { describeError, formatBytes, formatDataUsage } from '../utils/format'
+import { describeError, formatBytes, formatDataUsage, toDisplayPath } from '../utils/format'
 import { useFormatSpeedLimit } from '../hooks/useFormatSpeed'
 import {
   AlertDialog,
@@ -46,6 +46,7 @@ type Draft = Pick<
   | 'downloadsAtOnce'
   | 'networkPreferences'
   | 'downloadSchedule'
+  | 'defaultDestinationDir'
 >
 
 /** All downloads as a fresh install has them. */
@@ -54,7 +55,8 @@ const GENERAL_DEFAULTS = {
   speedLimit: undefined,
   slowMode: false,
   slowModeSpeed: DEFAULT_SLOW_MODE_SPEED,
-  downloadsAtOnce: DOWNLOADS_AT_ONCE.default
+  downloadsAtOnce: DOWNLOADS_AT_ONCE.default,
+  defaultDestinationDir: undefined
 } satisfies Partial<Draft>
 
 const MB = 1024 ** 2
@@ -227,6 +229,33 @@ function GeneralPage({
   draft: Draft
   change: (patch: Partial<Draft>) => void
 }): React.JSX.Element {
+  const homeDir = useAppStore((store) => store.homeDir)
+  const downloadsDir = useAppStore((store) => store.downloadsDir)
+  const destinationDir = useAppStore((store) => store.destinationDir)
+  const effectiveDestinationDir = draft.defaultDestinationDir ?? (destinationDir || downloadsDir)
+  const usesSystemDefault =
+    draft.defaultDestinationDir === undefined && effectiveDestinationDir === downloadsDir
+  const [missingPath, setMissingPath] = useState<string | null>(null)
+  const pinnedFolderMissing = Boolean(
+    draft.defaultDestinationDir && missingPath === draft.defaultDestinationDir
+  )
+
+  useEffect(() => {
+    const dir = draft.defaultDestinationDir
+    if (!dir) return
+    let disposed = false
+    void window.plexo
+      .freeSpace(dir)
+      .then((bytes) => {
+        if (!disposed) setMissingPath(bytes === null ? dir : null)
+      })
+      .catch(() => {
+        if (!disposed) setMissingPath(dir)
+      })
+    return () => {
+      disposed = true
+    }
+  }, [draft.defaultDestinationDir])
   const { speedLimit, slowMode, slowModeSpeed, downloadsAtOnce } = draft
   const [confirmReset, setConfirmReset] = useState(false)
   const atDefaults = Object.entries(GENERAL_DEFAULTS).every(
@@ -241,6 +270,49 @@ function GeneralPage({
           {running === 0 ? 'No active downloads' : `${running} downloading right now`}
         </div>
       </div>
+
+      <section className={sectionClass}>
+        <h4 className={headingClass}>Default download folder</h4>
+        <p className={hintClass}>
+          New downloads start here rather than remembering one-off folder changes.
+        </p>
+        <div className="flex flex-wrap items-center gap-3">
+          <div className="min-w-0 flex-1 truncate font-mono text-[12.5px]">
+            {toDisplayPath(effectiveDestinationDir, homeDir)}
+            {usesSystemDefault && (
+              <span className="ml-2 font-sans text-[11px] text-muted-foreground">
+                (system default)
+              </span>
+            )}
+            {pinnedFolderMissing && (
+              <span className="ml-2 font-sans text-[11px] text-[var(--color-danger)]">
+                (folder missing — falls back to system default)
+              </span>
+            )}
+          </div>
+          <Button
+            type="button"
+            variant="secondary"
+            size="sm"
+            onClick={async () => {
+              const chosen = await window.plexo.chooseDestinationFolder(effectiveDestinationDir)
+              if (chosen) change({ defaultDestinationDir: chosen })
+            }}
+          >
+            Change
+          </Button>
+          {draft.defaultDestinationDir !== undefined && (
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              onClick={() => change({ defaultDestinationDir: undefined })}
+            >
+              Reset to default
+            </Button>
+          )}
+        </div>
+      </section>
 
       <section className={sectionClass}>
         <h4 className={headingClass}>Total speed</h4>
@@ -325,8 +397,8 @@ function GeneralPage({
           <AlertDialogHeader>
             <AlertDialogTitle>Reset all downloads to defaults?</AlertDialogTitle>
             <AlertDialogDescription>
-              This resets total speed, slow mode, downloads at once and the download schedule.
-              Network limits stay unchanged.
+              This resets total speed, slow mode, downloads at once, default download folder and the
+              download schedule. Network limits stay unchanged.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
@@ -701,7 +773,8 @@ function LimitsEditor({
       slowModeSpeed,
       downloadsAtOnce,
       networkPreferences,
-      downloadSchedule
+      downloadSchedule,
+      defaultDestinationDir
     } = useAppStore.getState()
     return {
       speedLimit,
@@ -709,7 +782,8 @@ function LimitsEditor({
       slowModeSpeed,
       downloadsAtOnce,
       networkPreferences,
-      downloadSchedule
+      downloadSchedule,
+      defaultDestinationDir
     }
   })
   const change = (patch: Partial<Draft>): void =>
@@ -748,6 +822,10 @@ function LimitsEditor({
       patch.downloadsAtOnce = draft.downloadsAtOnce
     if (draft.downloadSchedule !== store.downloadSchedule)
       patch.downloadSchedule = draft.downloadSchedule
+    if (draft.defaultDestinationDir !== store.defaultDestinationDir) {
+      patch.defaultDestinationDir = draft.defaultDestinationDir
+      patch.destinationDir = draft.defaultDestinationDir ?? store.downloadsDir
+    }
     for (const [id, preference] of Object.entries(draft.networkPreferences)) {
       if (preference !== store.networkPreferences[id]) {
         patch.networkPreferences ??= { ...store.networkPreferences }

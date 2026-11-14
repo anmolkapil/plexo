@@ -98,8 +98,18 @@ interface AppStore {
   setSlowMode: (on: boolean) => void
   setSlowModeSpeed: (bytesPerSec: number) => void
   setSpeedUnit: (unit: SpeedUnit) => void
+  /** Pinned default destination folder. When set, new downloads start here rather than
+   * remembering one-off folder changes. */
+  defaultDestinationDir?: string
+  settingsOpen: boolean
+  settingsPage: string | null
+  settingsShowSchedule: boolean
+  openSettings: (page?: string | null, showSchedule?: boolean) => void
+  closeSettings: () => void
+  setSettingsPage: (page: string | null) => void
   setDraftUrl: (url: string) => void
   setDestinationDir: (dir: string) => void
+  setDefaultDestinationDir: (dir?: string) => void
 }
 
 // Settings saved by the main process, read once before the first paint (see InitialState).
@@ -135,6 +145,13 @@ export const useAppStore = create<AppStore>((set, get) => ({
   telegramOpen: false,
   openTelegram: () => set({ telegramOpen: true }),
   closeTelegram: () => set({ telegramOpen: false }),
+  settingsOpen: false,
+  settingsPage: null,
+  settingsShowSchedule: false,
+  openSettings: (page = null, showSchedule = false) =>
+    set({ settingsOpen: true, settingsPage: page, settingsShowSchedule: showSchedule }),
+  closeSettings: () => set({ settingsOpen: false }),
+  setSettingsPage: (settingsPage) => set({ settingsPage }),
   downloadsAtOnce: initial.downloadsAtOnce,
   speedLimit: initial.speedLimit,
   slowMode: initial.slowMode,
@@ -146,6 +163,9 @@ export const useAppStore = create<AppStore>((set, get) => ({
   shownId: null,
   formKey: 0,
   startedUrl: '',
+  defaultDestinationDir: initial.defaultDestinationDir,
+  // Main has already checked this folder exists. Never fall back to the raw pinned setting here:
+  // it may point to a removed drive, while destinationDir has safely fallen back to Downloads.
   destinationDir: initial.destinationDir ?? initial.downloadsDir,
 
   loadInterfaces: async () => {
@@ -205,7 +225,11 @@ export const useAppStore = create<AppStore>((set, get) => ({
   setView: (view) => set({ view }),
 
   openNewDownload: (link) =>
-    set(link === undefined ? { newDownloadOpen: true } : { newDownloadOpen: true, draftUrl: link }),
+    set((state) => ({
+      newDownloadOpen: true,
+      formKey: state.formKey + 1,
+      ...(link === undefined ? {} : { draftUrl: link })
+    })),
 
   closeNewDownload: () => {
     const { links, shownId } = get()
@@ -279,6 +303,15 @@ export const useAppStore = create<AppStore>((set, get) => ({
   setDraftUrl: (draftUrl) => set({ draftUrl }),
   setDestinationDir: (destinationDir) => {
     set({ destinationDir })
-    persist({ destinationDir })
+    if (!get().defaultDestinationDir) {
+      persist({ destinationDir })
+    }
+  },
+  setDefaultDestinationDir: (defaultDestinationDir) => {
+    set({
+      defaultDestinationDir,
+      destinationDir: defaultDestinationDir ?? get().downloadsDir
+    })
+    persist({ defaultDestinationDir })
   }
 }))
