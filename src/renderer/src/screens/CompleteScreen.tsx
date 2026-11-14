@@ -14,6 +14,7 @@ import {
   wantedBytes
 } from '../utils/format'
 import { useFormatSpeed } from '../hooks/useFormatSpeed'
+import { describeTimeSaved, downloadingSeconds, timeSavedOf } from '@shared/timeSaved'
 
 const sectionHeaderClass =
   'font-mono text-[10px] leading-none tracking-[0.16em] text-muted-foreground uppercase'
@@ -54,13 +55,7 @@ export function CompleteScreen({
   const missing = 'missing' in download && download.missing === true
 
   const finalSize = wantedBytes(download) || download.bytesDownloaded
-  const totalPausedMs = download.totalPausedMs ?? 0
-  // completedAt is always set by the time a download reaches 'completed' — the
-  // fallback here is just to keep this pure (no Date.now() during render).
-  const elapsedSeconds = Math.max(
-    0,
-    ((download.completedAt ?? download.startedAt) - download.startedAt - totalPausedMs) / 1000
-  )
+  const elapsedSeconds = downloadingSeconds(download)
   const avgSpeed = elapsedSeconds > 0 ? finalSize / elapsedSeconds : 0
   const [avgSpeedValue, avgSpeedUnit] = formatSpeed(avgSpeed).split(' ')
 
@@ -68,6 +63,15 @@ export function CompleteScreen({
   const groups = download.networks.filter((network) => network.bytesDownloaded > 0)
   const visuals = groups.map((group) => networkVisual(group.id, group.kind, group.label))
   const totalWeight = groups.reduce((sum, group) => sum + group.bytesDownloaded, 0) || 1
+  const shares = groups.map((group) => Math.round((group.bytesDownloaded / totalWeight) * 100))
+  const saved = timeSavedOf(download)
+  // Said against the network by the name it has on this screen; a line of its own, so "About".
+  const savedLine =
+    saved &&
+    describeTimeSaved(
+      saved.seconds,
+      networkVisual(saved.network.id, saved.network.kind, saved.network.label).name
+    ).replace(/^a/, 'A')
   const totalRetries = download.networks.reduce((sum, network) => sum + network.retries, 0)
   const isTorrent = download.kind === 'torrent'
   // "Chunks" in the block grid means byte ranges, not parallel connections. A torrent's are its
@@ -211,13 +215,25 @@ export function CompleteScreen({
 
       <div className="mx-5 mb-5 flex flex-1 flex-col gap-[9px]">
         <h2 className={sectionHeaderClass}>Contribution by network</h2>
-        <div className="flex h-2.5 gap-0.5 overflow-hidden rounded-full bg-muted">
-          {groups.map((group, index) => (
-            <div
-              key={group.id}
-              style={{ flex: group.bytesDownloaded || 0.0001, background: visuals[index].solid }}
-            />
-          ))}
+        {savedLine && (
+          <p className="font-sans text-[13px] leading-[1.3] font-semibold text-foreground">
+            {savedLine}
+          </p>
+        )}
+        <div
+          role={groups.length > 0 ? 'img' : undefined}
+          aria-label={visuals.map((visual, index) => `${visual.name} ${shares[index]}%`).join(', ')}
+          className="h-2.5 overflow-hidden rounded-full bg-muted"
+        >
+          {/* Fills in from the left once, as it opens (the reduced-motion rule makes it instant). */}
+          <div className="flex h-full origin-left animate-[plexo-fill_700ms_cubic-bezier(0.16,1,0.3,1)_both] gap-0.5">
+            {groups.map((group, index) => (
+              <div
+                key={group.id}
+                style={{ flex: group.bytesDownloaded || 0.0001, background: visuals[index].solid }}
+              />
+            ))}
+          </div>
         </div>
         <div className="flex flex-col gap-[9px]">
           {groups.map((group, index) => (
@@ -231,8 +247,7 @@ export function CompleteScreen({
               </div>
               <div className="flex-1" />
               <div className="font-mono text-[11.5px] leading-none text-[var(--text-secondary)]">
-                {formatBytes(group.bytesDownloaded)} ·{' '}
-                {Math.round((group.bytesDownloaded / totalWeight) * 100)}%
+                {formatBytes(group.bytesDownloaded)} · {shares[index]}%
               </div>
             </div>
           ))}

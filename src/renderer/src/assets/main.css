@@ -289,6 +289,12 @@
   }
 }
 
+@keyframes plexo-fill {
+  from {
+    transform: scaleX(0);
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,

@@ -130,6 +130,11 @@ export class Meter {
     this.total += bytes
   }
 
+  /** Every byte counted so far. */
+  get bytes(): number {
+    return this.total
+  }
+
   /** The rate over the last SPEED_WINDOW_MS, as of `now`. Bytes before the first reading are
    * the meter's starting point, not part of any rate. */
   read(now: number): number {
