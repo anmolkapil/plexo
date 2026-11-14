@@ -417,6 +417,11 @@ export interface NzbDownloadState extends DownloadStateBase {
   nzbFiles: NzbFileState[]
   /** Of `totalBytes`, the bytes of articles that are missing. */
   missingBytes: number
+  /** Articles the news server didn't have that came from the backup server. */
+  fromBackup?: number
+  /** Why the backup server was left out (the articles it would have sent count as missing), or
+   * that it can't be reached for now. Cleared once it answers, and on each run. */
+  backupError?: string
   /** The news server it downloads from, by host name. */
   server: string
 }
@@ -677,10 +682,15 @@ export interface UsenetServer {
   /** Its password is kept only until Plexo quits: this computer offers no keychain to seal it
    * with (see main/download/nzb/usenetServer.ts). */
   passwordInMemory?: boolean
+  /** Its password is saved, but sealed by a keychain this session can't open (a profile from
+   * another computer, say): kept, but it has to be entered again to sign in. */
+  passwordUnread?: boolean
+  /** A second server, for the articles this one doesn't have; unset when there's none. */
+  backup?: Omit<UsenetServer, 'enabled' | 'backup'>
 }
 
-/** What the window sends to set the news server, or to test one. `password` or `enabled` left out
- * keeps the one already saved. */
+/** What the window sends to set the news server or its backup, or to test one. `password` or
+ * `enabled` left out keeps the one already saved; the backup has no switch of its own. */
 export interface UsenetServerInput {
   enabled?: boolean
   host: string

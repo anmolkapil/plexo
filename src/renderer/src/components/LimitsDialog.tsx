@@ -588,15 +588,22 @@ function UsenetPage({
   onEnabledChange: (enabled: boolean) => void
   onServerSaved: (server: UsenetServer) => void
 }): React.JSX.Element {
-  const [editing, setEditing] = useState(false)
-  const rows: [string, string][] = server
-    ? [
-        ['Server', `${server.host}:${server.port}`],
-        ['SSL', server.tls ? 'On' : 'Off'],
-        ['Username', server.username || 'None'],
-        ['Connections', String(server.connections)]
-      ]
-    : []
+  const [editing, setEditing] = useState<'server' | 'backup' | null>(null)
+  const [removing, setRemoving] = useState(false)
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const removeBackup = async (): Promise<void> => {
+    setBusy(true)
+    setError(null)
+    try {
+      onServerSaved(await window.plexo.saveUsenetBackup(null))
+      setRemoving(false)
+    } catch (cause) {
+      setError(describeError(cause))
+    } finally {
+      setBusy(false)
+    }
+  }
   return (
     <>
       <div className="flex flex-col gap-1 pb-3">
@@ -631,35 +638,120 @@ function UsenetPage({
           Where NZB downloads come from, as your Usenet provider gives it. Changes to the server are
           saved in its own window, right away.
         </p>
-        {rows.length > 0 && (
-          <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1.5 text-[13px]">
-            {rows.map(([label, value]) => (
-              <div key={label} className="contents">
-                <dt className="text-[var(--text-secondary)]">{label}</dt>
-                <dd className="truncate font-mono">{value}</dd>
-              </div>
-            ))}
-          </dl>
-        )}
+        {server && <ServerRows server={server} />}
         <div>
           <Button
             type="button"
             variant="secondary"
             size="sm"
             disabled={server === undefined}
-            onClick={() => setEditing(true)}
+            onClick={() => setEditing('server')}
           >
             {server ? 'Change server' : 'Set up server'}
           </Button>
         </div>
       </section>
+
+      <section className={sectionClass}>
+        <h4 className={headingClass}>Backup server</h4>
+        <p className={hintClass}>
+          Optional, from another provider: articles your news server doesn’t have are fetched from
+          it. It’s only connected to once one is missing.
+        </p>
+        {server?.backup && <ServerRows server={server.backup} />}
+        <div className="flex flex-wrap items-center gap-2">
+          <Button
+            type="button"
+            variant="secondary"
+            size="sm"
+            // It backs up the news server: nothing to back up until there is one.
+            disabled={!server}
+            onClick={() => setEditing('backup')}
+          >
+            {server?.backup ? 'Change backup server' : 'Set up backup server'}
+          </Button>
+          {server?.backup && (
+            <Button
+              type="button"
+              variant="secondary"
+              size="sm"
+              // A failure from a remove that was then cancelled is old news.
+              onClick={() => {
+                setError(null)
+                setRemoving(true)
+              }}
+            >
+              Remove
+            </Button>
+          )}
+        </div>
+      </section>
       <UsenetServerDialog
-        open={editing}
+        open={editing === 'server'}
         server={server ?? null}
-        onOpenChange={setEditing}
+        onOpenChange={(open) => setEditing(open ? 'server' : null)}
         onSaved={onServerSaved}
       />
+      <UsenetServerDialog
+        backup
+        open={editing === 'backup'}
+        server={server?.backup ?? null}
+        onOpenChange={(open) => setEditing(open ? 'backup' : null)}
+        onSaved={onServerSaved}
+      />
+      <AlertDialog open={removing} onOpenChange={(open) => !open && !busy && setRemoving(false)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Remove the backup server?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Articles your news server doesn’t have will count as missing. Its settings and
+              password are forgotten.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          {error && (
+            <p role="alert" className="text-[13px] text-destructive">
+              {error}
+            </p>
+          )}
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={busy}>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              disabled={busy}
+              onClick={(event) => {
+                event.preventDefault()
+                void removeBackup()
+              }}
+            >
+              Remove
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </>
+  )
+}
+
+/** A news server's settings, as saved. */
+function ServerRows({
+  server
+}: {
+  server: Omit<UsenetServer, 'enabled' | 'backup'>
+}): React.JSX.Element {
+  const rows: [string, string][] = [
+    ['Server', `${server.host}:${server.port}`],
+    ['SSL', server.tls ? 'On' : 'Off'],
+    ['Username', server.username || 'None'],
+    ['Connections', String(server.connections)]
+  ]
+  return (
+    <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1.5 text-[13px]">
+      {rows.map(([label, value]) => (
+        <div key={label} className="contents">
+          <dt className="text-[var(--text-secondary)]">{label}</dt>
+          <dd className="truncate font-mono">{value}</dd>
+        </div>
+      ))}
+    </dl>
   )
 }
 
