@@ -63,7 +63,7 @@ export function testInterfaces(): NetworkInterfaceInfo[] | null {
     .split(',')
     .filter(Boolean)
     .map((entry) => {
-      const [id, address, subnet, kind] = entry.split('=')
+      const [id, address, subnet, kind, device] = entry.split('=')
       const inferredKind =
         kind === 'usb'
           ? ('usb' as const)
@@ -74,7 +74,7 @@ export function testInterfaces(): NetworkInterfaceInfo[] | null {
             : ('ethernet' as const)
       return {
         id,
-        device: id,
+        device: device || id,
         displayName: id,
         addresses: [{ address, family: isIP(address) === 6 ? 6 : 4, subnet: subnet || undefined }],
         kind: inferredKind

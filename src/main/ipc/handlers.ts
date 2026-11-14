@@ -35,7 +35,7 @@ import { testKnobs } from '../testKnobs'
 import { deviceBindingSupported } from '../network/deviceBinding'
 import { pendingLink, pendingLinks, releaseLink } from '../openLinks'
 import { NetworkMonitor } from '../network/interfaces'
-import { loadSettings, saveSettings } from '../settings'
+import { carryOverNetworkPreferences, loadSettings, saveSettings } from '../settings'
 import { showUpdateMenu, updateState } from '../updater'
 
 async function openNetworkSettings(): Promise<void> {
@@ -82,7 +82,13 @@ async function freeSpace(dir: string): Promise<number | null> {
 
 export function registerIpcHandlers(getWindow: () => BrowserWindow | null): DownloadManager {
   // The main process keeps the network list, for downloads and the window alike.
-  const networks = new NetworkMonitor((list) => {
+  const networks = new NetworkMonitor(async (list) => {
+    // First, so no connection opens without a proxy saved under the network's old id.
+    try {
+      if (await carryOverNetworkPreferences(list)) await manager.applySettings(await loadSettings())
+    } catch (error) {
+      console.error('[plexo] carrying network settings over failed', error)
+    }
     manager.networksChanged()
     const window = getWindow()
     if (window && !window.isDestroyed()) window.webContents.send(IpcChannels.networksChanged, list)
