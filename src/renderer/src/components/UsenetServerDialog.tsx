@@ -89,6 +89,7 @@ function UsenetServerForm({
   // Left empty, the saved password stays.
   const [password, setPassword] = useState('')
   const [connections, setConnections] = useState(String(server?.connections ?? 8))
+  const [deleteArchives, setDeleteArchives] = useState(server?.deleteArchives ?? true)
   const [busy, setBusy] = useState<'test' | 'save' | null>(null)
   const [result, setResult] = useState<{ ok: boolean; text: string } | null>(null)
 
@@ -98,6 +99,7 @@ function UsenetServerForm({
     tls,
     username: username.trim(),
     connections: Number(connections),
+    deleteArchives,
     // Blank keeps the stored password, also one this session can't unseal (hasPassword false).
     password: password === '' ? undefined : password
   })
@@ -229,6 +231,12 @@ function UsenetServerForm({
             What your account allows, shared by every network a download uses.
           </span>
         </div>
+        <label className="flex items-center gap-3 text-[12.5px] text-[var(--text-secondary)]">
+          <span className="flex-1">
+            Once a download is unpacked, delete its archives and .par2 files
+          </span>
+          <Switch checked={deleteArchives} onCheckedChange={setDeleteArchives} />
+        </label>
         {server?.passwordInMemory && (
           <p className={hintClass}>
             This computer has no keychain Plexo can use, so your password is kept only until Plexo

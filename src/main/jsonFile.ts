@@ -24,7 +24,7 @@ async function readJsonNow(path: string): Promise<unknown> {
 
 /** On Windows, antivirus/indexers/sync clients briefly hold files open, which fails a rename
  * over them — worth a few short retries before giving up on the save. */
-async function renameWithRetry(from: string, to: string): Promise<void> {
+export async function renameWithRetry(from: string, to: string): Promise<void> {
   for (let attempt = 0; ; attempt++) {
     try {
       return await rename(from, to)
