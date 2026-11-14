@@ -190,6 +190,14 @@ export class ConcurrencyController {
     )
   }
 
+  /** The most streams the server takes over a network for now, if it refused more (see the
+   * rules above), and only while that is what holds the network to its count: under a lower
+   * share or disk cap, the server's ceiling isn't what stops it growing. */
+  serverCeiling(networkId: string): number | undefined {
+    const ceiling = this.ceilings.get(networkId)?.limit
+    return ceiling !== undefined && ceiling === this.limit(networkId) ? ceiling : undefined
+  }
+
   /** Moves the disk's cap (see the rules above). */
   private judgeDisk({ now, disk, networks }: Snapshot): void {
     if (!disk) return
