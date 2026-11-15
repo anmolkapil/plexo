@@ -24,6 +24,7 @@ export const IpcChannels = {
   addTorrentTrackers: 'download:add-torrent-trackers',
   pauseDownload: 'download:pause',
   resumeDownload: 'download:resume',
+  startNext: 'download:start-next',
   relinkDownload: 'download:relink',
   setDownloadNetwork: 'download:set-network',
   cancelDownload: 'download:cancel',

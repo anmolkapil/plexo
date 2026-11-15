@@ -1,4 +1,5 @@
 import {
+  ChevronsUp,
   Copy,
   Download,
   ExternalLink,
@@ -54,6 +55,13 @@ export const ACTION_META: Record<ActionId, ActionMeta> = {
     working: 'Resuming',
     failure: 'Couldn’t resume',
     icon: Play
+  },
+  next: {
+    label: 'Start next',
+    many: (n) => `Start ${n} downloads next`,
+    toolbar: 'Start next',
+    failure: SOMETHING_WRONG,
+    icon: ChevronsUp
   },
   retry: {
     label: 'Retry',

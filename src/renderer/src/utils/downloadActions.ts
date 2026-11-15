@@ -8,6 +8,7 @@ import { linkExpired } from './format'
 export type ActionId =
   | 'pause'
   | 'resume'
+  | 'next'
   | 'retry'
   | 'fix'
   | 'again'
@@ -55,6 +56,8 @@ const appliesTo: Record<ActionId, (item: DownloadItem) => boolean> = {
     // Repairing or unpacking runs to its end: it can only be cancelled.
     !(item.kind === 'nzb' && item.postProcess?.stage),
   resume: (item) => !isFinished(item) && item.status === 'paused',
+  // Waiting its turn, it can go first in line.
+  next: (item) => !isFinished(item) && item.status === 'queued',
   retry: (item) => isFailed(item) && failureAction(item) === 'retry',
   fix: (item) => isFailed(item) && failureAction(item) === 'fix',
   again: (item) => isFailed(item) && failureAction(item) === 'again',
@@ -73,7 +76,7 @@ const SINGLE_ONLY: ReadonlySet<ActionId> = new Set(['fix', 'again', 'open', 'rev
 /** The order they're shown in, in groups: what to do with it, its link, getting rid of it.
  * Menus put a separator between groups. */
 export const ACTION_GROUPS: readonly (readonly ActionId[])[] = [
-  ['pause', 'resume', 'retry', 'fix', 'again', 'open', 'reveal', 'trackers'],
+  ['pause', 'resume', 'next', 'retry', 'fix', 'again', 'open', 'reveal', 'trackers'],
   ['copy'],
   ['cancel', 'remove', 'trash']
 ]
@@ -109,6 +112,7 @@ export const TOOLBAR_PRIORITY: readonly ActionId[] = [
   'again',
   'open',
   'cancel',
+  'next',
   'reveal',
   'remove',
   'trash',

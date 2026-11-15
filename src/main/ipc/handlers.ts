@@ -280,6 +280,8 @@ export function registerIpcHandlers(getWindow: () => BrowserWindow | null): Down
     manager.resume(id)
   })
 
+  handle('startNext', async (_event, id) => manager.startNext(id))
+
   handle('relinkDownload', async (_event, id, url) => manager.relink(id, url))
 
   handle('setDownloadNetwork', async (_event, id, networkId, enabled) => {
