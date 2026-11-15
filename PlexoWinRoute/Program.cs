@@ -20,7 +20,9 @@ internal static class Program
         using var shutdown = new CancellationTokenSource();
         var listener = new TcpListener(IPAddress.Loopback, 0);
         listener.Start();
-        _ = WatchParentStdin(shutdown, listener);
+        // Console.In.ReadAsync can block synchronously on Windows even with await.
+        // Keep the pipe watcher on a worker thread so READY can be printed immediately.
+        _ = Task.Run(() => WatchParentStdin(shutdown, listener));
         Console.WriteLine($"READY {((IPEndPoint)listener.LocalEndpoint).Port}");
         Console.Out.Flush();
 

@@ -54,13 +54,15 @@ test('rejects invalid tokens and headers, then shuts down when stdin closes', as
         })
       })
     }
-    await refused(JSON.stringify({
-      token: 'not-the-session-token',
-      remoteAddress: '127.0.0.1',
-      remotePort: 80,
-      localAddress: '127.0.0.1',
-      interfaceIndex: 1
-    }))
+    await refused(
+      JSON.stringify({
+        token: 'not-the-session-token',
+        remoteAddress: '127.0.0.1',
+        remotePort: 80,
+        localAddress: '127.0.0.1',
+        interfaceIndex: 1
+      })
+    )
     await refused('{not valid json}')
     expect(child.exitCode).toBeNull()
 
@@ -112,12 +114,14 @@ test('selects loopback interface from source IP without an InterfaceIndex', asyn
             reject(new Error('Helper tunnel timed out'))
           }, 5000)
           socket.once('connect', () => {
-            socket.write(JSON.stringify({
-              token,
-              remoteAddress: '127.0.0.1',
-              remotePort: (server.address() as { port: number }).port,
-              localAddress
-            }) + '\n')
+            socket.write(
+              JSON.stringify({
+                token,
+                remoteAddress: '127.0.0.1',
+                remotePort: (server.address() as { port: number }).port,
+                localAddress
+              }) + '\n'
+            )
           })
           socket.on('data', (chunk: Buffer) => {
             data += chunk.toString()

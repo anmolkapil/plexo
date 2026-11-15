@@ -125,7 +125,10 @@ export async function listActiveInterfaces(): Promise<NetworkInterfaceInfo[]> {
 
   const all = networkInterfaces()
   const devices = Object.entries(all)
-    .map(([name, addresses]) => `${name}: ${(addresses ?? []).map((address) => address.address).join(',')}`)
+    .map(
+      ([name, addresses]) =>
+        `${name}: ${(addresses ?? []).map((address) => address.address).join(',')}`
+    )
     .sort()
     .join('\n')
   if (labels?.devices !== devices) {
