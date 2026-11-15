@@ -1,6 +1,12 @@
-import { connect as netConnect, isIP, type Socket } from 'node:net'
-import { connect as tlsConnect } from 'node:tls'
-import { asConnectionError } from '../../network/routes'
+import type { Socket } from 'node:net'
+import type { NetworkInterfaceInfo, NetworkPreferences } from '../../../shared/types'
+import {
+  asConnectionError,
+  compatibleInterfaces,
+  connectThrough,
+  NoCompatibleRouteError,
+  resolveTargetWithin
+} from '../../network/routes'
 import { testKnobs } from '../../testKnobs'
 import type { NewsServerConfig } from './usenetServer'
 
@@ -280,39 +286,78 @@ function unstuff(body: Buffer): Buffer {
 
 const abortError = (): DOMException => new DOMException('Aborted', 'AbortError')
 
-/** Connects to `server` over the computer's default route and signs in, then says goodbye: what
- * the server settings check before they're used. Throws what went wrong, in words. */
-export async function testUsenetServer(server: NewsServerConfig): Promise<void> {
-  const signal = AbortSignal.timeout(testKnobs.connectTimeoutMs)
-  const socket = await new Promise<Socket>((resolve, reject) => {
-    const { host, port } = server
-    const socket = server.tls
-      ? tlsConnect({ host, port, servername: isIP(host) ? undefined : host })
-      : netConnect({ host, port })
-    const fail = (error: Error): void => {
-      socket.destroy()
-      reject(error)
+/** What a failed connection's error says it was, wrapped (see asConnectionError) or not. */
+function errorCode(error: unknown): string | undefined {
+  const code = (error as NodeJS.ErrnoException | undefined)?.code
+  if (code) return code
+  return ((error as Error | undefined)?.cause as NodeJS.ErrnoException | undefined)?.code
+}
+
+/**
+ * Connects to `server` and signs in, then says goodbye: what the server settings check before
+ * they're used. Throws what went wrong, in words.
+ *
+ * It connects as a download would (see NzbTransfer.openSession): over one of the networks a new
+ * download starts with, through that network's proxy when one is set, with TLS on top when the
+ * server wants it, and with the same timeouts. Otherwise the test could pass where downloads
+ * fail, or the other way round: a proxy that turns the server away, or a network that is the
+ * only way out. A download shares its connections over all of those networks; the test takes the
+ * first that has an address the server can be reached on (as startNzb picks them). One answer is
+ * what the dialog has room for, and the first network is the one most downloads lean on.
+ */
+export async function testUsenetServer(
+  server: NewsServerConfig,
+  available: NetworkInterfaceInfo[],
+  preferences: NetworkPreferences
+): Promise<void> {
+  const { host, port } = server
+  // The New download dialog starts with every network but the ones left out of the last
+  // download. If it left every one out, the next download has one turned back on: the first.
+  const chosen = available.filter((iface) => !preferences[iface.id]?.off)
+  const candidates = chosen.length > 0 ? chosen : available
+  if (candidates.length === 0) throw new Error('No network is connected.')
+  const timeoutMs = Math.min(testKnobs.connectTimeoutMs, testKnobs.stallTimeoutMs)
+  // Nothing aborts a test: every step has its own deadline, as a download's do.
+  const signal = new AbortController().signal
+
+  const addresses = await resolveTargetWithin(host, timeoutMs, signal).catch(() => {
+    throw new Error(`Couldn’t find ${host}. Check the address.`)
+  })
+  const iface = compatibleInterfaces(candidates, addresses)[0]
+  if (!iface) throw new NoCompatibleRouteError(host)
+  const proxy = preferences[iface.id]?.proxy
+  const proxied = proxy?.enabled === true
+  const name = preferences[iface.id]?.customName?.trim() || iface.displayName
+
+  const socket = await connectThrough(
+    iface,
+    host,
+    port,
+    server.tls,
+    timeoutMs,
+    signal,
+    proxy
+  ).catch((error: Error) => {
+    // A refused connection or a missing host is the proxy's when there is one: what it said
+    // is passed on as it said it.
+    if (proxied) {
+      throw new Error(`Couldn’t reach ${host} through the proxy set on ${name}. (${error.message})`)
     }
-    socket.once(server.tls ? 'secureConnect' : 'connect', () => {
-      signal.removeEventListener('abort', onAbort)
-      socket.off('error', fail)
-      resolve(socket)
-    })
-    socket.once('error', fail)
-    const onAbort = (): void => fail(new Error(`${host} didn’t answer on port ${port}`))
-    signal.addEventListener('abort', onAbort, { once: true })
-  }).catch((error: NodeJS.ErrnoException) => {
-    if (error.code === 'ENOTFOUND' || error.code === 'EAI_AGAIN') {
-      throw new Error(`Couldn’t find ${server.host}. Check the address.`)
+    const code = errorCode(error)
+    if (code === 'ENOTFOUND' || code === 'EAI_AGAIN') {
+      throw new Error(`Couldn’t find ${host}. Check the address.`)
     }
-    if (error.code === 'ECONNREFUSED') {
-      throw new Error(`${server.host} isn’t accepting connections on port ${server.port}.`)
+    if (code === 'ECONNREFUSED') {
+      throw new Error(`${host} isn’t accepting connections on port ${port}.`)
+    }
+    if (/^Connection stalled/.test(error.message)) {
+      throw new Error(`${host} didn’t answer on port ${port}.`)
     }
     throw error
   })
   try {
     const connection = await NntpConnection.open(socket, {
-      timeoutMs: testKnobs.connectTimeoutMs,
+      timeoutMs: testKnobs.stallTimeoutMs,
       username: server.username,
       password: server.password,
       signal

@@ -302,9 +302,12 @@ export function registerIpcHandlers(getWindow: () => BrowserWindow | null): Down
     return server
   })
   handle('saveUsenetBackup', async (_event, input) => saveUsenetBackup(input))
-  handle('testUsenetServer', async (_event, input, backup) =>
-    testUsenetServer(await serverFromInput(input, backup === true))
-  )
+  // Over a network a download would use, with its proxy (see testUsenetServer).
+  handle('testUsenetServer', async (_event, input, backup) => {
+    const server = await serverFromInput(input, backup === true)
+    const preferences = (await loadSettings()).networkPreferences ?? {}
+    return testUsenetServer(server, await networks.refresh(), preferences)
+  })
 
   handle('updateState', () => updateState())
   handle('showUpdateMenu', () => showUpdateMenu())
