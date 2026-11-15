@@ -77,7 +77,7 @@ import {
   type ParsedNzb
 } from './nzb/nzbFile'
 import { NzbTransfer } from './nzb/nzbTransfer'
-import { postProcess, removeUnpacked } from './nzb/postProcess'
+import { formatGigabytes, postProcess, removeUnpacked } from './nzb/postProcess'
 import { loadUsenetServer, USENET_OFF, usenetEnabled } from './nzb/usenetServer'
 import {
   clearSpeeds,
@@ -409,10 +409,6 @@ async function partialLeftovers(persisted: unknown): Promise<string[]> {
     if (found?.isFile() && found.size === 0) leftovers.push(placeholder)
   }
   return leftovers
-}
-
-function formatGigabytes(bytes: number): string {
-  return `${(bytes / 1024 ** 3).toFixed(2)} GB`
 }
 
 /** The staging file is on the destination volume and becomes the final file by rename. */

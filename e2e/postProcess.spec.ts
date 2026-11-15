@@ -1,5 +1,6 @@
 import { execFileSync, spawnSync } from 'node:child_process'
-import { mkdtemp, readdir, rm, writeFile } from 'node:fs/promises'
+import { randomBytes } from 'node:crypto'
+import { mkdtemp, open, readFile, readdir, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { expect, test } from '@playwright/test'
@@ -87,6 +88,47 @@ test.describe('NZB post-processing, in a folder shared with other files', () => 
       })
       expect(state).toMatchObject({ unpacked: true, unpackedFiles: ['movie.mkv'] })
       expect((await readdir(folder)).sort()).toEqual(['Mine.7z', 'movie.mkv'])
+    } finally {
+      await rm(folder, { recursive: true, force: true })
+    }
+  })
+
+  test('a repair leaves other .par2 files alone, and only its own backups go', async () => {
+    const par2 = spawnSync('par2', ['-V'], { stdio: 'ignore' }).error === undefined
+    test.skip(!par2, 'needs par2')
+    const folder = await mkdtemp(join(tmpdir(), 'plexo-pp-'))
+    try {
+      const run = (...args: string[]): void => {
+        execFileSync('par2', args, { cwd: folder, stdio: 'ignore' })
+      }
+      const movie = randomBytes(64 * 1024)
+      await writeFile(join(folder, 'Rel.mkv'), movie)
+      run('c', '-s4096', '-r20', '-n1', 'Rel.par2', 'Rel.mkv')
+      // The user's: another set beside it, and a file that only looks like one.
+      await writeFile(join(folder, 'mine.txt'), 'the user’s')
+      run('c', '-s4096', '-r20', '-n1', 'Rel.mine.par2', 'mine.txt')
+      await writeFile(join(folder, 'Rel.notes.par2'), 'not a par2 file')
+      const own = (await readdir(folder)).filter((name) => /^Rel(\.vol.*)?\.par2$/.test(name))
+      const before = (await readdir(folder)).sort()
+      // An article that never came: zeros where it belongs.
+      const file = await open(join(folder, 'Rel.mkv'), 'r+')
+      await file.write(Buffer.alloc(4096), 0, 4096, 8192)
+      await file.close()
+
+      const state: NzbPostProcess = {}
+      await postProcess({
+        folder,
+        files: ['Rel.mkv', ...own],
+        missing: 1,
+        state,
+        changed: () => {},
+        checkpoint: async () => {},
+        signal: new AbortController().signal
+      })
+      expect(state.repaired).toBe(true)
+      expect(await readFile(join(folder, 'Rel.mkv'))).toEqual(movie)
+      // No `Rel.mkv.1` left; nothing to unpack, so the download's .par2 files stay too.
+      expect((await readdir(folder)).sort()).toEqual(before)
     } finally {
       await rm(folder, { recursive: true, force: true })
     }

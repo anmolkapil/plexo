@@ -187,9 +187,10 @@ export async function postProcess(job: {
       at('verifying')
       await job.checkpoint()
       for (const set of sets.length > 0 ? sets : par2Files.slice(0, 1)) {
-        // -p: once repaired, the damaged originals par2 keeps (`name.1`) and the .par2 files go.
-        // -B: the names to repair come from the .par2 file; they resolve in the folder only.
-        const args = ['r', '-p', `-B${folder}`, join(folder, set)]
+        // No -p: it would purge every `<base>*.par2` in the folder, not only the NZB's, and before
+        // the unpack has worked. -B: the names to repair come from the .par2 file; they resolve in
+        // the folder only.
+        const args = ['r', `-B${folder}`, join(folder, set)]
         const { code, output } = await runTool(par2, args, signal, (text) =>
           at(
             /Repairing/.test(text) || state.stage === 'repairing' ? 'repairing' : 'verifying',
@@ -202,6 +203,15 @@ export async function postProcess(job: {
           )
         }
         if (code !== 0) throw new Error(`par2 couldn’t repair the download: ${lastLine(output)}`)
+      }
+      // par2 keeps each file it repaired, as it was, as `name.1` (or the next free number): those
+      // of the NZB's own files go, nothing else. The .par2 files go with the archives.
+      const own = new Set(job.files)
+      for (const name of await readdir(folder)) {
+        const original = name.replace(/\.\d+$/, '')
+        if (original !== name && own.has(original) && !saved.has(name)) {
+          await rm(join(folder, name), { force: true })
+        }
       }
       state.repaired = true
       await job.checkpoint()
@@ -246,6 +256,73 @@ async function freeName(folder: string, name: string, taken: Set<string>): Promi
   }
 }
 
+/** Unpacks `archive` into a new, empty staging folder in the download's, with the first tool that
+ * can. Returns that folder; null, with `state.note` saying why, when none could. */
+async function unpackOne(
+  job: Parameters<typeof postProcess>[0],
+  archive: string,
+  at: (stage: NzbPostProcess['stage'], percent?: number) => void
+): Promise<string | null> {
+  const { folder, state, signal } = job
+  const tools: { path: string; args: (into: string) => string[] }[] = []
+  for (const unpacker of UNPACKERS) {
+    const path = unpacker.opens.test(archive) && (await findTool(unpacker.name))
+    if (path) tools.push({ path, args: (into) => unpacker.args(join(folder, archive), into) })
+  }
+  if (tools.length === 0) {
+    state.note = 'Install 7-Zip and Plexo unpacks downloads like this itself.'
+    return null
+  }
+  let failure = ''
+  let into = ''
+  for (const tool of tools) {
+    // Each try from an empty folder: never over what a tool before it left.
+    if (into) await rm(into, { recursive: true, force: true })
+    into = await mkdtemp(join(folder, STAGING))
+    at('unpacking')
+    const { code, output } = await runTool(tool.path, tool.args(into), signal, (text) =>
+      at('unpacking', percentIn(text) ?? state.percent)
+    )
+    if (code === 0) {
+      const odd = await oddEntry(into)
+      failure = odd ? `it holds ${odd}, which isn’t a file or a folder` : ''
+      // Another tool would only make the same link, or one it treats less carefully.
+      break
+    }
+    if (/password/i.test(output)) {
+      state.note = `${archive} is password-protected, which Plexo can’t unpack yet.`
+      return null
+    }
+    failure = lastLine(output)
+  }
+  if (failure) {
+    state.note = `Plexo couldn’t unpack ${archive} (${failure}).`
+    return null
+  }
+  return into
+}
+
+/** Moves what staging folder `into` holds into the download's folder, overwriting nothing: names
+ * taken get " (2)". Each goes in `added`, saved first, so a relaunch knows what to remove. */
+async function moveIn(
+  job: Parameters<typeof postProcess>[0],
+  into: string,
+  added: string[]
+): Promise<void> {
+  const { folder } = job
+  const moves = new Map<string, string>()
+  for (const name of await readdir(into)) {
+    const target = await freeName(folder, name, new Set(moves.values()))
+    moves.set(name, target)
+    added.push(target)
+  }
+  await job.checkpoint()
+  for (const [name, target] of moves) {
+    await renameWithRetry(join(into, name), join(folder, target))
+  }
+  await rm(into, { recursive: true, force: true })
+}
+
 /** Removes the staging folders an unpack cut short left in `folder`, and `added`: what it had
  * moved out of them. Also for a download cancelled after a crash cut its unpack short. */
 export async function removeUnpacked(
@@ -271,7 +348,7 @@ async function unpack(
   par2Files: readonly string[],
   at: (stage: NzbPostProcess['stage'], percent?: number) => void
 ): Promise<void> {
-  const { folder, state, signal } = job
+  const { folder, state } = job
   // Stopped while its archives were deleted: only that is left to do.
   if (state.unpacked) return removeArchives(job, par2Files)
   // An unpack cut short (a quit, a crash): what it got to goes, and it starts over.
@@ -297,54 +374,9 @@ async function unpack(
   let unpacked = false
   try {
     for (const archive of archives) {
-      const tools: { path: string; args: (into: string) => string[] }[] = []
-      for (const unpacker of UNPACKERS) {
-        const path = unpacker.opens.test(archive) && (await findTool(unpacker.name))
-        if (path) tools.push({ path, args: (into) => unpacker.args(join(folder, archive), into) })
-      }
-      if (tools.length === 0) {
-        state.note = 'Install 7-Zip and Plexo unpacks downloads like this itself.'
-        return
-      }
-      let failure = ''
-      let into = ''
-      for (const tool of tools) {
-        // Each try from an empty folder: never over what a tool before it left.
-        if (into) await rm(into, { recursive: true, force: true })
-        into = await mkdtemp(join(folder, STAGING))
-        at('unpacking')
-        const { code, output } = await runTool(tool.path, tool.args(into), signal, (text) =>
-          at('unpacking', percentIn(text) ?? state.percent)
-        )
-        if (code === 0) {
-          const odd = await oddEntry(into)
-          failure = odd ? `it holds ${odd}, which isn’t a file or a folder` : ''
-          // Another tool would only make the same link, or one it treats less carefully.
-          break
-        }
-        if (/password/i.test(output)) {
-          state.note = `${archive} is password-protected, which Plexo can’t unpack yet.`
-          return
-        }
-        failure = lastLine(output)
-      }
-      if (failure) {
-        state.note = `Plexo couldn’t unpack ${archive} (${failure}).`
-        return
-      }
-      // Into the download's folder, overwriting nothing: names taken get " (2)". Saved first, so
-      // a relaunch knows what to remove.
-      const moves = new Map<string, string>()
-      for (const name of await readdir(into)) {
-        const target = await freeName(folder, name, new Set(moves.values()))
-        moves.set(name, target)
-        state.unpackedNames.push(target)
-      }
-      await job.checkpoint()
-      for (const [name, target] of moves) {
-        await renameWithRetry(join(into, name), join(folder, target))
-      }
-      await rm(into, { recursive: true, force: true })
+      const into = await unpackOne(job, archive, at)
+      if (!into) return
+      await moveIn(job, into, state.unpackedNames)
     }
     unpacked = true
   } finally {
@@ -389,6 +421,6 @@ async function removeArchives(
   }
 }
 
-function formatGigabytes(bytes: number): string {
+export function formatGigabytes(bytes: number): string {
   return `${(bytes / 1024 ** 3).toFixed(2)} GB`
 }

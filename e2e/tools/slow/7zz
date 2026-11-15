@@ -1,0 +1,4 @@
+#!/bin/sh
+# The same stand-in under the official 7-Zip's name, which is tried first (on macOS also from
+# Homebrew, outside PATH).
+exec "$(dirname "$0")/7z" "$@"
