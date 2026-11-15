@@ -12,6 +12,7 @@ import {
 } from '../shared/types'
 import { readJson, updateJson } from './jsonFile'
 import { DEFAULT_DOWNLOAD_SCHEDULE, validSchedule } from '../shared/downloadSchedule'
+import { sameProxyEndpoint } from '../shared/proxy'
 
 function settingsPath(): string {
   return join(app.getPath('userData'), 'app-settings.json')
@@ -141,7 +142,9 @@ function passwordsSealed(settings: AppSettings): AppSettings {
 
 /** The networks as the window sends them, each proxy's password as the file will keep it: a new
  * one sealed (or, with no keychain, kept for this session), '' clearing it, and none keeping the
- * one already saved — the window never has it to send back, whichever field it changes. */
+ * one already saved — the window never has it to send back — as long as it's still for the same
+ * proxy and username. Sent with another type, host, port or username, it's dropped: a password
+ * never goes to a proxy it wasn't typed for. */
 function withSavedPasswords(sent: unknown, saved: NetworkPreferences): unknown {
   if (!isRecord(sent)) return sent
   // A network left out is reset: its password goes with it.
@@ -157,12 +160,13 @@ function withSavedPasswords(sent: unknown, saved: NetworkPreferences): unknown {
     // Only a password: nothing sealed comes from the window.
     const fields = { ...value.proxy, password: undefined, sealedPassword: undefined }
     let proxy: Record<string, unknown> = fields
-    if (password === undefined) {
-      const kept = saved[id]?.proxy as SavedProxy | undefined
+    const kept = saved[id]?.proxy as SavedProxy | undefined
+    const next = sanitizeProxyConfig(fields)
+    if (password === undefined && kept && next && sameProxyEndpoint(kept, next)) {
       proxy = {
         ...fields,
-        ...(kept?.sealedPassword && { sealedPassword: kept.sealedPassword }),
-        ...(kept?.password && { password: kept.password })
+        ...(kept.sealedPassword && { sealedPassword: kept.sealedPassword }),
+        ...(kept.password && { password: kept.password })
       }
     } else if (typeof password === 'string' && password !== '') {
       const sealedPassword = seal(password)

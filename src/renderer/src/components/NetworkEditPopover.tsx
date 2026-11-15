@@ -1,3 +1,4 @@
+import { sameProxyEndpoint } from '@shared/proxy'
 import type { NetworkInterfaceKind, ProxyConfig, ProxyType } from '@shared/types'
 import { cn } from 'cn'
 import { Pencil } from 'lucide-react'
@@ -58,23 +59,27 @@ export function NetworkEditPopover({
   const [proxyHost, setProxyHost] = useState('')
   const [proxyPort, setProxyPort] = useState('')
   const [proxyUsername, setProxyUsername] = useState('')
-  // The saved password never comes to the window: left empty, the field keeps it, and Clear
-  // removes it.
+  // The saved password never comes to the window: left empty, the field keeps it, but only for
+  // the proxy and username it was saved for. Clear removes it.
   const [proxyPassword, setProxyPassword] = useState('')
   const [clearPassword, setClearPassword] = useState(false)
-  const savedPassword = preference?.proxy?.hasPassword === true && !clearPassword
+
+  const hostTrimmed = proxyHost.trim()
+  const parsedPort = parseInt(proxyPort.trim(), 10)
+  const defaultPort = proxyType.startsWith('socks') ? 1080 : 8080
+  const port =
+    !isNaN(parsedPort) && parsedPort >= 1 && parsedPort <= 65535 ? parsedPort : defaultPort
+  const username = proxyUsername.trim() || undefined
+  const hasSavedPassword = preference?.proxy?.hasPassword === true && !clearPassword
+  const savedPassword =
+    hasSavedPassword &&
+    sameProxyEndpoint(preference!.proxy!, { type: proxyType, host: hostTrimmed, port, username })
 
   function save(): void {
     const trimmed = draftName.trim().slice(0, MAX_NETWORK_NAME_LENGTH)
     const customName = trimmed && trimmed !== osName ? trimmed : undefined
     // Re-picking the color it already had keeps it automatic instead of pinning it.
     const colorId = draftColorId === visual.colorId ? preference?.colorId : draftColorId
-
-    const hostTrimmed = proxyHost.trim()
-    const parsedPort = parseInt(proxyPort.trim(), 10)
-    const defaultPort = proxyType.startsWith('socks') ? 1080 : 8080
-    const port =
-      !isNaN(parsedPort) && parsedPort >= 1 && parsedPort <= 65535 ? parsedPort : defaultPort
 
     const hasProxyConfig = proxyEnabled || hostTrimmed.length > 0 || preference?.proxy != null
     const proxy: ProxyConfig | undefined = hasProxyConfig
@@ -83,7 +88,7 @@ export function NetworkEditPopover({
           type: proxyType,
           host: hostTrimmed,
           port,
-          username: proxyUsername.trim() || undefined,
+          username,
           password: proxyPassword !== '' ? proxyPassword : clearPassword ? '' : undefined
         }
       : undefined
@@ -342,6 +347,15 @@ export function NetworkEditPopover({
                   />
                 </div>
               </div>
+              {hasSavedPassword &&
+                !savedPassword &&
+                proxyType !== 'socks4' &&
+                proxyPassword === '' && (
+                  <p className="font-sans text-[10.5px] leading-snug text-muted-foreground">
+                    Enter the password again: the saved one only goes to the proxy and username it
+                    was saved for.
+                  </p>
+                )}
               {noKeychain && proxyType !== 'socks4' && (proxyPassword !== '' || savedPassword) && (
                 <p className="font-sans text-[10.5px] leading-snug text-muted-foreground">
                   This computer has no keychain Plexo can use, so the password is kept only until

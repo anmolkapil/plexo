@@ -3,6 +3,7 @@ import { createServer } from 'node:http'
 import { connect, type AddressInfo } from 'node:net'
 import { join } from 'node:path'
 import type { NetworkPreferences, ProxyConfig } from '../src/shared/types'
+import type { Locator } from '@playwright/test'
 import { BLOCK, expect, test, type PlexoApp } from './fixtures'
 
 // A network's proxy password (main/settings.ts) is sealed with the keychain in app-settings.json,
@@ -161,52 +162,111 @@ test.describe('proxy passwords', () => {
     }
   })
 
-  test('the network’s proxy form keeps the saved password, and Clear removes it', async ({
-    plexo
+  test('a saved password goes only to the proxy and username it was saved for', async ({
+    plexo,
+    serve
   }) => {
+    const origin = await serve({ size: 8 * BLOCK })
+    const first = await authProxy()
+    const other = await authProxy()
+    try {
+      await plexo.api.updateSettings({
+        networkPreferences: { a: { proxy: { ...proxyAt(first.port), password: SECRET } } }
+      })
+      // Pointed at another proxy with the password left empty, as the form sends it: dropped.
+      await plexo.api.updateSettings({ networkPreferences: { a: { proxy: proxyAt(other.port) } } })
+      const saved = JSON.parse(await readFile(settingsFile(plexo), 'utf-8'))
+      expect(saved.networkPreferences.a.proxy).toMatchObject({ port: other.port })
+      expect(saved.networkPreferences.a.proxy.password).toBeUndefined()
+      expect(saved.networkPreferences.a.proxy.sealedPassword).toBeUndefined()
+
+      // Turned away for want of a password, it keeps retrying: seen once is enough.
+      const id = await plexo.start(origin.url(), origin.sha256)
+      await expect.poll(() => other.refused(), { timeout: 15_000 }).toBeGreaterThan(0)
+      await plexo.api.pauseDownload(id)
+      expect(other.accepted()).toBe(0)
+      expect(first.accepted()).toBe(0)
+
+      // The same address written with or without IPv6 brackets is the same proxy.
+      if (await canSeal(plexo)) {
+        const at = (host: string): ProxyConfig => ({ ...proxyAt(first.port), host })
+        await plexo.api.updateSettings({
+          networkPreferences: { a: { proxy: { ...at('::1'), password: SECRET } } }
+        })
+        await plexo.api.updateSettings({ networkPreferences: { a: { proxy: at('[::1]') } } })
+        const kept = JSON.parse(await readFile(settingsFile(plexo), 'utf-8'))
+        expect(kept.networkPreferences.a.proxy.sealedPassword).toEqual(expect.any(String))
+      }
+    } finally {
+      await first.close()
+      await other.close()
+    }
+  })
+})
+
+test.describe('the network’s proxy form', () => {
+  test.beforeEach(async ({ plexo }) => {
     test.skip(!(await canSeal(plexo)), 'needs a keychain to keep the password across a launch')
     await plexo.api.updateSettings({
       networkPreferences: { a: { proxy: { ...proxyAt(8080), password: SECRET } } }
     })
     await plexo.relaunch()
-    const sealedPassword = (): Promise<unknown> =>
-      readFile(settingsFile(plexo), 'utf-8').then(
-        (text) => JSON.parse(text).networkPreferences.a.proxy.sealedPassword
-      )
-    const kept = await sealedPassword()
-    expect(kept).toEqual(expect.any(String))
-
+    expect(await savedProxy(plexo)).toMatchObject({ sealedPassword: expect.any(String) })
     await plexo.newDownload()
-    const form = plexo.page.getByRole('dialog', { name: /^Edit / })
-    const open = async (): Promise<void> => {
-      await plexo.page
-        .getByRole('button', { name: /^Configure proxy/ })
-        .first()
-        .click()
-      await expect(form).toBeVisible()
-    }
+  })
 
-    // Another field changed, the password left blank: still the one saved.
-    await open()
+  test('keeps the saved password when another field changes, and Clear removes it', async ({
+    plexo
+  }) => {
+    const { sealedPassword } = await savedProxy(plexo)
+    const form = await openProxyForm(plexo)
     const password = form.getByLabel(/^Password/)
     await expect(password).toHaveValue('')
     await expect(password).toHaveAttribute('placeholder', 'Saved')
-    await form.getByLabel('Port').fill('8081')
+    await form.getByLabel('Name').fill('Office')
     await form.getByRole('button', { name: 'Done' }).click()
     await expect(form).toBeHidden()
-    await expect
-      .poll(() => readFile(settingsFile(plexo), 'utf-8').then((t) => JSON.parse(t)))
-      .toMatchObject({ networkPreferences: { a: { proxy: { port: 8081 } } } })
-    expect(await sealedPassword()).toBe(kept)
+    await expect.poll(() => savedProxy(plexo)).toMatchObject({ sealedPassword })
+    const preferences = JSON.parse(await readFile(settingsFile(plexo), 'utf-8')).networkPreferences
+    expect(preferences.a.customName).toBe('Office')
 
-    await open()
+    await openProxyForm(plexo)
     await form.getByRole('button', { name: 'Clear saved password' }).click()
     await expect(form.getByLabel(/^Password/)).not.toHaveAttribute('placeholder', 'Saved')
     await form.getByRole('button', { name: 'Done' }).click()
     await expect(form).toBeHidden()
-    await expect.poll(sealedPassword).toBeUndefined()
-    const saved = JSON.parse(await readFile(settingsFile(plexo), 'utf-8'))
-    expect(saved.networkPreferences.a.proxy).toMatchObject({ port: 8081, username: USERNAME })
-    expect(saved.networkPreferences.a.proxy.password).toBeUndefined()
+    await expect.poll(() => savedProxy(plexo)).toEqual({ ...proxyAt(8080) })
+  })
+
+  test('drops the saved password when the host changes and none is typed', async ({ plexo }) => {
+    const form = await openProxyForm(plexo)
+    await form.getByLabel('Host / IP').fill('proxy.example.test')
+    const password = form.getByLabel(/^Password/)
+    await expect(password).not.toHaveAttribute('placeholder', 'Saved')
+    await expect(
+      form.getByText(/only goes to the proxy and username it was saved for/)
+    ).toBeVisible()
+    await form.getByRole('button', { name: 'Done' }).click()
+    await expect(form).toBeHidden()
+    await expect
+      .poll(() => savedProxy(plexo))
+      .toEqual({ ...proxyAt(8080), host: 'proxy.example.test' })
+    expect(await readFile(settingsFile(plexo), 'utf-8')).not.toContain(SECRET)
   })
 })
+
+/** Network a's proxy as app-settings.json has it. */
+async function savedProxy(plexo: PlexoApp): Promise<Record<string, unknown>> {
+  return JSON.parse(await readFile(settingsFile(plexo), 'utf-8')).networkPreferences.a.proxy
+}
+
+/** Opens network a's edit form from New download. */
+async function openProxyForm(plexo: PlexoApp): Promise<Locator> {
+  await plexo.page
+    .getByRole('button', { name: /^Configure proxy/ })
+    .first()
+    .click()
+  const form = plexo.page.getByRole('dialog', { name: /^Edit / })
+  await expect(form).toBeVisible()
+  return form
+}

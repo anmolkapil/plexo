@@ -1,4 +1,5 @@
 import { applyDownloadUpdate } from '@shared/downloadUpdate'
+import { sameProxyEndpoint } from '@shared/proxy'
 import type {
   AppSettings,
   DownloadSchedule,
@@ -126,7 +127,7 @@ function persist(patch: AppSettings): void {
 }
 
 /** A proxy as the window keeps it once saved: whether it has a password, not the password. None
- * sent keeps the one it had. */
+ * sent keeps the one it had, if main kept it: for the same proxy and username only. */
 function withoutPassword({ password, ...proxy }: ProxyConfig, had: boolean): ProxyConfig {
   return { ...proxy, hasPassword: password === undefined ? had : password !== '' }
 }
@@ -201,7 +202,11 @@ export const useAppStore = create<AppStore>((set, get) => ({
     const preference = { ...preferences[id], ...patch }
     // A proxy password goes to main, which seals it: the window keeps only that there is one, so
     // what it sends next, with no password, keeps it.
-    const had = preferences[id]?.proxy?.hasPassword === true
+    const before = preferences[id]?.proxy
+    const had =
+      before?.hasPassword === true &&
+      preference.proxy !== undefined &&
+      sameProxyEndpoint(before, preference.proxy)
     const shown = preference.proxy
       ? { ...preference, proxy: withoutPassword(preference.proxy, had) }
       : preference
