@@ -158,9 +158,13 @@ function FolderRow({
 }): React.JSX.Element {
   // The name ticks the folder's box, as a file's name ticks its own: the box and the name are a
   // label, and the folder icon beside them, outside it, opens and shuts the folder. The icon sits
-  // above the box's wider click area, which would otherwise reach over its right edge.
+  // above the box's wider click area, which would otherwise reach over its right edge. The row is
+  // isolated so that lift stays inside it: the icon doesn't paint over a bar the list scrolls under.
   return (
-    <div className="flex items-center gap-1.5 py-0.5" style={{ paddingLeft: indent(node.depth) }}>
+    <div
+      className="isolate flex items-center gap-1.5 py-0.5"
+      style={{ paddingLeft: indent(node.depth) }}
+    >
       <button
         type="button"
         onClick={onToggle}
