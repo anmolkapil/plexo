@@ -145,14 +145,24 @@ function helperSocketError(code: string): NodeJS.ErrnoException {
     ENETUNREACH: 'Network unreachable',
     EADDRNOTAVAIL: 'Address not available',
     EACCES: 'Permission denied',
-    ECONNRESET: 'Connection reset'
+    ECONNRESET: 'Connection reset',
+    ENODEV: 'Selected network adapter not found'
   }
   const error = new Error(messages[code] ?? `Windows route helper: ${code}`) as NodeJS.ErrnoException
   error.code = code
   return error
 }
 
-/** Open a Windows IPv4 socket through IP_UNICAST_IF, falling back only if the helper cannot start. */
+/** Log the confirmed Windows adapter binding once per local address, not once per chunk. */
+const loggedWindowsBindings = new Set<string>()
+function logWindowsRouting(route: NetworkRoute, index: number): void {
+  const key = `${route.localAddress}/${index}`
+  if (loggedWindowsBindings.has(key)) return
+  loggedWindowsBindings.add(key)
+  console.info(`Windows route: ${route.device} (${route.localAddress}) using IP_UNICAST_IF ${index}`)
+}
+
+/** Open a Windows IPv4 socket through IP_UNICAST_IF, with safe fallback if unavailable. */
 export async function connectRouteAsync(
   route: NetworkRoute,
   port: number,
@@ -168,10 +178,7 @@ export async function connectRouteAsync(
   ) {
     return plain()
   }
-  if (!route.interfaceIndex) {
-    warnWindowsRoutingFallback('missing adapter index')
-    return plain()
-  }
+  // No cached InterfaceIndex is needed: the helper derives it from localAddress.
 
   let helper: { port: number; token: string }
   try {
@@ -193,7 +200,8 @@ export async function connectRouteAsync(
       remoteAddress: route.remoteAddress,
       remotePort: port,
       localAddress: route.localAddress,
-      interfaceIndex: route.interfaceIndex
+      // The helper resolves the current interface index from this source IP.
+      // Older callers may still send InterfaceIndex, but it is no longer authoritative.
     })
 
     await new Promise<void>((resolve, reject) => {
@@ -222,10 +230,15 @@ export async function connectRouteAsync(
         const eol = response.indexOf(10)
         if (eol < 0) return
         const status = response.subarray(0, eol).toString('ascii').trim()
-        if (status !== 'OK') {
+        const success = /^OK (\d+)$/.exec(status)
+        if (!success) {
           const match = /^ERR (E[A-Z0-9_]+)$/.exec(status)
-          return finish(match ? helperSocketError(match[1]) : new Error('Windows route helper refused connection'))
+          return finish(
+            match ? helperSocketError(match[1]) : new Error('Windows route helper refused connection')
+          )
         }
+        const interfaceIndex = Number(success[1])
+        logWindowsRouting(route, interfaceIndex)
         const leftover = response.subarray(eol + 1)
         if (leftover.length) socket.unshift(leftover)
         finish()
@@ -244,6 +257,15 @@ export async function connectRouteAsync(
     return socket
   } catch (error) {
     socket.destroy()
+    // An adapter/IP that has disappeared is not a reason to break all Windows downloads.
+    if ((error as NodeJS.ErrnoException).code === 'ENODEV') {
+      if (signal?.aborted) throw abortError()
+      warnWindowsRoutingFallback('source IP is no longer assigned to an adapter')
+      return plain()
+    }
+    if (process.env.PLEXO_ROUTE_DEBUG === '1') {
+      console.warn('Windows route helper connection failed:', route.device, error)
+    }
     throw error
   }
 }

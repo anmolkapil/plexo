@@ -4,7 +4,8 @@ on:
   pull_request:
     branches: [main]
   push:
-    branches: [main]
+    # Run CI on the PR author fork while upstream approval is pending.
+    branches: [main, fix/windows-ip-unicast-if]
 
 # A second push to a PR makes the first run's answer irrelevant, so don't
 # spend a runner finishing it.

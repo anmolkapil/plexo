@@ -11,7 +11,7 @@ import { isIP, type Socket } from 'node:net'
 import { connect as tlsConnect } from 'node:tls'
 import type { Duplex } from 'node:stream'
 import type { IpFamily, NetworkInterfaceInfo, ProxyConfig } from '../../shared/types'
-import { connectRoute, connectRouteAsync, warnWindowsRoutingFallback } from './deviceBinding'
+import { connectRoute, connectRouteAsync } from './deviceBinding'
 import { createProxyConnection } from './proxyTunnel'
 
 export interface NetworkRoute {
@@ -366,18 +366,15 @@ async function connectOnInterface(
       clearTimeout(stagger)
       if (done || next >= routes.length) return
       const route = routes[next++]
+      // The native helper looks up the interface index from the source IPv4 address.
+      // Do not fall back just because PowerShell did not provide an InterfaceIndex.
       const windowsHelper =
         process.platform === 'win32' &&
         route.family === 4 &&
-        !route.remoteAddress.startsWith('127.') &&
-        Boolean(route.interfaceIndex)
-
-      if (process.platform === 'win32' && route.family === 4 && !route.interfaceIndex) {
-        warnWindowsRoutingFallback('missing adapter index')
-      }
+        !route.remoteAddress.startsWith('127.')
 
       if (!windowsHelper) {
-        // Keep main's synchronous behavior on Linux/macOS and when Windows has no index.
+        // Keep main's synchronous behavior off Windows and for loopback destinations.
         connectedTcp(route, connectRoute(route, port), false)
       } else {
         const controller = new AbortController()

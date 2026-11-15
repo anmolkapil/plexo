@@ -1,4 +1,5 @@
 using System.Net;
+using System.Net.NetworkInformation;
 using System.Net.Sockets;
 using System.Text;
 using System.Text.Json;
@@ -8,7 +9,7 @@ internal static class Program
     private const int IpUnicastIf = 31;
     private const int MaxHeader = 4096;
 
-    private record RouteRequest(string Token, string RemoteAddress, int RemotePort, string LocalAddress, int InterfaceIndex);
+    private record RouteRequest(string Token, string RemoteAddress, int RemotePort, string LocalAddress);
 
     private static async Task Main()
     {
@@ -48,6 +49,20 @@ internal static class Program
             shutdown.Cancel();
             listener.Stop();
         }
+    }
+
+    // The address chosen in Plexo, not a cached PowerShell result, is the source of truth.
+    // This also handles adapters that are renamed or reconnect while Plexo is running.
+    private static int InterfaceIndexFor(IPAddress source)
+    {
+        foreach (var nic in NetworkInterface.GetAllNetworkInterfaces())
+        {
+            var properties = nic.GetIPProperties();
+            if (!properties.UnicastAddresses.Any(address => address.Address.Equals(source))) continue;
+            var index = properties.GetIPv4Properties()?.Index ?? 0;
+            if (index > 0) return index;
+        }
+        return 0;
     }
 
     private static string NodeError(SocketError error) => error switch
@@ -108,19 +123,25 @@ internal static class Program
                 var request = JsonSerializer.Deserialize<RouteRequest>(header.ToArray(),
                     new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
                 if (request == null || request.Token != token) return;
-                if (request.RemotePort is < 1 or > 65535 || request.InterfaceIndex < 1) return;
+                if (request.RemotePort is < 1 or > 65535) return;
                 var remote = IPAddress.Parse(request.RemoteAddress);
                 var local = IPAddress.Parse(request.LocalAddress);
                 if (remote.AddressFamily != AddressFamily.InterNetwork ||
                     local.AddressFamily != AddressFamily.InterNetwork) return;
 
+                var interfaceIndex = InterfaceIndexFor(local);
+                if (interfaceIndex < 1)
+                {
+                    await WriteError(client, "ENODEV");
+                    return;
+                }
                 using var outbound = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp);
                 outbound.NoDelay = true;
                 outbound.SetSocketOption(SocketOptionLevel.IP, (SocketOptionName)IpUnicastIf,
-                    IPAddress.HostToNetworkOrder(request.InterfaceIndex));
+                    IPAddress.HostToNetworkOrder(interfaceIndex));
                 outbound.Bind(new IPEndPoint(local, 0));
                 await outbound.ConnectAsync(new IPEndPoint(remote, request.RemotePort), timeout.Token);
-                await inbound.WriteAsync(Encoding.ASCII.GetBytes("OK\n"), timeout.Token);
+                await inbound.WriteAsync(Encoding.ASCII.GetBytes($"OK {interfaceIndex}\n"), timeout.Token);
                 acknowledged = true;
 
                 using var outgoing = new NetworkStream(outbound, ownsSocket: false);
