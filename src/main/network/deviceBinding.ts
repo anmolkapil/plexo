@@ -91,62 +91,155 @@ export function connectRoute(route: NetworkRoute, port: number): Socket {
   })
 }
 
-/** Windows needs per-socket IP_UNICAST_IF; Node's localAddress alone cannot select its route. */
-export async function connectRouteAsync(route: NetworkRoute, port: number): Promise<Socket> {
-  if (process.platform !== 'win32' || route.family !== 4) {
-    const socket = connectRoute(route, port)
-    await new Promise<void>((resolve, reject) => {
-      if (socket.readyState === 'open') return resolve()
-      socket.once('connect', resolve)
-      socket.once('error', reject)
-    })
-    return socket
-  }
-  if (!route.interfaceIndex) throw new Error('Windows adapter InterfaceIndex is unavailable')
-  const { startWindowsRouteHelper } = await import('./windowsRouteHelper')
-  const { port: helperPort, token } = await startWindowsRouteHelper()
-  const socket = connect({ host: '127.0.0.1', port: helperPort })
+/** Warn once per process; a missing helper must never block an otherwise ordinary download. */
+let warnedWindowsFallback = false
+export function warnWindowsRoutingFallback(reason: string): void {
+  if (warnedWindowsFallback) return
+  warnedWindowsFallback = true
+  console.warn(`Windows per-interface routing unavailable (${reason}); falling back to localAddress`)
+}
+
+const abortError = (): DOMException => new DOMException('Aborted', 'AbortError')
+
+/** Wait for the TCP handshake without leaving an untracked socket behind on abort. */
+async function waitForTcpConnect(socket: Socket, signal?: AbortSignal): Promise<Socket> {
   try {
     await new Promise<void>((resolve, reject) => {
-      socket.once('connect', resolve)
-      socket.once('error', reject)
+      let settled = false
+      const finish = (error?: Error): void => {
+        if (settled) return
+        settled = true
+        socket.off('connect', onConnect)
+        socket.off('error', onError)
+        socket.off('close', onClose)
+        signal?.removeEventListener('abort', onAbort)
+        if (error) reject(error)
+        else resolve()
+      }
+      const onConnect = (): void => finish()
+      const onError = (error: Error): void => finish(error)
+      const onClose = (): void => finish(new Error('TCP connection closed'))
+      const onAbort = (): void => {
+        socket.destroy()
+        finish(abortError())
+      }
+      if (signal?.aborted) return onAbort()
+      socket.once('connect', onConnect)
+      socket.once('error', onError)
+      socket.once('close', onClose)
+      signal?.addEventListener('abort', onAbort, { once: true })
+      if (!socket.connecting && socket.readyState === 'open') onConnect()
     })
+    return socket
+  } catch (error) {
+    socket.destroy()
+    throw error
+  }
+}
+
+function helperSocketError(code: string): NodeJS.ErrnoException {
+  const messages: Record<string, string> = {
+    ECONNREFUSED: 'Connection refused',
+    ETIMEDOUT: 'Connection timed out',
+    EHOSTUNREACH: 'Host unreachable',
+    ENETUNREACH: 'Network unreachable',
+    EADDRNOTAVAIL: 'Address not available',
+    EACCES: 'Permission denied',
+    ECONNRESET: 'Connection reset'
+  }
+  const error = new Error(messages[code] ?? `Windows route helper: ${code}`) as NodeJS.ErrnoException
+  error.code = code
+  return error
+}
+
+/** Open a Windows IPv4 socket through IP_UNICAST_IF, falling back only if the helper cannot start. */
+export async function connectRouteAsync(
+  route: NetworkRoute,
+  port: number,
+  signal?: AbortSignal
+): Promise<Socket> {
+  const plain = (): Promise<Socket> => waitForTcpConnect(connectRoute(route, port), signal)
+  if (signal?.aborted) throw abortError()
+  if (
+    process.platform !== 'win32' ||
+    route.family !== 4 ||
+    route.remoteAddress.startsWith('127.') ||
+    route.remoteAddress === '::1'
+  ) {
+    return plain()
+  }
+  if (!route.interfaceIndex) {
+    warnWindowsRoutingFallback('missing adapter index')
+    return plain()
+  }
+
+  let helper: { port: number; token: string }
+  try {
+    const { startWindowsRouteHelper } = await import('./windowsRouteHelper')
+    helper = await startWindowsRouteHelper()
+  } catch (error) {
+    if (signal?.aborted) throw abortError()
+    warnWindowsRoutingFallback(error instanceof Error ? error.message : String(error))
+    return plain()
+  }
+  if (signal?.aborted) throw abortError()
+
+  const socket = connect({ host: '127.0.0.1', port: helper.port })
+  try {
+    await waitForTcpConnect(socket, signal)
+    if (signal?.aborted) throw abortError()
     const header = JSON.stringify({
-      token,
+      token: helper.token,
       remoteAddress: route.remoteAddress,
       remotePort: port,
       localAddress: route.localAddress,
       interfaceIndex: route.interfaceIndex
     })
-    socket.write(header + '\n')
+
     await new Promise<void>((resolve, reject) => {
+      let settled = false
       let response = Buffer.alloc(0)
-      const timeout = setTimeout(() => finish(new Error('Windows route helper timed out')), 10000)
       const finish = (error?: Error): void => {
-        clearTimeout(timeout)
+        if (settled) return
+        settled = true
+        clearTimeout(timer)
         socket.off('data', onData)
         socket.off('error', onError)
         socket.off('close', onClose)
+        signal?.removeEventListener('abort', onAbort)
         if (error) reject(error)
         else resolve()
       }
       const onError = (error: Error): void => finish(error)
       const onClose = (): void => finish(new Error('Windows route helper disconnected'))
+      const onAbort = (): void => {
+        socket.destroy()
+        finish(abortError())
+      }
       const onData = (chunk: Buffer): void => {
         response = Buffer.concat([response, chunk])
         if (response.length > 4096) return finish(new Error('Invalid helper response'))
         const eol = response.indexOf(10)
         if (eol < 0) return
-        if (response.subarray(0, eol).toString('ascii') !== 'OK') {
-          return finish(new Error('Windows route helper refused connection'))
+        const status = response.subarray(0, eol).toString('ascii').trim()
+        if (status !== 'OK') {
+          const match = /^ERR (E[A-Z0-9_]+)$/.exec(status)
+          return finish(match ? helperSocketError(match[1]) : new Error('Windows route helper refused connection'))
         }
         const leftover = response.subarray(eol + 1)
         if (leftover.length) socket.unshift(leftover)
         finish()
       }
+      const timer = setTimeout(
+        () => finish(helperSocketError('ETIMEDOUT')),
+        10000
+      )
+      if (signal?.aborted) return onAbort()
       socket.on('data', onData)
       socket.once('error', onError)
       socket.once('close', onClose)
+      signal?.addEventListener('abort', onAbort, { once: true })
+      socket.write(header + '\n')
     })
     return socket
   } catch (error) {

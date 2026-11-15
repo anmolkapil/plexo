@@ -112,7 +112,7 @@ export function ipv4Subnet(address: string, netmask: string): string | null {
  * takes a child process, while the addresses themselves are one cheap system call. */
 let labels: {
   devices: string
-  refreshedAt: number
+  // Cached until the network interfaces or their IP addresses change.
   lookup: Promise<[Map<string, string>, Map<string, WindowsAdapter>, Map<string, LinuxAdapter>]>
 } | null = null
 
@@ -124,15 +124,13 @@ export async function listActiveInterfaces(): Promise<NetworkInterfaceInfo[]> {
   if (overridden) return overridden
 
   const all = networkInterfaces()
-  const devices = Object.keys(all).sort().join('\n')
-  // Refresh Windows InterfaceIndex even if the set of adapter names is unchanged.
-  if (
-    labels?.devices !== devices ||
-    (process.platform === 'win32' && Date.now() - labels.refreshedAt > 15000)
-  ) {
+  const devices = Object.entries(all)
+    .map(([name, addresses]) => `${name}: ${(addresses ?? []).map((address) => address.address).join(',')}`)
+    .sort()
+    .join('\n')
+  if (labels?.devices !== devices) {
     labels = {
       devices,
-      refreshedAt: Date.now(),
       lookup: Promise.all([getMacHardwarePortNames(), getWindowsAdapters(), getLinuxAdapters()])
     }
   }

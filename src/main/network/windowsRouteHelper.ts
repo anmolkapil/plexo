@@ -10,35 +10,42 @@ let ready: Promise<{ port: number; token: string }> | null = null
 export function startWindowsRouteHelper(): Promise<{ port: number; token: string }> {
   if (process.platform !== 'win32') return Promise.reject(new Error('Windows only'))
   if (ready) return ready
+
+  const project = join(app.getAppPath(), 'PlexoWinRoute', 'PlexoWinRoute.csproj')
+  const executable = join(process.resourcesPath, 'PlexoWinRoute', 'PlexoWinRoute.exe')
+  if (app.isPackaged && !existsSync(executable)) {
+    return Promise.reject(new Error('PlexoWinRoute executable was not packaged'))
+  }
+
+  const token = randomBytes(32).toString('hex')
+  const command = app.isPackaged ? executable : 'dotnet'
+  const args = app.isPackaged ? [] : ['run', '--project', project]
   ready = new Promise((resolve, reject) => {
-    const token = randomBytes(32).toString('hex')
-    const project = join(app.getAppPath(), 'PlexoWinRoute', 'PlexoWinRoute.csproj')
-    const executable = join(
-      process.resourcesPath,
-      'PlexoWinRoute',
-      process.arch === 'arm64' ? 'win-arm64' : 'win-x64',
-      'PlexoWinRoute.exe'
-    )
-    const command = app.isPackaged ? executable : 'dotnet'
-    if (app.isPackaged && !existsSync(executable)) {
-      reject(new Error('PlexoWinRoute executable was not packaged'))
-      return
-    }
-    const args = app.isPackaged ? [token] : ['run', '--project', project, '--', token]
-    const processHandle = spawn(command, args, { windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] })
+    const processHandle = spawn(command, args, {
+      windowsHide: true,
+      stdio: ['pipe', 'pipe', 'pipe']
+    })
     child = processHandle
     let settled = false
     let output = ''
-    const timeout = setTimeout(() => finish(new Error('Windows route helper startup timed out')), 10000)
+    const timeout = setTimeout(
+      () => finish(new Error('Windows route helper startup timed out')),
+      app.isPackaged ? 10000 : 30000
+    )
     const finish = (error?: Error, port?: number): void => {
       if (settled) return
       settled = true
       clearTimeout(timeout)
       if (error || !port) {
         processHandle.kill()
-        ready = null
+        if (child === processHandle) {
+          child = null
+          ready = null
+        }
         reject(error ?? new Error('Invalid helper port'))
-      } else resolve({ port, token })
+      } else {
+        resolve({ port, token })
+      }
     }
     processHandle.stdout?.on('data', (chunk: Buffer) => {
       output += chunk.toString('utf8')
@@ -46,18 +53,24 @@ export function startWindowsRouteHelper(): Promise<{ port: number; token: string
       if (match) finish(undefined, Number(match[1]))
       if (output.length > 8192) output = output.slice(-8192)
     })
-    processHandle.on('error', (err) => finish(err))
+    processHandle.on('error', (error) => finish(error))
     processHandle.on('exit', () => {
       if (!settled) finish(new Error('Windows route helper exited'))
-      ready = null
-      if (child === processHandle) child = null
+      if (child === processHandle) {
+        child = null
+        ready = null
+      }
     })
+    processHandle.stdin?.on('error', (error) => finish(error))
+    processHandle.stdin?.write(token + '\n')
   })
   return ready
 }
 
 export function stopWindowsRouteHelper(): void {
-  child?.kill()
+  const processHandle = child
   child = null
   ready = null
+  processHandle?.stdin?.end()
+  processHandle?.kill()
 }

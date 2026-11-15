@@ -25,10 +25,8 @@ asarUnpack:
   - resources/**
 win:
   extraResources:
-    - from: PlexoWinRoute/publish/win-x64/PlexoWinRoute.exe
-      to: PlexoWinRoute/win-x64/PlexoWinRoute.exe
-    - from: PlexoWinRoute/publish/win-arm64/PlexoWinRoute.exe
-      to: PlexoWinRoute/win-arm64/PlexoWinRoute.exe
+    - from: PlexoWinRoute/publish/win-${arch}/PlexoWinRoute.exe
+      to: PlexoWinRoute/PlexoWinRoute.exe
   # No protocols or fileAssociations: the NSIS installer would register Plexo as *the* handler for
   # magnet links and .torrent files, taking them from a torrent client the user already has.
   # A .torrent can still be opened with Plexo through "Open with".

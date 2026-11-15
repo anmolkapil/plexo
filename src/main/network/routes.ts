@@ -11,7 +11,7 @@ import { isIP, type Socket } from 'node:net'
 import { connect as tlsConnect } from 'node:tls'
 import type { Duplex } from 'node:stream'
 import type { IpFamily, NetworkInterfaceInfo, ProxyConfig } from '../../shared/types'
-import { connectRouteAsync } from './deviceBinding'
+import { connectRoute, connectRouteAsync, warnWindowsRoutingFallback } from './deviceBinding'
 import { createProxyConnection } from './proxyTunnel'
 
 export interface NetworkRoute {
@@ -280,7 +280,7 @@ async function connectOnInterface(
 
   return new Promise<Socket>((resolve, reject) => {
     const racing = new Set<{ tcp: Socket; socket: Socket }>()
-    let connecting = 0
+    const pending = new Set<AbortController>()
     let next = 0
     let done = false
     let lastError: Error = new Error('Connection failed')
@@ -292,6 +292,8 @@ async function connectOnInterface(
       clearTimeout(stagger)
       clearTimeout(timer)
       signal.removeEventListener('abort', onAbort)
+      for (const controller of pending) controller.abort()
+      pending.clear()
       for (const { tcp, socket } of racing) {
         socket.destroy()
         tcp.destroy()
@@ -306,58 +308,91 @@ async function connectOnInterface(
       Math.max(1, deadline - Date.now())
     )
 
+    const fail = (route: NetworkRoute, error: Error): void => {
+      if (done) return
+      lastError = error
+      if (lastGoodRoute.get(memory) === routeKey(route)) lastGoodRoute.delete(memory)
+      if (next < routes.length) launch()
+      else if (racing.size === 0 && pending.size === 0) finish(lastError)
+    }
+
+    const connectedTcp = (route: NetworkRoute, tcp: Socket, alreadyConnected: boolean): void => {
+      if (done) {
+        tcp.destroy()
+        return
+      }
+      let socket: Socket
+      try {
+        socket = secure ? secure(tcp) : tcp
+      } catch (error) {
+        tcp.destroy()
+        fail(route, error instanceof Error ? error : new Error(String(error)))
+        return
+      }
+      const entry = { tcp, socket }
+      racing.add(entry)
+      const connected = secure ? 'secureConnect' : 'connect'
+
+      const detach = (): void => {
+        socket.off(connected, onConnected)
+        socket.off('error', onError)
+        tcp.off('error', onError)
+        racing.delete(entry)
+      }
+      const onConnected = (): void => {
+        detach()
+        if (done) {
+          socket.destroy()
+          tcp.destroy()
+          return
+        }
+        lastGoodRoute.set(memory, routeKey(route))
+        finish(null, socket)
+      }
+      const onError = (error: Error): void => {
+        detach()
+        socket.destroy()
+        tcp.destroy()
+        fail(route, error)
+      }
+      socket.once(connected, onConnected)
+      // The helper's TCP handshake is already complete when its promise resolves.
+      if (!secure && alreadyConnected) queueMicrotask(onConnected)
+      socket.once('error', onError)
+      if (tcp !== socket) tcp.once('error', onError)
+    }
+
     const launch = (): void => {
       clearTimeout(stagger)
       if (done || next >= routes.length) return
       const route = routes[next++]
-      connecting++
-      void connectRouteAsync(route, port)
-        .then((tcp) => {
-          connecting--
-          if (done) {
-            tcp.destroy()
-            return
-          }
-          const socket = secure ? secure(tcp) : tcp
-          const entry = { tcp, socket }
-          racing.add(entry)
-          const connected = secure ? 'secureConnect' : 'connect'
+      const windowsHelper =
+        process.platform === 'win32' &&
+        route.family === 4 &&
+        !route.remoteAddress.startsWith('127.') &&
+        Boolean(route.interfaceIndex)
 
-          const detach = (): void => {
-            socket.off(connected, onConnected)
-            socket.off('error', onError)
-            tcp.off('error', onError)
-            racing.delete(entry)
+      if (process.platform === 'win32' && route.family === 4 && !route.interfaceIndex) {
+        warnWindowsRoutingFallback('missing adapter index')
+      }
+
+      if (!windowsHelper) {
+        // Keep main's synchronous behavior on Linux/macOS and when Windows has no index.
+        connectedTcp(route, connectRoute(route, port), false)
+      } else {
+        const controller = new AbortController()
+        pending.add(controller)
+        void connectRouteAsync(route, port, controller.signal).then(
+          (tcp) => {
+            pending.delete(controller)
+            connectedTcp(route, tcp, true)
+          },
+          (error: Error) => {
+            pending.delete(controller)
+            fail(route, error)
           }
-          const onConnected = (): void => {
-            detach()
-            lastGoodRoute.set(memory, routeKey(route))
-            finish(null, socket)
-          }
-          const onError = (error: Error): void => {
-            detach()
-            socket.destroy()
-            tcp.destroy()
-            lastError = error
-            if (lastGoodRoute.get(memory) === routeKey(route)) lastGoodRoute.delete(memory)
-            // A route that fails hands over at once rather than after its delay.
-            if (next < routes.length) launch()
-            else if (racing.size === 0 && connecting === 0) finish(lastError)
-          }
-          socket.once(connected, onConnected)
-          if (!secure) queueMicrotask(onConnected)
-          // A refused TCP connection is reported on the raw socket, not always on its TLS wrapper.
-          socket.once('error', onError)
-          tcp.once('error', onError)
-        })
-        .catch((error: Error) => {
-          connecting--
-          lastError = error
-          if (done) return
-          if (lastGoodRoute.get(memory) === routeKey(route)) lastGoodRoute.delete(memory)
-          if (next < routes.length) launch()
-          else if (racing.size === 0 && connecting === 0) finish(lastError)
-        })
+        )
+      }
       if (next < routes.length) stagger = setTimeout(launch, ATTEMPT_DELAY_MS)
     }
 
