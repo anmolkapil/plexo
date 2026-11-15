@@ -3,8 +3,8 @@ import { open } from 'node:fs/promises'
 import type { NzbProbeResult, NzbSegmentState } from '../../../shared/types'
 import { STRIPPED_FROM_NAMES } from '../torrent/paths'
 
-/** An NZB is a list of message IDs; a few MB for even a large release. A file or link much
- * larger than this isn't one. */
+/** An NZB is a list of message IDs; a few MB for even a large release, and 64 MB lists about
+ * 500 GB of articles. A file or link much larger than this isn't one. */
 const MAX_NZB_FILE_BYTES = 64 * 1024 * 1024
 const TOO_LARGE = 'Plexo supports NZB files up to 64 MB.'
 const NOT_NZB = 'This isn’t an NZB file Plexo can read'
@@ -45,27 +45,188 @@ function decodeEntities(text: string): string {
   })
 }
 
+/** `name="value"` or `name='value'` pairs, by lowercased name. A name that isn't followed by a
+ * value is passed over whole: trying it again from each of its characters (as one regex over
+ * `source` would) takes time that grows with the square of its length. */
 function attributes(source: string): Map<string, string> {
   const found = new Map<string, string>()
-  for (const match of source.matchAll(/([\w:-]+)\s*=\s*(?:"([^"]*)"|'([^']*)')/g)) {
-    found.set(match[1].toLowerCase(), decodeEntities(match[2] ?? match[3]))
+  const name = /[\w:-]+/g
+  const value = /\s*=\s*(?:"([^"]*)"|'([^']*)')/y
+  for (let match = name.exec(source); match; match = name.exec(source)) {
+    value.lastIndex = name.lastIndex
+    const assigned = value.exec(source)
+    if (!assigned) continue
+    found.set(match[0].toLowerCase(), decodeEntities(assigned[1] ?? assigned[2]))
+    name.lastIndex = value.lastIndex
   }
   return found
 }
 
-/** Every `<tag …>…</tag>` in `xml`, prefixed or not: its attributes and what's inside. */
+/**
+ * Where a start tag ends, given where its attributes begin: at its first `>` outside quotes (an
+ * attribute's quoted value may hold a `>`: XML allows it unescaped, and subjects do), or -1 when
+ * a quote is never closed or no `>` follows.
+ *
+ * One file asks this of every start tag in it, in order, so each answer is kept for the next:
+ * past an opening quote, every search goes the same way, so a later one that reaches a quote an
+ * earlier one went through takes its answer, rather than reading the rest of the file again.
+ */
+function startTagEnds(xml: string): (from: number) => number {
+  const special = /[>"']/g
+  const nextSpecial = (from: number): number => {
+    special.lastIndex = from
+    return special.exec(xml)?.index ?? -1
+  }
+  // The first `>` or quote at or after `searchedFrom`. Start tags come in order, so it stays the
+  // answer for each one that begins before it.
+  let searchedFrom = Infinity
+  let found = -1
+  const fromQuote = new Map<number, number>()
+  return (from) => {
+    if (from < searchedFrom || (found !== -1 && from > found)) {
+      searchedFrom = from
+      found = nextSpecial(from)
+    }
+    const entered: number[] = []
+    let end = -1
+    for (let at = found; at !== -1;) {
+      if (xml[at] === '>') {
+        end = at
+        break
+      }
+      const known = fromQuote.get(at)
+      if (known !== undefined) {
+        end = known
+        break
+      }
+      entered.push(at)
+      const closed = xml.indexOf(xml[at], at + 1)
+      at = closed === -1 ? -1 : nextSpecial(closed + 1)
+    }
+    for (const quote of entered) fromQuote.set(quote, end)
+    return end
+  }
+}
+
+/** Where each `</tag>` (prefixed or not) in `xml` begins and ends, in order. */
+function closingTags(xml: string, tag: string): { starts: number[]; ends: number[] } {
+  const closing = new RegExp(`</(?:[\\w-]+:)?${tag}\\s*>`, 'iy')
+  const starts: number[] = []
+  const ends: number[] = []
+  for (let at = xml.indexOf('</'); at !== -1; at = xml.indexOf('</', at + 2)) {
+    closing.lastIndex = at
+    if (closing.test(xml)) {
+      starts.push(at)
+      ends.push(closing.lastIndex)
+    }
+  }
+  return { starts, ends }
+}
+
+/** The index of the first of `sorted` at or past `value`; `sorted.length` when there's none. */
+function firstFrom(sorted: number[], value: number): number {
+  let low = 0
+  let high = sorted.length
+  while (low < high) {
+    const middle = (low + high) >>> 1
+    if (sorted[middle] < value) low = middle + 1
+    else high = middle
+  }
+  return low
+}
+
+/**
+ * Every `<tag …>…</tag>` and `<tag …/>` in `xml`, prefixed or not: its attributes and what's
+ * inside, up to the first closing tag after it. One that never ends is passed over, and the next
+ * is looked for from just after its `<`.
+ *
+ * What one regex over the file found, but in time that grows with the file rather than with its
+ * square: that regex looked for each element's end from its start, so a file of many unclosed
+ * tags had it read the rest of the file again for every one of them.
+ */
 function* elements(
   xml: string,
   tag: string
 ): Generator<{ attrs: Map<string, string>; body: string }> {
-  // An attribute's quoted value may hold a `>`: XML allows it unescaped, and subjects do.
-  const pattern = new RegExp(
-    `<(?:[\\w-]+:)?${tag}\\b((?:[^>"']|"[^"]*"|'[^']*')*?)(?:/>|>([\\s\\S]*?)</(?:[\\w-]+:)?${tag}\\s*>)`,
-    'gi'
-  )
-  for (const match of xml.matchAll(pattern)) {
-    yield { attrs: attributes(match[1]), body: match[2] ?? '' }
+  const name = new RegExp(`(?:[\\w-]+:)?${tag}\\b`, 'iy')
+  const startTagEnd = startTagEnds(xml)
+  let closing: ReturnType<typeof closingTags> | undefined
+  for (let at = xml.indexOf('<'); at !== -1; at = xml.indexOf('<', at)) {
+    name.lastIndex = at + 1
+    if (!name.test(xml)) {
+      at++
+      continue
+    }
+    const attrsStart = name.lastIndex
+    const end = startTagEnd(attrsStart)
+    if (end !== -1 && xml[end - 1] === '/') {
+      yield { attrs: attributes(xml.slice(attrsStart, end - 1)), body: '' }
+      at = end + 1
+      continue
+    }
+    closing ??= closingTags(xml, tag)
+    const close = end === -1 ? -1 : firstFrom(closing.starts, end + 1)
+    if (close === -1 || close === closing.starts.length) {
+      at++
+      continue
+    }
+    yield {
+      attrs: attributes(xml.slice(attrsStart, end)),
+      body: xml.slice(end + 1, closing.starts[close])
+    }
+    at = closing.ends[close]
   }
+}
+
+/** `text` with each `open … close` span (the first `close` after it) put through `replace`. One
+ * left open is left as it is, and so is everything after it: no `close` follows. */
+function replaceSpans(
+  text: string,
+  open: string,
+  close: string,
+  replace: (inside: string) => string
+): string {
+  const parts: string[] = []
+  let at = 0
+  for (let start = text.indexOf(open); start !== -1; start = text.indexOf(open, at)) {
+    const end = text.indexOf(close, start + open.length)
+    if (end === -1) break
+    parts.push(text.slice(at, start), replace(text.slice(start + open.length, end)))
+    at = end + close.length
+  }
+  parts.push(text.slice(at))
+  return parts.join('')
+}
+
+/** Where the run of whitespace (as `\s` matches it) that ends at `end` begins. */
+function whitespaceBefore(text: string, end: number): number {
+  let start = end
+  while (start > 0 && /\s/.test(text[start - 1])) start--
+  return start
+}
+
+/** `subject` up to its first `yEnc` (any case, followed by no letter, digit or `_`) with no line
+ * break after it, less the whitespace before it: what `/\s*yEnc\b.*$/i` would cut off, found
+ * without trying that from every character of a long run of spaces. */
+function beforeYenc(subject: string): string {
+  let from = subject.length
+  while (from > 0 && !/[\n\r\u2028\u2029]/.test(subject[from - 1])) from--
+  const yenc = /yEnc/gi
+  yenc.lastIndex = from
+  for (let match = yenc.exec(subject); match; match = yenc.exec(subject)) {
+    if (!/\w/.test(subject[match.index + 4] ?? '')) {
+      return subject.slice(0, whitespaceBefore(subject, match.index))
+    }
+  }
+  return subject
+}
+
+/** `subject` less an article count at its end, `(1/50)`, and the whitespace around it: what
+ * `/\s*\(\d+\/\d+\)\s*$/` would cut off. */
+function beforeArticleCount(subject: string): string {
+  const trimmed = subject.trimEnd()
+  const count = /\(\d+\/\d+\)$/.exec(trimmed)
+  return count ? subject.slice(0, whitespaceBefore(trimmed, count.index)) : subject
 }
 
 /** A file's name from its subject. Posters quote it — `[01/20] - "Name.part01.rar" yEnc (1/50)` —
@@ -77,10 +238,7 @@ export function nameFromSubject(subject: string): string {
     subject
   )
   if (withExtension) return withExtension[1]
-  return subject
-    .replace(/\s*yEnc\b.*$/i, '')
-    .replace(/\s*\(\d+\/\d+\)\s*$/, '')
-    .trim()
+  return beforeArticleCount(beforeYenc(subject)).trim()
 }
 
 /**
@@ -90,15 +248,25 @@ export function nameFromSubject(subject: string): string {
  */
 export function safeName(raw: string, fallback: string): string {
   let name = raw.replace(STRIPPED_FROM_NAMES, '_').replace(/[\u007f]/g, '_')
-  name = name.replace(/[. ]+$/, '').trim()
+  // Trailing dots and spaces, which Windows drops, taken off from the end: `/[. ]+$/` would try
+  // every dot and space in the name.
+  let end = name.length
+  while (end > 0 && (name[end - 1] === '.' || name[end - 1] === ' ')) end--
+  name = name.slice(0, end).trim()
   if (!name || name === '.' || name === '..') name = fallback
   if (WINDOWS_RESERVED.test(name)) name = `_${name}`
   if (Buffer.byteLength(name) > MAX_NAME_BYTES) {
     const dot = name.lastIndexOf('.')
     const extension = dot > 0 && name.length - dot <= 16 ? name.slice(dot) : ''
-    const characters = Array.from(name.slice(0, name.length - extension.length))
-    while (Buffer.byteLength(characters.join('') + extension) > MAX_NAME_BYTES) characters.pop()
-    name = characters.join('') + extension
+    // As many whole characters as fit before the extension.
+    let room = MAX_NAME_BYTES - Buffer.byteLength(extension)
+    let kept = ''
+    for (const character of name.slice(0, name.length - extension.length)) {
+      room -= Buffer.byteLength(character)
+      if (room < 0) break
+      kept += character
+    }
+    name = kept + extension
   }
   return name
 }
@@ -107,13 +275,18 @@ export function safeName(raw: string, fallback: string): string {
  * compare names. */
 function uniqueNames(names: string[]): string[] {
   const taken = new Set<string>()
+  // The number to try next for each name: the ones before it are taken, and stay taken. Starting
+  // from 2 each time, a thousand files of one name would try half a million names.
+  const next = new Map<string, number>()
   return names.map((name) => {
     let candidate = name
-    for (let index = 2; taken.has(candidate.toLowerCase()); index++) {
+    let index = next.get(name.toLowerCase()) ?? 2
+    for (; taken.has(candidate.toLowerCase()); index++) {
       const dot = name.lastIndexOf('.')
       candidate =
         dot > 0 ? `${name.slice(0, dot)} (${index})${name.slice(dot)}` : `${name} (${index})`
     }
+    next.set(name.toLowerCase(), index)
     taken.add(candidate.toLowerCase())
     return candidate
   })
@@ -132,12 +305,13 @@ function downloadOrder(a: NzbFileEntry, b: NzbFileEntry): number {
 
 /** Reads an NZB. Throws when it isn't one, or lists nothing to download. */
 export function parseNzb(source: Uint8Array): ParsedNzb {
-  const xml = Buffer.from(source)
-    .toString('utf8')
-    .replace(/<!--[\s\S]*?-->/g, '')
-    .replace(/<!\[CDATA\[([\s\S]*?)\]\]>/g, (_, text: string) =>
-      text.replace(/&/g, '&amp;').replace(/</g, '&lt;')
-    )
+  const text = Buffer.from(source).toString('utf8')
+  const xml = replaceSpans(
+    replaceSpans(text, '<!--', '-->', () => ''),
+    '<![CDATA[',
+    ']]>',
+    (data) => data.replace(/&/g, '&amp;').replace(/</g, '&lt;')
+  )
   if (!/<(?:[\w-]+:)?nzb\b/i.test(xml)) throw new Error(NOT_NZB)
 
   let password: string | undefined
@@ -290,9 +464,12 @@ export async function sniffXml(
 /** An indexer's refusal, as its (Newznab) API sends one in place of the NZB:
  * `<error code="100" description="Incorrect user credentials"/>`. Null when it isn't one. */
 export function indexerError(xml: string): string | null {
-  const error = /<error\b([^>]*)\/?>/i.exec(xml)
-  if (!error || /<(?:[\w-]+:)?nzb\b/i.test(xml)) return null
-  const attrs = attributes(error[1])
+  // The first `<error` and its first `>`: if that one has none, no later one does. (A regex
+  // looking for both tried every `<error` against the rest of the answer.)
+  const error = /<error\b/i.exec(xml)
+  const end = error ? xml.indexOf('>', error.index + '<error'.length) : -1
+  if (!error || end === -1 || /<(?:[\w-]+:)?nzb\b/i.test(xml)) return null
+  const attrs = attributes(xml.slice(error.index + '<error'.length, end))
   const description = attrs.get('description')?.trim()
   const code = attrs.get('code')?.trim()
   return `The indexer refused this link: ${description || 'no reason given'}${code ? ` (error ${code})` : ''}`
