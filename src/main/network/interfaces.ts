@@ -3,6 +3,8 @@ import { networkInterfaces } from 'node:os'
 import { promisify } from 'node:util'
 import type { NetworkAddress, NetworkInterfaceInfo, NetworkInterfaceKind } from '../../shared/types'
 import { testInterfaces } from '../testKnobs'
+import { classifyInterface } from './classifyInterface'
+import { getLinuxAdapters, type LinuxAdapter } from './linuxAdapters'
 
 const execFileAsync = promisify(execFile)
 const DISCOVERY_TIMEOUT_MS = 5000
@@ -53,16 +55,6 @@ function classifyLinuxDevice(device: string): NetworkInterfaceKind {
   if (/^usb|^enx|^en\w*u\d/.test(device)) return 'usb'
   if (/^(en|eth)/.test(device)) return 'ethernet'
   if (/^(br|virbr)/.test(device)) return 'bridge'
-  return 'other'
-}
-
-function classifyInterface(hardwarePortName: string): NetworkInterfaceKind {
-  const name = hardwarePortName.toLowerCase()
-  if (/wi-?fi|wireless|wlan|802\.11|airport/.test(name)) return 'wifi'
-  if (/rndis|remote ndis|tether|apple mobile device/.test(name)) return 'usb'
-  if (name.includes('iphone') || name.includes('ipad') || name.includes('usb')) return 'usb'
-  if (name.includes('bridge')) return 'bridge'
-  if (name.includes('ethernet') || name.includes('lan')) return 'ethernet'
   return 'other'
 }
 
@@ -121,7 +113,7 @@ export function ipv4Subnet(address: string, netmask: string): string | null {
 let labels: {
   devices: string
   refreshedAt: number
-  lookup: Promise<[Map<string, string>, Map<string, WindowsAdapter>]>
+  lookup: Promise<[Map<string, string>, Map<string, WindowsAdapter>, Map<string, LinuxAdapter>]>
 } | null = null
 
 /**
@@ -133,15 +125,18 @@ export async function listActiveInterfaces(): Promise<NetworkInterfaceInfo[]> {
 
   const all = networkInterfaces()
   const devices = Object.keys(all).sort().join('\n')
-  // Refresh adapter indices periodically even when interface names stay unchanged.
-  if (labels?.devices !== devices || Date.now() - labels.refreshedAt > 15000) {
+  // Refresh Windows InterfaceIndex even if the set of adapter names is unchanged.
+  if (
+    labels?.devices !== devices ||
+    (process.platform === 'win32' && Date.now() - labels.refreshedAt > 15000)
+  ) {
     labels = {
       devices,
       refreshedAt: Date.now(),
-      lookup: Promise.all([getMacHardwarePortNames(), getWindowsAdapters()])
+      lookup: Promise.all([getMacHardwarePortNames(), getWindowsAdapters(), getLinuxAdapters()])
     }
   }
-  const [hardwarePorts, windowsAdapters] = await labels.lookup
+  const [hardwarePorts, windowsAdapters, linuxAdapters] = await labels.lookup
   const result: NetworkInterfaceInfo[] = []
 
   for (const [device, addresses] of Object.entries(all)) {
@@ -165,21 +160,31 @@ export async function listActiveInterfaces(): Promise<NetworkInterfaceInfo[]> {
       }))
     if (usable.length === 0) continue
 
+    // On Linux, skip internal/virtual bridge adapters that aren't recognized hardware/adapters
+    if (process.platform === 'linux' && linuxAdapters.size > 0 && !linuxAdapters.has(device)) {
+      continue
+    }
+
     const hardwareName = hardwarePorts.get(device)
     const adapter = windowsAdapters.get(device)
+    const linuxAdapter = linuxAdapters.get(device)
+
     let kind =
-      process.platform === 'linux'
+      linuxAdapter?.kind ??
+      (process.platform === 'linux'
         ? classifyLinuxDevice(device)
-        : classifyInterface(adapter?.InterfaceDescription ?? hardwareName ?? device)
+        : classifyInterface(adapter?.InterfaceDescription ?? hardwareName ?? device))
     // NDIS media: 1 = wireless LAN, 9 = native 802.11, 14 = Ethernet (802.3).
     if (adapter?.NdisPhysicalMedium === 1 || adapter?.NdisPhysicalMedium === 9) kind = 'wifi'
     else if (kind === 'other' && adapter?.NdisPhysicalMedium === 14) kind = 'ethernet'
+
+    const displayName = linuxAdapter?.displayName ?? hardwareName ?? device
+
     result.push({
-      id: device,
+      // A tethered phone keeps its saved name and color across replugs (see readUsbSerial).
+      id: linuxAdapter?.usbSerial ? `usb:${linuxAdapter.usbSerial}` : device,
       device,
-      // What the OS shows people: macOS's hardware port ("Wi-Fi", "iPhone USB"), else the device —
-      // on Windows its alias ("Wi-Fi", "Ethernet 2"), on Linux its name (wlp2s0).
-      displayName: hardwareName ?? device,
+      displayName,
       addresses: usable,
       kind,
       mac: addresses.find((addr) => addr.mac && addr.mac !== '00:00:00:00:00:00')?.mac,
@@ -203,7 +208,9 @@ export class NetworkMonitor {
   private list: NetworkInterfaceInfo[] | null = null
   private polling: Promise<NetworkInterfaceInfo[]> = Promise.resolve([])
 
-  constructor(private readonly onChange: (networks: NetworkInterfaceInfo[]) => void) {
+  constructor(
+    private readonly onChange: (networks: NetworkInterfaceInfo[]) => void | Promise<void>
+  ) {
     void this.refresh()
     setInterval(() => void this.refresh(), POLL_MS).unref()
   }
@@ -226,7 +233,7 @@ export class NetworkMonitor {
         const next = await listActiveInterfaces().catch(() => this.list ?? [])
         if (JSON.stringify(next) !== JSON.stringify(this.list)) {
           this.list = next
-          this.onChange(next)
+          await this.onChange(next)
         }
         return next
       })

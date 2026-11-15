@@ -2,6 +2,7 @@ import { existsSync } from 'node:fs'
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { basename, dirname, join } from 'node:path'
 import type { Page } from '@playwright/test'
+import { DEFAULT_DOWNLOAD_SCHEDULE } from '../src/shared/downloadSchedule'
 import { BLOCK, expect, test, treeSha } from './fixtures'
 import { seededBytes } from './origin'
 import { named, Swarm, torrentFileOnDisk } from './torrentSwarm'
@@ -139,13 +140,19 @@ test('showing a file that has moved says so in a dialog, not on the page', async
   const complete = await plexo.waitForStatus('completed')
   const { rename } = await import('node:fs/promises')
   const page = plexo.page
+  // The window lists history again just after a download finishes and whenever it's focused,
+  // checking each file. Move the file only once that listing is in (there are finished ones to
+  // clear) and the menu is open, so neither can see it gone first.
+  await expect(page.getByRole('button', { name: 'Clear finished list', exact: true })).toBeVisible()
+  await page.getByRole('button', { name: `Open ${complete.fileName}`, exact: true }).click({
+    button: 'right'
+  })
+  const showIn = page.getByRole('menuitem', { name: /^Show in/ })
+  await expect(showIn).toBeVisible()
   // The window hasn't been told yet, so the menu still offers it.
   await rename(complete.destinationPath, `${complete.destinationPath}.moved`)
   try {
-    await page.getByRole('button', { name: `Open ${complete.fileName}`, exact: true }).click({
-      button: 'right'
-    })
-    await page.getByRole('menuitem', { name: /^Show in/ }).click()
+    await showIn.click()
     const dialog = page.getByRole('alertdialog')
     await expect(dialog.getByText('Couldn’t show file', { exact: true })).toBeVisible()
     await expect(dialog.getByText('That file is no longer where it was saved.')).toBeVisible()
@@ -267,4 +274,171 @@ test('a removal that fails for one download still removes the rest, and asks aga
   await expect(dialog.getByRole('heading', { name: 'Delete file?' })).toBeVisible()
   await expect(page.getByRole('checkbox', { name: 'Select goes.bin' })).toHaveCount(0)
   expect(existsSync(join(trashed, 'goes.bin'))).toBe(true)
+})
+
+test('search and filter interaction with selection: no crash on empty query filter, Cmd+A selects matching only, Esc clears selection', async ({
+  plexo,
+  serve
+}) => {
+  const first = await serve({ size: BLOCK })
+  await plexo.start(first.url(), first.sha256, { fileName: 'alpha-doc.bin' })
+  await plexo.waitForStatus('completed')
+
+  const second = await serve({ size: BLOCK })
+  await plexo.start(second.url(), second.sha256, { fileName: 'beta-video.bin' })
+  await plexo.waitForStatus('completed')
+
+  const page = plexo.page
+  const search = page.getByRole('textbox', { name: 'Search downloads' })
+
+  // 1. Pick a status filter ('Finished') and type a query matching nothing ('zzz').
+  // Verifies bug 1: no white screen / crash occurs when a group has 0 matches.
+  await page.getByRole('button', { name: 'All downloads' }).click()
+  await page.getByRole('menuitemradio', { name: 'Finished' }).click()
+  await search.fill('zzz')
+  await expect(page.getByText(/No downloads matching/)).toBeVisible()
+
+  // 2. Search for 'alpha': only alpha-doc.bin shows
+  await search.fill('alpha')
+  await expect(page.getByText('alpha-doc.bin')).toBeVisible()
+  await expect(page.getByText('beta-video.bin')).toHaveCount(0)
+
+  // 3. Press Cmd+A / Ctrl+A: selects only the matching row (alpha-doc.bin)
+  const modifier = process.platform === 'darwin' ? 'Meta' : 'Control'
+  // In the search box it selects the text instead, and no row.
+  await page.keyboard.press(`${modifier}+a`)
+  expect(
+    await search.evaluate((input: HTMLInputElement) => [input.selectionStart, input.selectionEnd])
+  ).toEqual([0, 'alpha'.length])
+  await expect(page.getByRole('checkbox', { name: 'Select alpha-doc.bin' })).not.toBeChecked()
+  await search.blur()
+  await page.keyboard.press(`${modifier}+a`)
+  await expect(page.getByRole('checkbox', { name: 'Select alpha-doc.bin' })).toBeChecked()
+
+  // 4. Press Escape with a selection: first Esc clears selection (not the hidden query)
+  await page.keyboard.press('Escape')
+  await expect(page.getByRole('checkbox', { name: 'Select alpha-doc.bin' })).not.toBeChecked()
+  // Search box is visible again with 'alpha' still in it
+  await expect(search).toHaveValue('alpha')
+
+  // 5. Select row again and press Cmd+F: selection is cleared and search box is focused
+  await page.getByRole('checkbox', { name: 'Select alpha-doc.bin' }).check()
+  await expect(search).toBeHidden()
+  await page.keyboard.press(`${modifier}+f`)
+  await expect(page.getByRole('checkbox', { name: 'Select alpha-doc.bin' })).not.toBeChecked()
+  await expect(search).toBeVisible()
+  await expect(search).toBeFocused()
+})
+
+test('Cmd/Ctrl+A selects the list while a menu that was just closed is still fading out', async ({
+  plexo,
+  serve
+}) => {
+  const origin = await serve({ size: BLOCK })
+  await plexo.start(origin.url(), origin.sha256, { fileName: 'alpha-doc.bin' })
+  await plexo.waitForStatus('completed')
+
+  const page = plexo.page
+  // A closed menu stays in the page until its exit animation ends, which waits on a frame: in
+  // a hidden window on Windows and Linux that can take seconds. A long fade holds it there on
+  // every platform.
+  await page.addStyleTag({
+    content: '[role="menu"][data-ending-style] { opacity: 0; transition: opacity 60s !important; }'
+  })
+  await page.getByRole('button', { name: 'All downloads' }).click()
+  await page.getByRole('menuitemradio', { name: 'Finished' }).click()
+  await expect(page.locator('[role="menu"][data-closed]')).toHaveCount(1)
+
+  await page.keyboard.press(`${process.platform === 'darwin' ? 'Meta' : 'Control'}+a`)
+  await expect(page.getByRole('checkbox', { name: 'Select alpha-doc.bin' })).toBeChecked()
+})
+
+test('Esc that closes a menu or a dialog keeps the selection', async ({ plexo, serve }) => {
+  for (const fileName of ['one.bin', 'two.bin']) {
+    const origin = await serve({ size: BLOCK })
+    await plexo.start(origin.url(), origin.sha256, { fileName })
+    await plexo.waitForStatus('completed')
+  }
+  const page = plexo.page
+  const one = page.getByRole('checkbox', { name: 'Select one.bin', exact: true })
+  await one.check()
+
+  // A closing popup no longer holds the list's keys, so the Esc that closes it must not reach
+  // them as well.
+  await openMore(page)
+  await expect(page.getByRole('menu')).toBeVisible()
+  await page.keyboard.press('Escape')
+  await expect(page.getByRole('menu')).toHaveCount(0)
+  await expect(one).toBeChecked()
+
+  await page.getByRole('button', { name: 'Open two.bin', exact: true }).click({ button: 'right' })
+  await expect(page.getByRole('menu')).toBeVisible()
+  await page.keyboard.press('Escape')
+  await expect(page.getByRole('menu')).toHaveCount(0)
+  await expect(one).toBeChecked()
+
+  await page.keyboard.press('Delete')
+  await expect(page.getByRole('alertdialog')).toBeVisible()
+  await page.keyboard.press('Escape')
+  await expect(page.getByRole('alertdialog')).toHaveCount(0)
+  await expect(one).toBeChecked()
+})
+
+test('search box maintains minimum usable width at 720px minimum window width with active download', async ({
+  plexo,
+  serve
+}) => {
+  // Set window to minimum 720px width
+  await plexo.evaluateMain(({ BrowserWindow }) => {
+    const window = BrowserWindow.getAllWindows()[0]
+    window.setSize(720, 620)
+  }, null)
+  // The default schedule allows 0:00–7:00, so set the clock inside it: otherwise the download
+  // waits for the schedule and never starts.
+  await plexo.evaluateMain(() => {
+    const insideSchedule = new Date(2000, 0, 1, 3).getTime()
+    Date.now = () => insideSchedule
+  }, null)
+  await plexo.api.updateSettings({
+    downloadSchedule: { ...DEFAULT_DOWNLOAD_SCHEDULE, enabled: true }
+  })
+  // The window reads the schedule when it loads, so reload it to show the schedule button.
+  await plexo.page.reload()
+  await expect(plexo.page.getByRole('button', { name: 'Download schedule enabled' })).toBeVisible()
+
+  const origin = await serve({ size: 24 * BLOCK })
+  const reached = origin.hold(6 * BLOCK)
+  await plexo.start(origin.url(), origin.sha256, { fileName: 'active-download.bin' })
+  await reached
+
+  const page = plexo.page
+  const searchInput = page.getByRole('textbox', { name: 'Search downloads' })
+  await expect(searchInput).toBeVisible()
+
+  // The field keeps its narrowest width, w-44 (176px); it once collapsed to about 2px here. The
+  // text box inside it shares that with the icon and the shortcut hint, which is wider as
+  // "Ctrl+F" than as "⌘F", so check what the text box needs instead of a fixed number: room
+  // for the whole placeholder.
+  const field = page.locator('[data-slot="input-group"]', { has: searchInput })
+  const box = await field.boundingBox()
+  expect(box).not.toBeNull()
+  expect(box!.width).toBeGreaterThanOrEqual(176)
+  const { room, placeholder } = await searchInput.evaluate((input: HTMLInputElement) => {
+    const style = getComputedStyle(input)
+    const context = document.createElement('canvas').getContext('2d')!
+    context.font = `${style.fontStyle} ${style.fontWeight} ${style.fontSize} ${style.fontFamily}`
+    return {
+      room: input.clientWidth - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight),
+      placeholder: context.measureText(input.placeholder).width
+    }
+  })
+  expect(room).toBeGreaterThanOrEqual(placeholder)
+  await expect(page.getByRole('button', { name: 'New download' })).toBeInViewport({ ratio: 1 })
+  expect(
+    await page.evaluate(
+      () => document.documentElement.scrollWidth <= document.documentElement.clientWidth
+    )
+  ).toBe(true)
+
+  origin.release()
 })

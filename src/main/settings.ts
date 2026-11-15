@@ -6,10 +6,13 @@ import {
   type AppSettings,
   type NetworkPreference,
   type NetworkPreferences,
+  type ProxyConfig,
+  type ProxyType,
   type ThemeSource
 } from '../shared/types'
 import { readJson, updateJson } from './jsonFile'
 import { DEFAULT_DOWNLOAD_SCHEDULE, validSchedule } from '../shared/downloadSchedule'
+import { carryOverDevicePreferences } from '../shared/networkPreferences'
 
 function settingsPath(): string {
   return join(app.getPath('userData'), 'app-settings.json')
@@ -17,6 +20,38 @@ function settingsPath(): string {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
+const VALID_PROXY_TYPES: readonly ProxyType[] = ['http', 'https', 'socks4', 'socks5']
+
+function sanitizeProxyConfig(value: unknown): ProxyConfig | undefined {
+  if (!isRecord(value)) return undefined
+  const enabled = typeof value.enabled === 'boolean' ? value.enabled : false
+  const type =
+    typeof value.type === 'string' && (VALID_PROXY_TYPES as readonly string[]).includes(value.type)
+      ? (value.type as ProxyType)
+      : 'http'
+  const host = typeof value.host === 'string' ? value.host.trim() : ''
+  const port =
+    typeof value.port === 'number' &&
+    Number.isInteger(value.port) &&
+    value.port >= 1 &&
+    value.port <= 65535
+      ? value.port
+      : 8080
+  const username =
+    typeof value.username === 'string' && value.username.length > 0 ? value.username : undefined
+  const password =
+    typeof value.password === 'string' && value.password.length > 0 ? value.password : undefined
+
+  return {
+    enabled,
+    type,
+    host,
+    port,
+    ...(username ? { username } : {}),
+    ...(password ? { password } : {})
+  }
 }
 
 /** A rate or an amount of bytes: a positive whole number, or nothing. */
@@ -37,6 +72,8 @@ function sanitizeNetworkPreferences(parsed: unknown): NetworkPreferences {
     const preference: NetworkPreference = {}
     if (typeof value.customName === 'string') preference.customName = value.customName
     if (typeof value.colorId === 'string') preference.colorId = value.colorId
+    const proxy = sanitizeProxyConfig(value.proxy)
+    if (proxy) preference.proxy = proxy
     if (value.off === true) preference.off = true
     preference.speedLimit = byteCount(value.speedLimit)
     preference.dataLimit = byteCount(value.dataLimit)
@@ -73,6 +110,12 @@ function sanitizeSettings(parsed: unknown): AppSettings {
   if (parsed.autoUpdate === false) settings.autoUpdate = false
   if (typeof destinationDir === 'string' && isAbsolute(destinationDir)) {
     settings.destinationDir = destinationDir
+  }
+  if (
+    typeof parsed.defaultDestinationDir === 'string' &&
+    isAbsolute(parsed.defaultDestinationDir)
+  ) {
+    settings.defaultDestinationDir = parsed.defaultDestinationDir
   }
   // Clamped rather than dropped: a count saved under an older, higher limit keeps the most allowed.
   if (Number.isInteger(downloadsAtOnce) && (downloadsAtOnce as number) >= DOWNLOADS_AT_ONCE.min) {
@@ -111,9 +154,29 @@ export function saveSettings(patch: unknown): Promise<void> {
   ) {
     return Promise.reject(new Error('Choose different start and stop times and at least one day.'))
   }
-  return updateJson(settingsPath(), (current) =>
-    sanitizeSettings({ ...sanitizeSettings(current), ...(isRecord(patch) ? patch : {}) })
-  )
+  return updateJson(settingsPath(), (current) => {
+    const merged = { ...sanitizeSettings(current), ...(isRecord(patch) ? patch : {}) }
+    if (isRecord(patch) && 'defaultDestinationDir' in patch && !patch.defaultDestinationDir) {
+      delete (merged as Record<string, unknown>).defaultDestinationDir
+    }
+    return sanitizeSettings(merged)
+  })
+}
+
+/** Saves carryOverDevicePreferences for these networks, and says whether anything moved. */
+export async function carryOverNetworkPreferences(
+  networks: { id: string; device: string }[]
+): Promise<boolean> {
+  const saved = (await loadSettings()).networkPreferences ?? {}
+  if (carryOverDevicePreferences(saved, networks) === saved) return false
+  await updateJson(settingsPath(), (current) => {
+    const settings = sanitizeSettings(current)
+    return {
+      ...settings,
+      networkPreferences: carryOverDevicePreferences(settings.networkPreferences ?? {}, networks)
+    }
+  })
+  return true
 }
 
 export async function loadThemeSource(): Promise<ThemeSource> {

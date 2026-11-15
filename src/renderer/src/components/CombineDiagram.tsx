@@ -20,7 +20,12 @@ const LABEL_EDGE_PAD = 4
 export interface CombineDiagramNetwork {
   solid: string
   label: string
+  /** The network's current speed, shown beside its label. `undefined` or zero reads as "—". */
   speedBytesPerSec?: number
+  /** Whether the network is carrying bytes right now (an HTTP stream fetching, or a torrent peer
+   * receiving). Drives the flow animation; derived from connection status rather than speed, so
+   * the diagram agrees with the network rows. */
+  active?: boolean
 }
 
 /** Draws the multiple-links-into-one-stream diagram: individual networks with their
@@ -60,17 +65,22 @@ export function CombineDiagram({
         {networks.map((network, index) => {
           const y = (index + 0.5) * (height / networks.length)
           const color = muted ? 'var(--icon-muted)' : network.solid
+          // Three deterministic states: paused (the whole download stopped), idle (the network
+          // is on but fetching nothing), or flowing (the network is carrying bytes). Muted is a
+          // static illustration — the empty-state diagram — so it never animates or dims.
+          const flowing = !muted && !paused && network.active === true
+          const opacity = muted ? 1 : paused ? 0.55 : flowing ? 1 : 0.35
           return (
             <path
               key={network.label + index}
               d={`M${CURVE_START_X},${y.toFixed(1)} C${CURVE_START_X + 36},${y.toFixed(1)} ${COMBINE_X - 26},${midY.toFixed(1)} ${COMBINE_X},${midY.toFixed(1)}`}
               stroke={color}
               strokeDasharray="6 8"
-              opacity={paused ? 0.55 : 1}
+              opacity={opacity}
               style={
-                muted || paused
-                  ? undefined
-                  : { animation: `plexo-dash ${1.1 + index * 0.2}s linear infinite` }
+                flowing
+                  ? { animation: `plexo-dash ${1.1 + index * 0.2}s linear infinite` }
+                  : undefined
               }
             />
           )

@@ -2,6 +2,7 @@ import { isIP, Socket } from 'node:net'
 import { basename, dirname } from 'node:path'
 import type WebTorrent from 'webtorrent'
 import type { Store, Torrent, Wire } from 'webtorrent'
+import { normalizeTrackerUrl } from '../../../shared/torrentTrackers'
 import type { TorrentDownloadNetwork, TorrentPeerState } from '../../../shared/types'
 import { connectRoute } from '../../network/deviceBinding'
 import { routesFor, type NetworkRoute } from '../../network/routes'
@@ -11,7 +12,7 @@ import {
   type TransferHost,
   type TorrentTransferTarget
 } from '../transfer'
-import { createClient, loadClientNamer, storeNamed } from './engine'
+import { createClient, isTorrentPrivate, loadClientNamer, storeNamed } from './engine'
 import { bitfieldOf, creditPiece, pickNetwork } from './peers'
 
 /** Peers each network in use may have at once (webtorrent's maxConns is this times the networks). */
@@ -20,6 +21,16 @@ const PEERS_PER_NETWORK = 30
 // network has peers, can't reach the swarm. It keeps one dial going, to see when it can again.
 const UNREACHABLE_AFTER_ATTEMPTS = 5
 const UNREACHABLE_AFTER_MS = 60_000
+// A twin that failed (refused, dropped) is tried again on its network after this long.
+const TWIN_RETRY_MS = 30_000
+const TWIN_MARK = '#twin:'
+
+/** A twin's key in the swarm: the peer's address and the network it is dialled over. */
+const twinKey = (address: string, networkId: string): string => `${address}${TWIN_MARK}${networkId}`
+const twinNetwork = (key: string): string | null => {
+  const at = key.indexOf(TWIN_MARK)
+  return at < 0 ? null : key.slice(at + TWIN_MARK.length)
+}
 
 const message = (error: unknown): string => (error instanceof Error ? error.message : String(error))
 
@@ -65,6 +76,15 @@ export class TorrentTransfer implements Transfer {
   private reach = new Map<string, { dials: number; answeredAt: number }>()
   /** Bytes of each piece not verified yet, by network. */
   private unverified = new Map<number, Record<string, number>>()
+  /** This run's torrent from the moment it is added, for dialling twins before 'ready'. */
+  private engineTorrent: Torrent | null = null
+  /** Addresses this run dialled out to: only these listen there, so only these get twins. */
+  private dialledOut = new Set<string>()
+  /** The peer id each network's twins shake hands with, so a peer sees one client per network. */
+  private twinIds = new Map<string, string>()
+  /** By twin key: when it may be dialled again. */
+  private twinRetryAt = new Map<string, number>()
+  private isPrivate: boolean | null = null
 
   constructor(
     private readonly runtime: TorrentTransferTarget,
@@ -99,6 +119,7 @@ export class TorrentTransfer implements Transfer {
         this.host.scheduleUpdate()
       }
     }
+    this.dialTwins(now)
     for (const peer of this.peers.values()) {
       const status = peer.state.speedBytesPerSec > 0 ? 'receiving' : 'connected'
       if (peer.state.status !== status) {
@@ -118,6 +139,8 @@ export class TorrentTransfer implements Transfer {
   }
 
   reset(): void {
+    this.dialledOut.clear()
+    this.twinRetryAt.clear()
     this.chosen.clear()
     this.dialling.clear()
     this.reach.clear()
@@ -145,6 +168,7 @@ export class TorrentTransfer implements Transfer {
     const stop = this.runtime.stop.signal
     try {
       this.nameClient ??= await loadClientNamer()
+      this.isPrivate ??= await isTorrentPrivate(this.torrentFile)
       this.store ??= await storeNamed(basename(this.destination), (path) =>
         this.runtime.file.written.add(path)
       )
@@ -180,6 +204,7 @@ export class TorrentTransfer implements Transfer {
       for (const peer of this.peers.values()) this.removePeer(peer)
       this.peers.clear()
       this.torrent = null
+      this.engineTorrent = null
       this.ended = null
     }
   }
@@ -188,6 +213,22 @@ export class TorrentTransfer implements Transfer {
    * one now. Not running, the next run starts with it. */
   filesChosen(): void {
     if (this.torrent) this.selectFiles(this.torrent)
+  }
+
+  /** The trackers changed (runtime.customTrackers). If running, the client is restarted
+   * so WebTorrent announces to the new trackers. */
+  trackersChanged(): void {
+    if (this.client) {
+      const restart = async (): Promise<void> => {
+        this.closeClient?.()
+        await this.ended
+        this.reset()
+        if (!this.runtime.stop.signal.aborted) {
+          this.reconcile()
+        }
+      }
+      void restart()
+    }
   }
 
   /** Asks the engine for the chosen files' pieces only, all of them with no choice made. What it
@@ -212,15 +253,26 @@ export class TorrentTransfer implements Transfer {
   }
 
   private add(client: WebTorrent): void {
+    const custom =
+      this.isPrivate === false && this.runtime.customTrackers
+        ? this.runtime.customTrackers
+            .map((url) => normalizeTrackerUrl(url))
+            .filter((url): url is string => Boolean(url))
+        : undefined
+
     const torrent = client.add(this.torrentFile, {
       path: dirname(this.destination),
       store: this.store!,
       // Trusted as done, bar a hash check of a piece or two per file (more if one fails).
       bitfield: bitfieldOf(this.runtime.pieces.map((block) => block.status === 'completed')),
       // Nothing until webtorrent is ready to be told which files (below), as on a change.
-      deselect: true
+      deselect: true,
+      announce: custom && custom.length > 0 ? custom : undefined
     })
-    torrent.on('wire', (wire: Wire, address: string) => this.onWire(wire, address))
+    this.engineTorrent = torrent
+    torrent.on('wire', (wire: Wire, address: string, key?: string) =>
+      this.onWire(wire, address, key)
+    )
     torrent.on('verified', (index: number) => this.onVerified(index))
     torrent.once('ready', () => {
       this.torrent = torrent
@@ -244,7 +296,18 @@ export class TorrentTransfer implements Transfer {
   }
 
   /** webtorrent's `connect` hook: every outgoing peer comes through here. */
-  private connect({ host: address, port }: { host: string; port: number }): Socket {
+  private connect({
+    host: address,
+    port,
+    key
+  }: {
+    host: string
+    port: number
+    key?: string
+  }): Socket {
+    // A twin goes over the network its key names, or nowhere.
+    const twinOn = key ? twinNetwork(key) : null
+    if (twinOn) return this.connectTwin(address, port, key!, twinOn)
     // A peer named by hostname (a magnet's x.pe can be) has no family: no network takes it.
     const family = isIP(address) as 0 | 4 | 6
     const peersOn = (id: string): number =>
@@ -267,9 +330,77 @@ export class TorrentTransfer implements Transfer {
     }
 
     this.chosen.set(addressOf(address, port), networkId)
+    this.dialledOut.add(addressOf(address, port))
+    return this.dial(routes.get(networkId)!, port, networkId)
+  }
+
+  /** A twin's dial: over `networkId` only, if it is on and has a route to the peer. */
+  private connectTwin(address: string, port: number, key: string, networkId: string): Socket {
+    const family = isIP(address) as 0 | 4 | 6
+    const network = this.usable().find((entry) => entry.id === networkId)
+    const iface = network && this.host.networks.find(network.id)
+    const route = family && iface ? routesFor(iface, [{ address, family }])[0] : undefined
+    if (!route || network?.status !== 'on') {
+      const socket = new Socket()
+      process.nextTick(() => socket.destroy(new Error('Twin network cannot reach this peer')))
+      return socket
+    }
+    this.chosen.set(key, networkId)
+    return this.dial(route, port, networkId)
+  }
+
+  /**
+   * Dials a peer again over every other network that is on, each as a client of its own (see
+   * addTwinPeer in patches/webtorrent+3.0.21.patch): a swarm of one fast peer then fills more
+   * than one network. Only peers this run dialled out to, whose address is where they listen.
+   */
+  private dialTwins(now: number): void {
+    const torrent = this.engineTorrent
+    if (!torrent) return
+    const on = this.usable().filter((network) => network.status === 'on')
+    if (on.length < 2) return
+    const originals = new Map<string, string>()
+    for (const [wire, peer] of this.peers) {
+      const address = wire as Wire & { remoteAddress?: string; remotePort?: number }
+      if (!address.remoteAddress || !address.remotePort) continue
+      const key = addressOf(address.remoteAddress, address.remotePort)
+      if (this.dialledOut.has(key) && this.chosen.get(key) === peer.state.interfaceId) {
+        originals.set(key, peer.state.interfaceId)
+      }
+    }
+    for (const [address, networkId] of originals) {
+      for (const network of on) {
+        if (network.id === networkId) continue
+        const key = twinKey(address, network.id)
+        if ((this.twinRetryAt.get(key) ?? 0) > now) continue
+        this.twinRetryAt.set(key, now + TWIN_RETRY_MS)
+        torrent.addTwinPeer(address, key, this.twinIdFor(network.id))
+      }
+    }
+  }
+
+  /** A peer id for `networkId`'s twins: the client's prefix (its name and version), the rest its
+   * own. */
+  private twinIdFor(networkId: string): string {
+    let id = this.twinIds.get(networkId)
+    if (!id) {
+      const prefix = (this.client as WebTorrent & { peerId?: string })?.peerId?.slice(0, 16) ?? ''
+      const rest = Array.from({ length: (40 - prefix.length) / 2 }, () =>
+        Math.floor(Math.random() * 256)
+          .toString(16)
+          .padStart(2, '0')
+      ).join('')
+      id = prefix + rest
+      this.twinIds.set(networkId, id)
+    }
+    return id
+  }
+
+  /** Opens a socket to a peer over a network, counted as a dial on it until it settles. */
+  private dial(route: NetworkRoute, port: number, networkId: string): Socket {
     this.dialling.set(networkId, (this.dialling.get(networkId) ?? 0) + 1)
     this.reachOf(networkId).dials += 1
-    const socket = connectRoute(routes.get(networkId)!, port)
+    const socket = connectRoute(route, port)
     let settled = false
     const settle = (): void => {
       if (settled) return
@@ -313,8 +444,9 @@ export class TorrentTransfer implements Transfer {
     this.limit(socket, network.id)
   }
 
-  private onWire(wire: Wire, address: string): void {
-    const networkId = this.chosen.get(address)
+  private onWire(wire: Wire, address: string, key = address): void {
+    // A twin is filed under its own key; every other peer under its address.
+    const networkId = this.chosen.get(twinNetwork(key) ? key : address)
     const network = this.runtime.state.networks.find((entry) => entry.id === networkId)
     if (!network) {
       wire.destroy()

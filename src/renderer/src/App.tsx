@@ -1,13 +1,19 @@
 import type { DownloadState, FinishedDownload } from '@shared/types'
 import { DownloadActionsProvider } from './components/DownloadActionsProvider'
+import { LimitsDialog } from './components/LimitsDialog'
 import { NetworkBindingDialog } from './components/NetworkBindingDialog'
 import { NewDownloadDialog } from './components/NewDownloadDialog'
 import { StatusBar } from './components/StatusBar'
+import { TelegramDialog } from './components/TelegramDialog'
 import { TitleBar } from './components/TitleBar'
 import { TooltipProvider } from './components/ui/tooltip'
 import { useDownloadEvents } from './hooks/useDownloadEvents'
 import { useNetworkEvents } from './hooks/useNetworks'
-import { useNewDownloadShortcuts, useOpenedLinks } from './hooks/useOpenedLinks'
+import {
+  useNewDownloadShortcuts,
+  useOpenedLinks,
+  useSettingsShortcuts
+} from './hooks/useOpenedLinks'
 import { CompleteScreen } from './screens/CompleteScreen'
 import { DownloadingScreen } from './screens/DownloadingScreen'
 import { DownloadsScreen } from './screens/DownloadsScreen'
@@ -38,21 +44,44 @@ function renderDownload(download: DownloadState | FinishedDownload): React.JSX.E
   }
 }
 
+/** The download shown, or the list. Only this re-renders on a progress update — App, the title
+ * bar, the status bar and the dialogs around it don't. */
+function CurrentScreen(): React.JSX.Element {
+  // Just the one shown: an update to any other download leaves this selector's result alone.
+  const shown = useAppStore((store) => {
+    const { view } = store
+    if (view.name !== 'download') return null
+    // A download that's gone (removed, deleted) leaves the list showing.
+    return store.downloads[view.id] ?? store.history.find((entry) => entry.id === view.id) ?? null
+  })
+  const cancelled = shown && !('unitsWritten' in shown) && shown.status === 'cancelled'
+  return shown && !cancelled ? renderDownload(shown) : <DownloadsScreen />
+}
+
+function SettingsModal(): React.JSX.Element {
+  const open = useAppStore((store) => store.settingsOpen)
+  const page = useAppStore((store) => store.settingsPage)
+  const showSchedule = useAppStore((store) => store.settingsShowSchedule)
+  const setPage = useAppStore((store) => store.setSettingsPage)
+  const close = useAppStore((store) => store.closeSettings)
+
+  return (
+    <LimitsDialog
+      open={open}
+      showSchedule={showSchedule}
+      onOpenChange={(next) => !next && close()}
+      page={page}
+      onPageChange={setPage}
+    />
+  )
+}
+
 function App(): React.JSX.Element {
   useDownloadEvents()
   useOpenedLinks()
   useNewDownloadShortcuts()
+  useSettingsShortcuts()
   useNetworkEvents()
-
-  const downloads = useAppStore((store) => store.downloads)
-  const history = useAppStore((store) => store.history)
-  const view = useAppStore((store) => store.view)
-  // A download that's gone (removed, deleted) leaves the list showing.
-  const shown =
-    view.name === 'download'
-      ? (downloads[view.id] ?? history.find((entry) => entry.id === view.id) ?? null)
-      : null
-  const cancelled = shown && !('unitsWritten' in shown) && shown.status === 'cancelled'
 
   return (
     <TooltipProvider>
@@ -60,11 +89,13 @@ function App(): React.JSX.Element {
         <div className="flex h-full flex-col">
           <TitleBar />
           <div className="min-h-0 flex-1">
-            {shown && !cancelled ? renderDownload(shown) : <DownloadsScreen />}
+            <CurrentScreen />
           </div>
           <StatusBar />
           <NewDownloadDialog />
+          <TelegramDialog />
           <NetworkBindingDialog />
+          <SettingsModal />
         </div>
       </DownloadActionsProvider>
     </TooltipProvider>

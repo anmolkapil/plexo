@@ -1,11 +1,12 @@
 import { connect, Socket, type SocketConstructorOpts } from 'node:net'
+import { networkInterfaces } from 'node:os'
 import type { NetworkRoute } from './routes'
 
 // Linux picks a socket's outgoing interface from the routing table alone: binding to an
 // interface's IP (Node's `localAddress`) still sends the packets out the default route, where the
 // network that doesn't own that IP drops them. SO_BINDTODEVICE pins the socket to the interface
 // itself. Node has no setsockopt, so the socket is made through libc and handed to Node as an fd.
-// Unprivileged since Linux 5.7. macOS and Windows already route by source address.
+// Unprivileged since Linux 5.7. macOS routes by source address; Windows requires IP_UNICAST_IF.
 
 const AF_INET = 2
 const AF_INET6 = 10
@@ -152,4 +153,48 @@ export async function connectRouteAsync(route: NetworkRoute, port: number): Prom
     socket.destroy()
     throw error
   }
+}
+
+function deviceFor(localAddress: string, host: string): string | undefined {
+  if (host === 'localhost' || host.startsWith('127.') || host === '::1') return undefined
+  for (const [device, addresses] of Object.entries(networkInterfaces())) {
+    if (addresses?.some((addr) => addr.address === localAddress)) return device
+  }
+  return undefined
+}
+
+/** A TCP connection to host:port that leaves through the interface owning `localAddress` or `device`. */
+export function connectFrom(
+  localAddress: string | undefined,
+  host: string,
+  port: number,
+  deviceName?: string
+): Socket {
+  const isLoopback = host === 'localhost' || host.startsWith('127.') || host === '::1'
+  if (isLoopback) {
+    return connect({ host, port })
+  }
+
+  const device = deviceName ?? (libc && localAddress ? deviceFor(localAddress, host) : undefined)
+  if (!libc || !device) {
+    return connect({ host, port, localAddress: localAddress || undefined })
+  }
+
+  const isIpv6 = Boolean(localAddress?.includes(':') || host.includes(':'))
+  const family = isIpv6 ? 6 : 4
+  let fd: number
+  try {
+    fd = openOnDevice(libc, device, family)
+  } catch (error) {
+    // The interface vanished since it was listed — surface it like any other connect error.
+    const socket = new Socket()
+    process.nextTick(() => socket.destroy(error as Error))
+    return socket
+  }
+  return new Socket({ fd, manualStart: true } as SocketConstructorOpts).connect({
+    host,
+    port,
+    localAddress: localAddress || undefined,
+    family
+  })
 }

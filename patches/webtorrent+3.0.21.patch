@@ -10,16 +10,89 @@ index 8d3d156..08e8cf7 100644
      this.utp = WebTorrent.UTP_SUPPORT && opts.utp !== false
      this.seedOutgoingConnections = opts.seedOutgoingConnections ?? true
  
+diff --git a/node_modules/webtorrent/lib/peer.js b/node_modules/webtorrent/lib/peer.js
+index 212f038..0fc41b3 100644
+--- a/node_modules/webtorrent/lib/peer.js
++++ b/node_modules/webtorrent/lib/peer.js
+@@ -188,7 +188,7 @@ export default class Peer extends EventEmitter {
+     if (!addr && this.conn.remoteAddress && this.conn.remotePort) {
+       addr = `${this.conn.remoteAddress}:${this.conn.remotePort}`
+     }
+-    this.swarm._onWire(this.wire, addr)
++    this.swarm._onWire(this.wire, addr, this.id)
+ 
+     // swarm could be destroyed in user's 'wire' event handler
+     if (!this.swarm || this.swarm.destroyed) return
+@@ -201,7 +201,7 @@ export default class Peer extends EventEmitter {
+       dht: this.swarm.private ? false : !!this.swarm.client.dht,
+       fast: true
+     }
+-    this.wire.handshake(this.swarm.infoHash, this.swarm.client.peerId, opts)
++    this.wire.handshake(this.swarm.infoHash, this.twinPeerId || this.swarm.client.peerId, opts)
+     this.sentHandshake = true
+   }
+ 
 diff --git a/node_modules/webtorrent/lib/torrent.js b/node_modules/webtorrent/lib/torrent.js
-index 771a87f..1eafb73 100644
+index 771a87f..88f4893 100644
 --- a/node_modules/webtorrent/lib/torrent.js
 +++ b/node_modules/webtorrent/lib/torrent.js
-@@ -2122,7 +2122,7 @@ export default class Torrent extends EventEmitter {
+@@ -1120,6 +1120,23 @@ export default class Torrent extends EventEmitter {
+     return newPeer
+   }
+ 
++  /**
++   * Plexo: dials `addr` again, under `key` rather than the address, so it doesn't count as a
++   * duplicate of the peer already there, and shakes hands with `peerId` (hex) rather than the
++   * client's, so the remote end sees a client of its own. No reconnects: the caller re-adds it.
++   * Dialled next: the peer is known to answer, unlike most of a queue fed by trackers and DHT.
++   */
++  addTwinPeer (addr, key, peerId) {
++    if (this.destroyed || this.paused || this._peers.has(key) || !this._validAddr(addr)) return null
++    const newPeer = Peer.createTCPOutgoingPeer(addr, this, this.client.throttleGroups, 'twin', this.client.secure)
++    newPeer.id = key
++    newPeer.twinPeerId = peerId
++    this._registerPeer(newPeer)
++    this._queue.unshift(newPeer)
++    this._drain()
++    return newPeer
++  }
++
+   addWebSeed (urlOrConn) {
+     if (this.destroyed) throw new Error('torrent is destroyed')
+ 
+@@ -1287,7 +1304,7 @@ export default class Torrent extends EventEmitter {
+     this._updateSelections()
+   }
+ 
+-  _onWire (wire, addr) {
++  _onWire (wire, addr, key = addr) {
+     this._debug('got wire %s (%s)', wire._debugId, addr || 'Unknown')
+ 
+     this.wires.push(wire)
+@@ -1380,7 +1397,7 @@ export default class Torrent extends EventEmitter {
+ 
+     // Hook to allow user-defined `bittorrent-protocol` extensions
+     // More info: https://github.com/webtorrent/bittorrent-protocol#extension-api
+-    this.emit('wire', wire, addr)
++    this.emit('wire', wire, addr, key)
+ 
+     if (this.ready) {
+       queueMicrotask(() => {
+@@ -2122,7 +2139,7 @@ export default class Torrent extends EventEmitter {
        const utpServer = this.client._utpServer
        peer.conn = utpServer ? utpServer.connect(opts.port, opts.host) : utp.connect(opts.port, opts.host)
      } else {
 -      peer.conn = net.connect(opts)
-+      peer.conn = this.client._connect ? this.client._connect(opts) : net.connect(opts)
++      peer.conn = this.client._connect ? this.client._connect({ ...opts, key: peer.id }) : net.connect(opts)
      }
  
      const conn = peer.conn
+@@ -2143,7 +2160,7 @@ export default class Torrent extends EventEmitter {
+ 
+     // When connection closes, attempt reconnect after timeout (with exponential backoff)
+     conn.on('close', () => {
+-      if (this.destroyed) return
++      if (this.destroyed || peer.twinPeerId) return
+ 
+       if (peer.retries >= RECONNECT_WAIT.length) {
+         if (this.client.utp) {

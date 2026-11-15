@@ -1,6 +1,7 @@
 import { expect, test } from '@playwright/test'
 import {
   DEFAULT_DOWNLOAD_SCHEDULE,
+  scheduleMessage,
   scheduleWindow,
   validSchedule
 } from '../src/shared/downloadSchedule'
@@ -69,6 +70,33 @@ test('local wall-clock windows survive daylight saving changes', () => {
       expect(scheduleWindow(schedule, now).endsAt).toBe(new Date(year, month, day, 7).getTime())
       expect(scheduleWindow(schedule, new Date(year, month, day, 7).getTime()).allowed).toBe(false)
     }
+  } finally {
+    if (previous === undefined) delete process.env.TZ
+    else process.env.TZ = previous
+  }
+})
+
+test('a window starting or ending in the hour clocks skip uses the moment they jump', () => {
+  const previous = process.env.TZ
+  process.env.TZ = 'America/New_York'
+  try {
+    // 2026-03-08: 2:00 EST becomes 3:00 EDT, so 2:30 never happens that day.
+    const march8 = (hour: number, minute = 0): number =>
+      new Date(2026, 2, 8, hour, minute).getTime()
+    const early = { ...schedule, startMinute: 2 * 60 + 30, endMinute: 7 * 60 }
+    expect(scheduleWindow(early, march8(1, 59)).nextStart).toBe(march8(3))
+    const threeAm = new Date(march8(3)).toLocaleTimeString([], {
+      hour: 'numeric',
+      minute: '2-digit'
+    })
+    expect(scheduleMessage(early, march8(1, 59))).toBe(`Waiting until ${threeAm} today`)
+    expect(scheduleWindow(early, march8(3)).allowed).toBe(true)
+    expect(scheduleWindow(early, march8(3, 15)).allowed).toBe(true)
+
+    const overnight = { ...schedule, startMinute: 22 * 60, endMinute: 2 * 60 + 30 }
+    const lateSaturday = new Date(2026, 2, 7, 23).getTime()
+    expect(scheduleWindow(overnight, lateSaturday).endsAt).toBe(march8(3))
+    expect(scheduleWindow(overnight, march8(3, 15)).allowed).toBe(false)
   } finally {
     if (previous === undefined) delete process.env.TZ
     else process.env.TZ = previous

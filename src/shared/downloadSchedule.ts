@@ -41,6 +41,26 @@ export interface ScheduleWindow {
   expired?: boolean
 }
 
+const MINUTE_MS = 60_000
+
+/** `date` at `minute` past local midnight. On the day clocks spring forward, a time in the skipped
+ * hour doesn't exist, and Date moves it on by the size of the gap (2:30 becomes 3:30); the clock
+ * passes 2:30 the moment it jumps to 3:00, so that's the time used instead. */
+function atLocalMinute(date: Date, minute: number): Date {
+  const at = new Date(date)
+  at.setHours(Math.floor(minute / 60), minute % 60, 0, 0)
+  const wallMinute = (time: Date): number => time.getHours() * 60 + time.getMinutes()
+  if (wallMinute(at) === minute) return at
+  // Back up to the first minute after the jump: the one before it reads earlier than `minute`, or
+  // is the day before (where clocks jump at midnight).
+  for (;;) {
+    const before = new Date(at.getTime() - MINUTE_MS)
+    if (before.getDate() !== date.getDate() || wallMinute(before) <= minute) break
+    at.setTime(before.getTime())
+  }
+  return at
+}
+
 /** Calendar arithmetic, rather than 24-hour offsets, keeps local times across DST changes.
  * Overnight windows belong to the day they start; the end date includes that whole window. */
 export function scheduleWindow(
@@ -55,10 +75,10 @@ export function scheduleWindow(
     const start = new Date(today.getFullYear(), today.getMonth(), today.getDate() + offset)
     if (!schedule.days.includes(start.getDay())) continue
     if (schedule.endDate && localDate(start) > schedule.endDate) continue
-    start.setHours(Math.floor(schedule.startMinute / 60), schedule.startMinute % 60, 0, 0)
-    const end = new Date(start)
-    if (schedule.endMinute < schedule.startMinute) end.setDate(end.getDate() + 1)
-    end.setHours(Math.floor(schedule.endMinute / 60), schedule.endMinute % 60, 0, 0)
+    const endDay = new Date(start)
+    if (schedule.endMinute < schedule.startMinute) endDay.setDate(endDay.getDate() + 1)
+    const end = atLocalMinute(endDay, schedule.endMinute)
+    start.setTime(atLocalMinute(start, schedule.startMinute).getTime())
     if (now >= start.getTime() && now < end.getTime()) {
       return { allowed: true, endsAt: end.getTime() }
     }
@@ -87,7 +107,8 @@ export function scheduleMessage(
       localDate(next) === localDate(new Date(now))
         ? 'today'
         : next.toLocaleDateString([], { weekday: 'short' })
-    return `Waiting until ${scheduleTime(schedule.startMinute)} ${day}`
+    const time = next.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })
+    return `Waiting until ${time} ${day}`
   }
   return window.expired ? 'Schedule ended · downloads waiting' : 'Schedule needs attention'
 }

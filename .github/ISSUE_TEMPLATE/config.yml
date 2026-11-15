@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Download the latest version
+    url: https://getplexo.app
+    about: Many problems are already fixed in the newest version.
+  - name: Chat with other users
+    url: https://github.com/anmolkapil/plexo/discussions
+    about: Share your setup, ask for tips, or talk through an idea.
