@@ -2,7 +2,7 @@ import { mkdtemp, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type WebTorrent from 'webtorrent'
-import type { ClientOptions, Torrent } from 'webtorrent'
+import type { ClientOptions, Store, Torrent } from 'webtorrent'
 
 // A small BitTorrent swarm in the test process: a tracker on 127.0.0.1, and webtorrent clients
 // seeding (or fetching) through it. The app finds the peers by announcing to the tracker, as it
@@ -17,6 +17,8 @@ interface TrackerServer {
   close(onClose?: () => void): void
   http: { address(): { port: number } }
 }
+const loadMemoryStore = (): Promise<Store> =>
+  import('memory-chunk-store' as string).then((module) => module.default)
 const loadTracker = (): Promise<new (options: object) => TrackerServer> =>
   import('bittorrent-tracker/server' as string).then((module) => module.default)
 
@@ -56,12 +58,20 @@ export class Swarm {
   }
 
   /** A client seeding `files`: one file, or a folder of them named `folder`. The same files,
-   * name and piece length make the same torrent, so seed() again for another seeder of it. */
+   * name and piece length make the same torrent, so seed() again for another seeder of it.
+   * `inMemory` keeps the seeder's copy off disk: for names this system can't save (a torrent made
+   * elsewhere can have them), which it would otherwise have to write as they are. */
   async seed(
     files: Buffer[],
-    options: { folder?: string; pieceLength?: number; uploadLimit?: number } = {}
+    options: {
+      folder?: string
+      pieceLength?: number
+      uploadLimit?: number
+      inMemory?: boolean
+    } = {}
   ): Promise<Torrent> {
     const client = await this.client({ uploadLimit: options.uploadLimit })
+    const store = options.inMemory ? await loadMemoryStore() : undefined
     // A folder of its own, as leech() has: left to webtorrent, every seeder shares /tmp/webtorrent,
     // and two tests seeding different files under one name in parallel overwrite each other's —
     // the seeder then serves pieces that fail verification, forever.
@@ -69,7 +79,13 @@ export class Swarm {
     return new Promise((resolve) =>
       client.seed(
         files.length === 1 ? files[0] : files,
-        { name: options.folder, pieceLength: options.pieceLength, announce: this.announce, path },
+        {
+          name: options.folder,
+          pieceLength: options.pieceLength,
+          announce: this.announce,
+          path,
+          store
+        },
         resolve
       )
     )
@@ -97,9 +113,13 @@ export class Swarm {
   }
 }
 
-/** `torrent`'s .torrent, written to a file for the app to open. */
-export async function torrentFileOnDisk(torrent: Torrent): Promise<string> {
-  const path = join(await mkdtemp(join(tmpdir(), 'plexo-torrent-')), `${torrent.name}.torrent`)
+/** `torrent`'s .torrent, written to a file for the app to open: named after the torrent, or
+ * `fileName` for a torrent whose name this system can't save. */
+export async function torrentFileOnDisk(
+  torrent: Torrent,
+  fileName = torrent.name
+): Promise<string> {
+  const path = join(await mkdtemp(join(tmpdir(), 'plexo-torrent-')), `${fileName}.torrent`)
   await writeFile(path, torrent.torrentFile)
   return path
 }
