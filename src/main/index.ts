@@ -14,7 +14,12 @@ import icon from '../../resources/icon-dark.png?asset'
 import { registerIpcHandlers } from './ipc/handlers'
 import { keepsRunningForBrowser, startBridge } from './browserBridge'
 import { acceptedLink, bringForward, linkFromArgs, offerLink } from './openLinks'
-import { loadSettings, loadThemeSource, migrateLegacyNetworkPreferences } from './settings'
+import {
+  loadSettings,
+  loadThemeSource,
+  migrateLegacyNetworkPreferences,
+  sealProxyPasswords
+} from './settings'
 import { startUpdater } from './updater'
 import { testKnobs } from './testKnobs'
 import type { DownloadManager } from './download/downloadManager'
@@ -208,6 +213,11 @@ app.whenReady().then(async () => {
   // A failed move keeps the old file, to retry next launch — it must never stop the window opening.
   await migrateLegacyNetworkPreferences().catch((error) =>
     console.error('[plexo] failed to migrate network-preferences.json', error)
+  )
+  // Proxy passwords an older version saved in the clear. Failing, they stay as they were, to be
+  // sealed by the next save or launch.
+  await sealProxyPasswords().catch((error) =>
+    console.error('[plexo] failed to seal proxy passwords', error)
   )
 
   // The macOS About window (Plexo › About Plexo); its copyright comes from electron-builder.yml.

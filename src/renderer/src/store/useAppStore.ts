@@ -9,6 +9,7 @@ import type {
   NetworkPreference,
   NetworkPreferences,
   PendingLink,
+  ProxyConfig,
   SpeedUnit,
   ThemeSource
 } from '@shared/types'
@@ -27,6 +28,8 @@ interface AppStore {
   interfacesError: string | null
   /** User customizations (name/color) per network interface id — persisted in the main process. */
   networkPreferences: NetworkPreferences
+  /** A proxy password typed is kept only until Plexo quits: there's no keychain to seal it with. */
+  noKeychain: boolean
 
   /** Persisted in the main process alongside nativeTheme.themeSource. */
   themeSource: ThemeSource
@@ -122,6 +125,12 @@ function persist(patch: AppSettings): void {
   window.plexo.updateSettings(patch).catch(() => {})
 }
 
+/** A proxy as the window keeps it once saved: whether it has a password, not the password. None
+ * sent keeps the one it had. */
+function withoutPassword({ password, ...proxy }: ProxyConfig, had: boolean): ProxyConfig {
+  return { ...proxy, hasPassword: password === undefined ? had : password !== '' }
+}
+
 /** Links let go here: a listing main sent before it heard so would bring them back. */
 const letGo = new Set<string>()
 
@@ -130,6 +139,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
   interfacesStatus: 'idle',
   interfacesError: null,
   networkPreferences: initial.networkPreferences,
+  noKeychain: initial.noKeychain === true,
   themeSource: initial.themeSource,
 
   homeDir: initial.homeDir,
@@ -187,12 +197,16 @@ export const useAppStore = create<AppStore>((set, get) => ({
 
   // An explicit `undefined` in `patch` clears that field; main drops an entry left with neither.
   setNetworkPreference: (id, patch) => {
-    const networkPreferences = {
-      ...get().networkPreferences,
-      [id]: { ...get().networkPreferences[id], ...patch }
-    }
-    set({ networkPreferences })
-    persist({ networkPreferences })
+    const preferences = get().networkPreferences
+    const preference = { ...preferences[id], ...patch }
+    // A proxy password goes to main, which seals it: the window keeps only that there is one, so
+    // what it sends next, with no password, keeps it.
+    const had = preferences[id]?.proxy?.hasPassword === true
+    const shown = preference.proxy
+      ? { ...preference, proxy: withoutPassword(preference.proxy, had) }
+      : preference
+    set({ networkPreferences: { ...preferences, [id]: shown } })
+    persist({ networkPreferences: { ...preferences, [id]: preference } })
   },
 
   setThemeSource: (themeSource) => {

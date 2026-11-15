@@ -36,7 +36,12 @@ import { testKnobs } from '../testKnobs'
 import { deviceBindingSupported } from '../network/deviceBinding'
 import { pendingLink, pendingLinks, releaseLink } from '../openLinks'
 import { NetworkMonitor } from '../network/interfaces'
-import { loadSettings, saveSettings } from '../settings'
+import {
+  canSealPasswords,
+  loadSettings,
+  networkPreferencesForWindow,
+  saveSettings
+} from '../settings'
 import { showUpdateMenu, updateState } from '../updater'
 
 async function openNetworkSettings(): Promise<void> {
@@ -153,14 +158,16 @@ export function registerIpcHandlers(getWindow: () => BrowserWindow | null): Down
         homeDir: getHomeDir(),
         downloadsDir: getDefaultDownloadsDir(),
         themeSource: currentThemeSource(),
-        networkPreferences: settings.networkPreferences ?? {},
+        // Proxy passwords stay in the main process: the window only learns there is one.
+        networkPreferences: networkPreferencesForWindow(settings.networkPreferences ?? {}),
         downloadsAtOnce: settings.downloadsAtOnce ?? DOWNLOADS_AT_ONCE.default,
         speedLimit: settings.speedLimit,
         slowMode: settings.slowMode ?? false,
         slowModeSpeed: settings.slowModeSpeed ?? DEFAULT_SLOW_MODE_SPEED,
         speedUnit: settings.speedUnit ?? 'bytes',
         destinationDir: destinationExists ? effectiveDir : undefined,
-        defaultDestinationDir: settings.defaultDestinationDir
+        defaultDestinationDir: settings.defaultDestinationDir,
+        ...(!canSealPasswords() && { noKeychain: true })
       } satisfies InitialState
     } catch (error) {
       console.error('[plexo] failed to read initial state', error)

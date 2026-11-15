@@ -46,6 +46,7 @@ export function NetworkEditPopover({
   const [open, setOpen] = useState(false)
   const preference = useAppStore((store) => store.networkPreferences[interfaceId])
   const setNetworkPreference = useAppStore((store) => store.setNetworkPreference)
+  const noKeychain = useAppStore((store) => store.noKeychain)
   const visual = useNetworkVisuals()(interfaceId, interfaceKind, osName)
 
   const [draftName, setDraftName] = useState('')
@@ -57,7 +58,11 @@ export function NetworkEditPopover({
   const [proxyHost, setProxyHost] = useState('')
   const [proxyPort, setProxyPort] = useState('')
   const [proxyUsername, setProxyUsername] = useState('')
+  // The saved password never comes to the window: left empty, the field keeps it, and Clear
+  // removes it.
   const [proxyPassword, setProxyPassword] = useState('')
+  const [clearPassword, setClearPassword] = useState(false)
+  const savedPassword = preference?.proxy?.hasPassword === true && !clearPassword
 
   function save(): void {
     const trimmed = draftName.trim().slice(0, MAX_NETWORK_NAME_LENGTH)
@@ -79,11 +84,13 @@ export function NetworkEditPopover({
           host: hostTrimmed,
           port,
           username: proxyUsername.trim() || undefined,
-          password: proxyPassword || undefined
+          password: proxyPassword !== '' ? proxyPassword : clearPassword ? '' : undefined
         }
       : undefined
 
-    const proxyChanged = JSON.stringify(preference?.proxy ?? null) !== JSON.stringify(proxy ?? null)
+    // As the draft has it: whether there's a saved password isn't a field of it.
+    const saved = preference?.proxy ? { ...preference.proxy, hasPassword: undefined } : null
+    const proxyChanged = JSON.stringify(saved) !== JSON.stringify(proxy ?? null)
     if (customName !== preference?.customName || colorId !== preference?.colorId || proxyChanged) {
       setNetworkPreference(interfaceId, { customName, colorId, proxy })
     }
@@ -107,7 +114,8 @@ export function NetworkEditPopover({
           setProxyHost(p?.host ?? '')
           setProxyPort(p?.port ? String(p.port) : '')
           setProxyUsername(p?.username ?? '')
-          setProxyPassword(p?.password ?? '')
+          setProxyPassword('')
+          setClearPassword(false)
         } else if (details.reason !== 'escape-key') {
           save()
         }
@@ -295,10 +303,25 @@ export function NetworkEditPopover({
                   />
                 </div>
                 <div className="flex flex-col gap-1">
-                  <label htmlFor={`proxy-pass-${interfaceId}`} className={fieldLabelClass}>
-                    Password{' '}
-                    <span className="text-[8px] font-normal lowercase opacity-70">(opt)</span>
-                  </label>
+                  <div className="flex items-center justify-between">
+                    <label htmlFor={`proxy-pass-${interfaceId}`} className={fieldLabelClass}>
+                      Password{' '}
+                      <span className="text-[8px] font-normal lowercase opacity-70">(opt)</span>
+                    </label>
+                    {savedPassword && proxyType !== 'socks4' && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setClearPassword(true)
+                          setProxyPassword('')
+                        }}
+                        aria-label="Clear saved password"
+                        className="rounded-[3px] font-sans text-[10px] leading-none text-muted-foreground outline-none hover:text-foreground focus-visible:text-foreground focus-visible:underline"
+                      >
+                        Clear
+                      </button>
+                    )}
+                  </div>
                   <input
                     id={`proxy-pass-${interfaceId}`}
                     type="password"
@@ -307,7 +330,9 @@ export function NetworkEditPopover({
                     onKeyDown={(event) => {
                       if (event.key === 'Enter') close()
                     }}
-                    placeholder={proxyType === 'socks4' ? 'N/A' : '••••••••'}
+                    placeholder={
+                      proxyType === 'socks4' ? 'N/A' : savedPassword ? 'Saved' : '••••••••'
+                    }
                     autoComplete="off"
                     disabled={proxyType === 'socks4'}
                     className={cn(
@@ -317,6 +342,12 @@ export function NetworkEditPopover({
                   />
                 </div>
               </div>
+              {noKeychain && proxyType !== 'socks4' && (proxyPassword !== '' || savedPassword) && (
+                <p className="font-sans text-[10.5px] leading-snug text-muted-foreground">
+                  This computer has no keychain Plexo can use, so the password is kept only until
+                  Plexo quits.
+                </p>
+              )}
             </div>
           )}
         </div>
