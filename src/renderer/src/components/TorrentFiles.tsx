@@ -156,6 +156,9 @@ function FolderRow({
   onToggle: () => void
   onChoose: (checked: boolean) => void
 }): React.JSX.Element {
+  // The name ticks the folder's box, as a file's name ticks its own: the box and the name are a
+  // label, and the folder icon beside them, outside it, opens and shuts the folder. The icon sits
+  // above the box's wider click area, which would otherwise reach over its right edge.
   return (
     <div className="flex items-center gap-1.5 py-0.5" style={{ paddingLeft: indent(node.depth) }}>
       <button
@@ -163,7 +166,7 @@ function FolderRow({
         onClick={onToggle}
         aria-label={`${collapsed ? 'Expand' : 'Collapse'} ${node.name}`}
         aria-expanded={!collapsed}
-        className="flex size-4 shrink-0 items-center justify-center rounded text-muted-foreground hover:bg-secondary hover:text-foreground"
+        className="relative z-10 flex size-4 shrink-0 items-center justify-center rounded text-muted-foreground hover:bg-secondary hover:text-foreground"
       >
         {collapsed ? (
           <Folder aria-hidden className="size-3.5" />
@@ -171,15 +174,17 @@ function FolderRow({
           <FolderOpen aria-hidden className="size-3.5" />
         )}
       </button>
-      <Checkbox
-        checked={state.checked}
-        indeterminate={state.indeterminate}
-        disabled={disabled}
-        onCheckedChange={(checked) => onChoose(Boolean(checked))}
-      />
-      <span className="min-w-0 flex-1 truncate font-mono text-[11.5px] font-medium">
-        {node.name}
-      </span>
+      <label className="flex min-w-0 flex-1 items-center gap-1.5">
+        <Checkbox
+          checked={state.checked}
+          indeterminate={state.indeterminate}
+          disabled={disabled}
+          onCheckedChange={(checked) => onChoose(Boolean(checked))}
+        />
+        <span className="min-w-0 flex-1 truncate font-mono text-[11.5px] font-medium">
+          {node.name}
+        </span>
+      </label>
     </div>
   )
 }
