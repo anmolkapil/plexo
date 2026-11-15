@@ -12,6 +12,7 @@ import {
 } from '../shared/types'
 import { readJson, updateJson } from './jsonFile'
 import { DEFAULT_DOWNLOAD_SCHEDULE, validSchedule } from '../shared/downloadSchedule'
+import { carryOverDevicePreferences } from '../shared/networkPreferences'
 import { sameProxyEndpoint } from '../shared/proxy'
 
 function settingsPath(): string {
@@ -315,6 +316,22 @@ export function saveSettings(patch: unknown): Promise<void> {
     }
     return passwordsSealed(sanitizeSettings(merged))
   })
+}
+
+/** Saves carryOverDevicePreferences for these networks, and says whether anything moved. */
+export async function carryOverNetworkPreferences(
+  networks: { id: string; device: string }[]
+): Promise<boolean> {
+  const saved = (await loadSettings()).networkPreferences ?? {}
+  if (carryOverDevicePreferences(saved, networks) === saved) return false
+  await updateJson(settingsPath(), (current) => {
+    const settings = sanitizeSettings(current)
+    return {
+      ...settings,
+      networkPreferences: carryOverDevicePreferences(settings.networkPreferences ?? {}, networks)
+    }
+  })
+  return true
 }
 
 export async function loadThemeSource(): Promise<ThemeSource> {

@@ -12,7 +12,8 @@ export interface NetworkAddress {
 export type ThemeSource = 'light' | 'dark'
 
 export interface NetworkInterfaceInfo {
-  /** Stable identifier for this interface (currently the OS device name, e.g. "en0"). */
+  /** Stable identifier for this interface: the OS device name (e.g. "en0"), or "usb:<serial>" for
+   * a phone tethered over USB on Linux, whose device name changes each time it is plugged in. */
   id: string
   device: string
   displayName: string
