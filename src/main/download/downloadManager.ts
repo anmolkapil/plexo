@@ -1281,6 +1281,9 @@ export class DownloadManager {
         id,
         kind: 'http',
         url: requestPayload.url,
+        supportsRanges: requestPayload.supportsRanges,
+        etagPresent: requestPayload.etag !== null,
+        lastModifiedPresent: requestPayload.lastModified !== null,
         fileName: basename(destinationPath),
         destinationPath,
         totalBytes: requestPayload.totalBytes,
@@ -1516,6 +1519,9 @@ export class DownloadManager {
     runtime.requestPayload.url = probe.finalUrl
     runtime.requestPayload.browser = browser
     runtime.state.url = probe.finalUrl
+    runtime.state.supportsRanges = probe.supportsRanges
+    runtime.state.etagPresent = probe.etag !== null
+    runtime.state.lastModifiedPresent = probe.lastModified !== null
     await this.persistNow(runtime)
     this.resume(runtime.state.id)
   }

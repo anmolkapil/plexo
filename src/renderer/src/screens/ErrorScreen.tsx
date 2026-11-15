@@ -1,7 +1,17 @@
+import { createFailureReport, githubFailureReportUrl } from '@shared/failureReport'
 import type { DownloadState } from '@shared/types'
 import { Folder } from 'lucide-react'
 import { useState } from 'react'
 import { DetailHeader } from '../components/DetailHeader'
+import { Button } from '../components/ui/button'
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle
+} from '../components/ui/dialog'
 import { TruncatedText } from '../components/TruncatedText'
 import { UsenetServerButton } from '../components/UsenetServerDialog'
 import {
@@ -15,7 +25,11 @@ import {
 
 export function ErrorScreen({ download }: { download: DownloadState }): React.JSX.Element {
   const [copied, setCopied] = useState(false)
+  const [reportCopied, setReportCopied] = useState(false)
+  const [previewOpen, setPreviewOpen] = useState(false)
   const cancelled = download.status === 'cancelled'
+  const { appVersion, os, architecture } = window.plexo.initialState
+  const report = createFailureReport(download, { appVersion, os, architecture })
   const knownSize = download.totalBytes > 0
   const percent = knownSize ? formatPercent(download.bytesDownloaded, wantedBytes(download)) : 0
   const heading = cancelled ? 'Download cancelled' : 'Download failed'
@@ -33,6 +47,22 @@ export function ErrorScreen({ download }: { download: DownloadState }): React.JS
     } catch {
       // Ignore clipboard write failures
     }
+  }
+
+  const copyReport = async (): Promise<void> => {
+    try {
+      await navigator.clipboard.writeText(report)
+      setReportCopied(true)
+      setTimeout(() => setReportCopied(false), 2000)
+    } catch {
+      // No report leaves the app if copying fails.
+    }
+  }
+
+  const openGitHubDraft = (): void => {
+    // This opens GitHub's draft issue. The user must still submit it there.
+    window.open(githubFailureReportUrl(report), '_blank', 'noopener,noreferrer')
+    setPreviewOpen(false)
   }
 
   return (
@@ -139,6 +169,17 @@ export function ErrorScreen({ download }: { download: DownloadState }): React.JS
             </div>
           </div>
 
+          {!cancelled && (
+            <div className="flex w-full flex-wrap items-center justify-center gap-2">
+              <Button size="sm" variant="outline" onClick={() => void copyReport()}>
+                {reportCopied ? 'Copied details' : 'Copy details'}
+              </Button>
+              <Button size="sm" variant="outline" onClick={() => setPreviewOpen(true)}>
+                Send this report…
+              </Button>
+            </div>
+          )}
+
           <div className="flex w-full min-w-0 items-center gap-2 border-t-[0.5px] border-border pt-3">
             <div className="min-w-0 flex-1 text-left font-mono text-[11px] leading-none text-muted-foreground">
               <TruncatedText text={download.url} />
@@ -155,6 +196,31 @@ export function ErrorScreen({ download }: { download: DownloadState }): React.JS
           </div>
         </div>
       </div>
+      <Dialog open={previewOpen} onOpenChange={setPreviewOpen}>
+        <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-lg">
+          <DialogHeader>
+            <DialogTitle>Review failure report</DialogTitle>
+            <DialogDescription>
+              Nothing is sent automatically. Review exactly what will be copied into a GitHub
+              issue draft; you can edit or discard it before submitting on GitHub.
+            </DialogDescription>
+          </DialogHeader>
+          <pre
+            data-testid="failure-report-preview"
+            className="max-h-64 overflow-auto whitespace-pre-wrap break-words rounded-md bg-muted p-3 font-mono text-[11px]"
+          >
+            {report}
+          </pre>
+          <DialogFooter>
+            <Button size="sm" variant="outline" onClick={() => setPreviewOpen(false)}>
+              Cancel
+            </Button>
+            <Button size="sm" onClick={openGitHubDraft}>
+              Open GitHub draft
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }
