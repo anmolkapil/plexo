@@ -1,0 +1,26 @@
+# The labels on the field headings are read by .github/workflows/issue-labels.yml.
+name: Question
+description: Ask how to use or set up Plexo.
+labels: [question, needs-triage]
+body:
+  - type: textarea
+    id: question
+    attributes:
+      label: Your question
+    validations:
+      required: true
+
+  - type: dropdown
+    id: os
+    attributes:
+      label: Operating system
+      options:
+        - Windows
+        - macOS
+        - Linux
+
+  - type: input
+    id: version
+    attributes:
+      label: Plexo version
+      placeholder: 1.0.0-rc.15

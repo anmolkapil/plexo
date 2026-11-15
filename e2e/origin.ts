@@ -14,6 +14,10 @@ export type Fault =
   | 'ok'
   /** Replies 200 with the whole file, as a server without range support does. */
   | 'ignoreRange'
+  /** 206 whose Content-Range and body run to the end of the file, ignoring the asked end. */
+  | 'wholeRange'
+  /** 206 like a Cloudflare-fronted host: Content-Range ends at the file, but the body is the range. */
+  | 'rangeToEof'
   /** 206 whose Content-Range starts one byte later than asked. */
   | 'wrongStart'
   /** 206 with a correct header but one byte more body than the range. */
@@ -35,7 +39,7 @@ export type Fault =
 
 /** The app's probe (src/main/download/probe.ts asks for bytes=0-1023), as opposed to a chunk. */
 export const isProbe = (range: OriginRequest['range']): boolean =>
-  range?.start === 0 && range.end === 1023
+  (range?.start === 0 && range.end === 1023) || (range?.start === 1024 && range.end === 2047)
 
 export interface OriginRequest {
   /** 1-based count of requests this server has seen. */
@@ -248,7 +252,7 @@ export class Origin {
     let status = 200
     if (rangesOn && request.range) {
       start = request.range.start
-      end = Math.min(request.range.end ?? total - 1, total - 1)
+      end = fault === 'wholeRange' ? total - 1 : Math.min(request.range.end ?? total - 1, total - 1)
       if (start >= total) {
         entry.status = 416
         res.writeHead(416, { 'Content-Range': `bytes */${total}` }).end()
@@ -257,7 +261,8 @@ export class Origin {
       status = 206
       if (fault !== 'noContentRange') {
         const shownStart = fault === 'wrongStart' ? start + 1 : start
-        headers['Content-Range'] = `bytes ${shownStart}-${end}/${total}`
+        const shownEnd = fault === 'rangeToEof' ? total - 1 : end
+        headers['Content-Range'] = `bytes ${shownStart}-${shownEnd}/${total}`
       }
     }
 

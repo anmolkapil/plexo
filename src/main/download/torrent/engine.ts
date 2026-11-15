@@ -27,6 +27,24 @@ export function loadClientNamer(): Promise<(peerId: string) => string | null> {
   return peerIdParser
 }
 
+let bencodeDecoder: Promise<(data: Uint8Array) => unknown> | null = null
+
+/** Checks whether a .torrent file is marked private (BEP 27). */
+export async function isTorrentPrivate(torrentFile: Uint8Array): Promise<boolean> {
+  bencodeDecoder ??= import('bencode').then(
+    ({ default: bencode }) =>
+      (data) =>
+        bencode.decode(data)
+  )
+  const decode = await bencodeDecoder
+  try {
+    const decoded = decode(torrentFile) as { info?: { private?: number | Uint8Array } }
+    return Number(decoded?.info?.private) === 1
+  } catch {
+    return false
+  }
+}
+
 /**
  * webtorrent's own file store, writing the torrent's top entry (its folder, or its one file) under
  * `name` rather than the torrent's: a download claims a free name, "Name (1)" when the torrent's
@@ -74,7 +92,10 @@ export async function createClient(
     natUpnp: false,
     natPmp: false,
     lsd: false,
-    dht: testKnobs.torrentDht,
+    dht:
+      testKnobs.torrentDht && testKnobs.torrentDhtBootstrap
+        ? { bootstrap: testKnobs.torrentDhtBootstrap }
+        : testKnobs.torrentDht,
     ...options
   })
 }

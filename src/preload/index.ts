@@ -5,8 +5,12 @@ import type {
   AppSettings,
   DownloadUpdate,
   InitialState,
+  MagnetCheckStatus,
   NetworkInterfaceInfo,
-  UpdateState
+  TelegramAuthState,
+  TelegramCredentials,
+  UpdateState,
+  UsenetServerInput
 } from '../shared/types'
 
 /** Typed wrapper around ipcRenderer.invoke — the channel name picks its args/result shape out of
@@ -30,7 +34,7 @@ const plexoApi = {
   updateSettings: (patch: AppSettings) => invoke('updateSettings', patch),
   probeUrl: (url: string) => invoke('probeUrl', url),
   chooseDestinationFolder: (defaultPath: string) => invoke('chooseDestinationFolder', defaultPath),
-  chooseTorrentFile: () => invoke('chooseTorrentFile'),
+  chooseDownloadFile: () => invoke('chooseDownloadFile'),
   /** Where a file dropped on the window is on disk ('' for one that isn't a file). */
   pathForFile: (file: File) => webUtils.getPathForFile(file),
   readClipboardText: () => invoke('readClipboardText'),
@@ -47,6 +51,9 @@ const plexoApi = {
   torrentFiles: (downloadId: string) => invoke('torrentFiles', downloadId),
   chooseTorrentFiles: (downloadId: string, selected: number[]) =>
     invoke('chooseTorrentFiles', downloadId, selected),
+  torrentTrackers: (downloadId: string) => invoke('torrentTrackers', downloadId),
+  addTorrentTrackers: (downloadId: string, trackers: string[]) =>
+    invoke('addTorrentTrackers', downloadId, trackers),
   pauseDownload: (downloadId: string) => invoke('pauseDownload', downloadId),
   resumeDownload: (downloadId: string) => invoke('resumeDownload', downloadId),
   relinkDownload: (downloadId: string, url: string) => invoke('relinkDownload', downloadId, url),
@@ -61,6 +68,28 @@ const plexoApi = {
   resumeFromLink: (linkId: string, downloadId: string) =>
     invoke('resumeFromLink', linkId, downloadId),
   dismissLink: (id: string) => invoke('dismissLink', id),
+  usenetServer: () => invoke('usenetServer'),
+  saveUsenetServer: (server: UsenetServerInput) => invoke('saveUsenetServer', server),
+  saveUsenetBackup: (server: UsenetServerInput | null) => invoke('saveUsenetBackup', server),
+  testUsenetServer: (server: UsenetServerInput, backup?: boolean) =>
+    invoke('testUsenetServer', server, backup),
+
+  telegramState: () => invoke('telegramState'),
+  telegramStartLogin: (credentials: TelegramCredentials) =>
+    invoke('telegramStartLogin', credentials),
+  telegramStartQrLogin: () => invoke('telegramStartQrLogin'),
+  telegramSubmitCode: (code: string) => invoke('telegramSubmitCode', code),
+  telegramSubmitPassword: (password: string) => invoke('telegramSubmitPassword', password),
+  telegramLogout: () => invoke('telegramLogout'),
+  telegramListMedia: (offsetId?: number, limit?: number) =>
+    invoke('telegramListMedia', offsetId, limit),
+
+  /** Where Telegram sign-in stands changed (see TelegramAuthState). */
+  onTelegramAuth: (callback: (state: TelegramAuthState) => void): (() => void) => {
+    const listener = (_event: IpcRendererEvent, state: TelegramAuthState): void => callback(state)
+    ipcRenderer.on(IpcChannels.telegramAuthChanged, listener)
+    return () => ipcRenderer.removeListener(IpcChannels.telegramAuthChanged, listener)
+  },
 
   /** pendingLinks() has the new link. */
   onLinkReceived: (callback: () => void): (() => void) => {
@@ -93,6 +122,12 @@ const plexoApi = {
       callback(networks)
     ipcRenderer.on(IpcChannels.networksChanged, listener)
     return () => ipcRenderer.removeListener(IpcChannels.networksChanged, listener)
+  },
+
+  onMagnetCheckStatus: (callback: (status: MagnetCheckStatus) => void): (() => void) => {
+    const listener = (_event: IpcRendererEvent, status: MagnetCheckStatus): void => callback(status)
+    ipcRenderer.on(IpcChannels.magnetCheckStatus, listener)
+    return () => ipcRenderer.removeListener(IpcChannels.magnetCheckStatus, listener)
   }
 }
 

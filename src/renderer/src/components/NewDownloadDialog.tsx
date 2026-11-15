@@ -1,8 +1,18 @@
-import type { ProbeResult } from '@shared/types'
+import type { ProbeResult, UsenetServer } from '@shared/types'
 import { cn } from 'cn'
-import { AlertTriangle, ChevronLeft, ChevronRight, FolderOpen, Globe, Lock, X } from 'lucide-react'
+import {
+  AlertTriangle,
+  ChevronLeft,
+  ChevronRight,
+  FolderOpen,
+  Globe,
+  Lock,
+  Pencil,
+  X
+} from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 import { useFormatSpeedLimit } from '../hooks/useFormatSpeed'
+import { useFreeSpace } from '../hooks/useFreeSpace'
 import { useNetworkUsage } from '../hooks/useNetworks'
 import { useNetworkVisuals } from '../hooks/useNetworkVisuals'
 import { useDownloadSchedule } from '../hooks/useDownloadSchedule'
@@ -19,11 +29,14 @@ import { Button } from './ui/button'
 import { Dialog, DialogContent, DialogTitle } from './ui/dialog'
 import { ToggleGroup, ToggleGroupItem } from './ui/toggle-group'
 import { TorrentFileList } from './TorrentFiles'
+import { UsenetServerDialog } from './UsenetServerDialog'
 import { Tooltip, TooltipContent, TooltipTrigger } from './ui/tooltip'
+import { NetworkEditPopover } from './NetworkEditPopover'
 
 type ProbeState =
   | { status: 'idle' }
-  | { status: 'probing' }
+  /** `noPeersYet`: a magnet link whose first search found no one, still being looked for. */
+  | { status: 'probing'; noPeersYet?: boolean }
   | { status: 'ready'; result: ProbeResult }
   | { status: 'error'; message: string }
 
@@ -34,6 +47,33 @@ type StreamsChoice = 'auto' | number
 const STREAMS_CHOICES: StreamsChoice[] = ['auto', 4, 8, 16, 32]
 
 const labelClass = 'w-16 shrink-0 text-[12.5px] text-[var(--text-secondary)]'
+
+function NetworkListNotice({
+  status,
+  error,
+  onScan
+}: {
+  status: 'idle' | 'loading' | 'ready' | 'error'
+  error: string | null
+  onScan: () => void
+}): React.JSX.Element {
+  if (status === 'idle' || status === 'loading') {
+    return (
+      <span className="font-mono text-[12px] text-muted-foreground">Looking for networks…</span>
+    )
+  }
+  const detail = error ? describeError(error) : ''
+  return (
+    <span className="flex flex-wrap items-center gap-2 text-[12.5px] leading-snug text-[var(--text-secondary)]">
+      {status === 'error'
+        ? `Plexo couldn’t list this computer’s networks.${detail ? ` ${detail}` : ''}`
+        : 'No networks connected. Join a Wi-Fi network, plug in Ethernet, or connect your phone using USB tethering.'}
+      <Button type="button" variant="secondary" size="xs" onClick={onScan}>
+        Scan again
+      </Button>
+    </span>
+  )
+}
 
 /** New download: a link, then only what differs from one download to the next — its name (or a
  * torrent's files), where it goes, over which networks, and how many streams each runs. Everything set once for every
@@ -61,6 +101,9 @@ function NewDownloadForm({ onDone }: { onDone: () => void }): React.JSX.Element 
   const { schedule, window: scheduleWindow } = useDownloadSchedule()
   const scheduledWait = schedule?.enabled && !scheduleWindow.allowed
   const interfaces = useAppStore((store) => store.interfaces)
+  const interfacesStatus = useAppStore((store) => store.interfacesStatus)
+  const interfacesError = useAppStore((store) => store.interfacesError)
+  const loadInterfaces = useAppStore((store) => store.loadInterfaces)
   const homeDir = useAppStore((store) => store.homeDir)
   const url = useAppStore((store) => store.draftUrl)
   const setUrl = useAppStore((store) => store.setDraftUrl)
@@ -71,8 +114,10 @@ function NewDownloadForm({ onDone }: { onDone: () => void }): React.JSX.Element 
   const dropLink = useAppStore((store) => store.dropLink)
   const shownLink = links.find((link) => link.id === shownId)
   const position = shownLink ? links.indexOf(shownLink) : -1
-  const destinationDir = useAppStore((store) => store.destinationDir)
-  const setDestinationDir = useAppStore((store) => store.setDestinationDir)
+  const storeDestinationDir = useAppStore((store) => store.destinationDir)
+  const defaultDestinationDir = useAppStore((store) => store.defaultDestinationDir)
+  const [oneOffDestinationDir, setOneOffDestinationDir] = useState<string | null>(null)
+  const destinationDir = oneOffDestinationDir ?? storeDestinationDir
   const full = useAppStore(
     (store) =>
       Object.values(store.downloads).filter((download) => download.status === 'downloading')
@@ -100,6 +145,10 @@ function NewDownloadForm({ onDone }: { onDone: () => void }): React.JSX.Element 
   const [skippedFiles, setSkippedFiles] = useState<number[]>([])
   // For this download only: the next one starts on Auto again.
   const [streamsChoice, setStreamsChoice] = useState<StreamsChoice>('auto')
+  // The news server, for an NZB: undefined until it has been asked for, null when there's none.
+  const [server, setServer] = useState<UsenetServer | null | undefined>(undefined)
+  const [serverOpen, setServerOpen] = useState(false)
+  const freeSpace = useFreeSpace(destinationDir)
 
   // Opened with nothing in it: a link on the clipboard is most likely what it's for, as download
   // managers have long assumed. Anything else on the clipboard is left alone.
@@ -141,6 +190,12 @@ function NewDownloadForm({ onDone }: { onDone: () => void }): React.JSX.Element 
     // answer is no longer wanted then.
     let stale = false
     setProbe({ status: 'probing' })
+    const stopListening = window.plexo.onMagnetCheckStatus((status) => {
+      if (stale || status.link !== trimmed) return
+      setProbe((now) =>
+        now.status === 'probing' ? { status: 'probing', noPeersYet: status.noPeersYet } : now
+      )
+    })
     const timer = setTimeout(async () => {
       try {
         const result = await window.plexo.probeUrl(trimmed)
@@ -155,11 +210,23 @@ function NewDownloadForm({ onDone }: { onDone: () => void }): React.JSX.Element 
     return () => {
       stale = true
       clearTimeout(timer)
+      stopListening()
     }
   }, [url, dropLink])
 
   const ready = probe.status === 'ready' ? probe.result : null
   const torrent = ready?.kind === 'torrent' ? ready.torrent : null
+  const nzb = ready?.kind === 'nzb' ? ready.nzb : null
+
+  // Asked for once an NZB turns up: no other download needs it.
+  const wantsServer = nzb !== null && server === undefined
+  useEffect(() => {
+    if (!wantsServer) return
+    void window.plexo
+      .usenetServer()
+      .then(setServer)
+      .catch(() => setServer(null))
+  }, [wantsServer])
   const chosenFiles = torrent
     ? torrent.files.flatMap((_, index) => (skippedFiles.includes(index) ? [] : [index]))
     : []
@@ -167,6 +234,12 @@ function NewDownloadForm({ onDone }: { onDone: () => void }): React.JSX.Element 
   const sizeToFetch = torrent
     ? chosenFiles.reduce((sum, index) => sum + torrent.files[index].length, 0)
     : (ready?.totalBytes ?? null)
+  const availableFreeSpace = destinationDir ? freeSpace : null
+  const hasInsufficientSpace =
+    availableFreeSpace !== null &&
+    sizeToFetch !== null &&
+    sizeToFetch > 0 &&
+    sizeToFetch > availableFreeSpace
   const multiChunkAllowed = ready !== null && ready.supportsRanges && ready.totalBytes !== null
   const isSingleStreamOnly = ready !== null && !multiChunkAllowed
 
@@ -193,8 +266,10 @@ function NewDownloadForm({ onDone }: { onDone: () => void }): React.JSX.Element 
   const canStart =
     probe.status === 'ready' &&
     (!torrent || chosenFiles.length > 0) &&
+    (!nzb || !!server) &&
     selectedInterfaceIds.length > 0 &&
     Boolean(destinationDir) &&
+    !hasInsufficientSpace &&
     !starting
   const startLabel = starting
     ? 'Starting'
@@ -244,12 +319,18 @@ function NewDownloadForm({ onDone }: { onDone: () => void }): React.JSX.Element 
 
   const handleBrowse = async (): Promise<void> => {
     const chosen = await window.plexo.chooseDestinationFolder(destinationDir)
-    if (chosen) setDestinationDir(chosen)
+    if (chosen) {
+      if (defaultDestinationDir) {
+        setOneOffDestinationDir(chosen)
+      } else {
+        useAppStore.getState().setDestinationDir(chosen)
+      }
+    }
   }
 
-  // A .torrent file goes in the link field as its path; the probe reads it from there.
-  const handleOpenTorrent = async (): Promise<void> => {
-    const path = await window.plexo.chooseTorrentFile()
+  // A .torrent or .nzb file goes in the link field as its path; the probe reads it from there.
+  const handleOpenFile = async (): Promise<void> => {
+    const path = await window.plexo.chooseDownloadFile()
     if (path) setUrl(path)
   }
 
@@ -295,11 +376,13 @@ function NewDownloadForm({ onDone }: { onDone: () => void }): React.JSX.Element 
               infoHash: probe.result.torrent.infoHash,
               selectedFiles: skippedFiles.length > 0 ? chosenFiles : undefined
             }
-          : {
-              ...common,
-              kind: 'http',
-              streamsPerNetwork: streamsChoice === 'auto' ? undefined : streamsChoice
-            },
+          : probe.result.kind === 'nzb'
+            ? { ...common, kind: 'nzb', nzbHash: probe.result.nzb.hash }
+            : {
+                ...common,
+                kind: 'http',
+                streamsPerNetwork: streamsChoice === 'auto' ? undefined : streamsChoice
+              },
         linkId
       )
       // Remembered for the next download, like the folder. Not a single-stream pick: that's one
@@ -412,10 +495,17 @@ function NewDownloadForm({ onDone }: { onDone: () => void }): React.JSX.Element 
               </Tooltip>
             )}
           </div>
-          <Button type="button" variant="secondary" onClick={handleOpenTorrent} className="h-9">
-            <FolderOpen data-icon="inline-start" />
-            Open .torrent
-          </Button>
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <Button type="button" variant="secondary" onClick={handleOpenFile} className="h-9">
+                  <FolderOpen data-icon="inline-start" />
+                  Open file
+                </Button>
+              }
+            />
+            <TooltipContent>Open a .torrent or .nzb file</TooltipContent>
+          </Tooltip>
         </div>
 
         {shownLink?.from && (
@@ -453,7 +543,9 @@ function NewDownloadForm({ onDone }: { onDone: () => void }): React.JSX.Element 
         )}
 
         {probe.status === 'probing' && (
-          <div className="font-mono text-[11.5px] text-muted-foreground">Checking the link…</div>
+          <div className="font-mono text-[11.5px] text-muted-foreground">
+            {probe.noPeersYet ? 'No peers found yet, still looking…' : 'Checking the link…'}
+          </div>
         )}
         {probe.status === 'error' && (
           <div className="flex items-center gap-2 text-[12.5px] text-[var(--color-danger)]">
@@ -465,7 +557,7 @@ function NewDownloadForm({ onDone }: { onDone: () => void }): React.JSX.Element 
         {ready && (
           <div className="flex items-center gap-3">
             <div className="flex size-10 shrink-0 items-center justify-center rounded-lg border-[0.5px] border-border bg-card font-mono text-[10px] font-semibold text-muted-foreground">
-              {torrent && torrent.files.length > 1 ? 'DIR' : fileExtensionBadge(fileName)}
+              {(torrent && torrent.files.length > 1) || nzb ? 'DIR' : fileExtensionBadge(fileName)}
             </div>
             <div className="flex min-w-0 flex-1 flex-col gap-1">
               {torrent ? (
@@ -483,8 +575,11 @@ function NewDownloadForm({ onDone }: { onDone: () => void }): React.JSX.Element 
               <div className="font-mono text-[11.5px] text-muted-foreground">
                 {[
                   torrent && describeFileCount(chosenFiles.length, torrent.files.length),
+                  nzb && describeFileCount(nzb.files.length, nzb.files.length),
                   sizeToFetch !== null ? formatBytes(sizeToFetch) : 'size unknown',
+                  nzb && 'from Usenet',
                   !torrent &&
+                    !nzb &&
                     (isSingleStreamOnly
                       ? ready.supportsRanges
                         ? 'Uses one connection. The file size is unknown.'
@@ -506,10 +601,45 @@ function NewDownloadForm({ onDone }: { onDone: () => void }): React.JSX.Element 
           />
         )}
 
+        {nzb && server !== undefined && (
+          <div className="flex items-center gap-3">
+            <div className={labelClass}>Server</div>
+            {server ? (
+              <div className="min-w-0 flex-1 truncate font-mono text-[12.5px]">
+                {server.host}
+                <span className="text-muted-foreground">
+                  {' '}
+                  · {server.connections} {server.connections === 1 ? 'connection' : 'connections'}
+                </span>
+              </div>
+            ) : (
+              <div className="flex min-w-0 flex-1 items-center gap-2 text-[12.5px] text-[var(--color-usb-text)]">
+                <AlertTriangle aria-hidden className="size-3.5 shrink-0" />
+                Set up your news server to download this NZB.
+              </div>
+            )}
+            <Button type="button" variant="secondary" size="sm" onClick={() => setServerOpen(true)}>
+              {server ? 'Change' : 'Set up'}
+            </Button>
+          </div>
+        )}
+
         <div className="flex items-center gap-3">
           <div className={labelClass}>Save to</div>
-          <div className="min-w-0 flex-1 truncate font-mono text-[12.5px]">
-            {toDisplayPath(destinationDir, homeDir)}
+          <div className="flex min-w-0 flex-1 items-baseline gap-2 truncate font-mono text-[12.5px]">
+            <span className="truncate">{toDisplayPath(destinationDir, homeDir)}</span>
+            {availableFreeSpace !== null && (
+              <span
+                className={cn(
+                  'shrink-0 text-[11.5px] tabular-nums',
+                  hasInsufficientSpace
+                    ? 'font-medium text-[var(--color-danger)]'
+                    : 'text-muted-foreground'
+                )}
+              >
+                ({formatBytes(availableFreeSpace)} free)
+              </span>
+            )}
           </div>
           <Button type="button" variant="secondary" size="sm" onClick={handleBrowse}>
             Change
@@ -525,54 +655,121 @@ function NewDownloadForm({ onDone }: { onDone: () => void }): React.JSX.Element 
             aria-labelledby="new-download-networks"
             className="flex min-w-0 flex-1 flex-wrap gap-1.5"
           >
+            {interfaces.length === 0 && (
+              <NetworkListNotice
+                status={interfacesStatus}
+                error={interfacesError}
+                onScan={() => void loadInterfaces()}
+              />
+            )}
             {interfaces.map((iface) => {
               const visual = networkVisual(iface.id, iface.kind, iface.displayName)
               const selected = selectedInterfaceIds.includes(iface.id)
               const reached = isReached(iface.id)
-              const speedLimit = networkPreferences[iface.id]?.speedLimit
+              const preference = networkPreferences[iface.id]
+              const speedLimit = preference?.speedLimit
+              const proxy = preference?.proxy
+              const isProxyActive = Boolean(proxy?.enabled && proxy.host)
               // What's worth knowing before it's picked: it can't be, or it's capped.
               const note = reached
                 ? 'Data limit reached'
                 : speedLimit !== undefined
                   ? `Limited to ${formatSpeedLimit(speedLimit)}`
                   : null
-              const chip = (
+
+              const toggleButton = (
                 <button
-                  key={iface.id}
                   type="button"
                   aria-pressed={selected}
                   // Not `disabled`: a disabled button never gets the hover that says why.
                   aria-disabled={reached || undefined}
                   onClick={() => handleToggleInterface(iface.id)}
                   className={cn(
-                    'flex h-7 items-center gap-1.5 rounded-full border px-2.5 text-[12.5px] transition-colors',
+                    'flex items-center gap-1.5 focus-visible:outline-none cursor-pointer select-none py-1',
+                    reached && 'cursor-not-allowed line-through'
+                  )}
+                >
+                  <span
+                    className="size-2 rounded-full shrink-0"
+                    style={{ background: visual.solid }}
+                  />
+                  <span className="truncate">{visual.name}</span>
+                </button>
+              )
+
+              return (
+                <div
+                  key={iface.id}
+                  className={cn(
+                    'group/chip inline-flex h-7 items-center rounded-full border text-[12.5px] transition-colors pl-2.5 pr-1 gap-1',
                     selected
                       ? 'border-transparent'
                       : 'border-border text-[var(--text-secondary)] opacity-70',
-                    reached && 'cursor-not-allowed line-through opacity-50'
+                    reached && 'opacity-50'
                   )}
                   style={
                     selected ? { background: visual.bg, borderColor: visual.border } : undefined
                   }
                 >
-                  <span className="size-2 rounded-full" style={{ background: visual.solid }} />
-                  {visual.name}
-                </button>
-              )
-              return note === null ? (
-                chip
-              ) : (
-                <Tooltip key={iface.id}>
-                  <TooltipTrigger render={chip} />
-                  <TooltipContent>{note}</TooltipContent>
-                </Tooltip>
+                  {note === null ? (
+                    toggleButton
+                  ) : (
+                    <Tooltip>
+                      <TooltipTrigger render={toggleButton} />
+                      <TooltipContent>{note}</TooltipContent>
+                    </Tooltip>
+                  )}
+
+                  <NetworkEditPopover
+                    interfaceId={iface.id}
+                    interfaceKind={iface.kind}
+                    osName={iface.displayName}
+                    defaultFocusProxy={true}
+                    trigger={
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="xs"
+                        aria-label={
+                          isProxyActive
+                            ? `Configure proxy (${proxy!.type.toUpperCase()}) or edit ${visual.name}`
+                            : `Configure proxy or edit ${visual.name}`
+                        }
+                        className={cn(
+                          'h-5 px-1.5 rounded-full text-muted-foreground hover:text-foreground shrink-0 gap-1 flex items-center font-mono text-[9px] uppercase tracking-[0.04em]',
+                          isProxyActive
+                            ? 'font-semibold text-foreground bg-foreground/10 hover:bg-foreground/15'
+                            : 'hover:bg-foreground/10'
+                        )}
+                      >
+                        {isProxyActive ? (
+                          <>
+                            <span>PROXY · {proxy!.type}</span>
+                            <Pencil className="size-2.5 opacity-70" />
+                          </>
+                        ) : (
+                          <>
+                            <Pencil className="size-2.5 opacity-70" />
+                            <span className="capitalize font-sans text-[10.5px]">Proxy</span>
+                          </>
+                        )}
+                      </Button>
+                    }
+                    tooltip={
+                      isProxyActive
+                        ? `Proxy active (${proxy!.type.toUpperCase()} · ${proxy!.host}:${proxy!.port}) — click to configure`
+                        : `Configure proxy or edit ${visual.name}`
+                    }
+                  />
+                </div>
               )
             })}
           </div>
         </div>
 
-        {/* A torrent's speed comes from its peers, and an unsplittable file has one stream. */}
-        {ready && !torrent && !isSingleStreamOnly && (
+        {/* A torrent's speed comes from its peers, an NZB's connections are the server's, and an
+            unsplittable file has one stream. */}
+        {ready && !torrent && !nzb && !isSingleStreamOnly && (
           <div className="flex items-center gap-3">
             <div className={labelClass} id="new-download-streams">
               Streams
@@ -604,6 +801,18 @@ function NewDownloadForm({ onDone }: { onDone: () => void }): React.JSX.Element 
             <AlertTriangle className="mt-0.5 size-3.5 shrink-0" />
             {subnetConflict.names.join(' and ')} share a subnet ({subnetConflict.subnet}), so the
             computer sends both down one route and they can’t be combined.
+          </div>
+        )}
+        {hasInsufficientSpace && (
+          <div
+            role="alert"
+            className="flex items-start gap-2 text-[12px] leading-snug text-[var(--color-danger)]"
+          >
+            <AlertTriangle className="mt-0.5 size-3.5 shrink-0" />
+            <span>
+              Not enough disk space: this download needs {formatBytes(sizeToFetch)}, but only{' '}
+              {formatBytes(availableFreeSpace)} is free on this drive.
+            </span>
           </div>
         )}
         {usedUpPick.length > 0 && (
@@ -645,6 +854,13 @@ function NewDownloadForm({ onDone }: { onDone: () => void }): React.JSX.Element 
           {startLabel}
         </Button>
       </div>
+      {/* Its form keeps its submit to itself: a portal's events still bubble up the React tree. */}
+      <UsenetServerDialog
+        open={serverOpen}
+        server={server ?? null}
+        onOpenChange={setServerOpen}
+        onSaved={setServer}
+      />
     </form>
   )
 }

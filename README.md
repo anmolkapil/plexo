@@ -62,7 +62,7 @@ https://github.com/user-attachments/assets/e57728f4-fb63-441f-839c-174eef954b17
 
 ### Download management
 
-- Download direct links, magnet links and `.torrent` files
+- Download direct links, magnet links, `.torrent` files and Usenet NZBs
 - Select torrent files before or during a download
 - Pause and resume supported downloads across restarts
 - Automatically reconnect downloads after sleep
@@ -76,6 +76,8 @@ https://github.com/user-attachments/assets/e57728f4-fb63-441f-839c-174eef954b17
 - Switch to Slow mode for calls and streaming
 - Set daily, weekly or monthly data allowances
 - Schedule downloads by time and day
+
+<a id="set-up-more-than-one-network"></a>
 
 ## Troubleshooting
 
@@ -158,6 +160,8 @@ For direct downloads, Plexo uses HTTP range requests to fetch chunks in parallel
 
 For torrents, Plexo distributes peer connections across your selected networks. New peers connect through the network with the fewest peers.
 
+For Usenet NZBs, Plexo shares your news server account's connections evenly across your selected networks. Each article is decoded and written straight to its place in its file; articles the server no longer has are left as gaps. Plexo doesn't repair or unpack downloads.
+
 Each network needs its own internet connection to add bandwidth. Plexo combines connections for its own downloads and requires no VPN or virtual network adapter.
 
 ## Build from source
@@ -178,7 +182,7 @@ npm run dev
 | `npm run build:mac`       | Creates macOS packages in `dist/`                             |
 | `npm run build:win`       | Creates the Windows installer in `dist/`                      |
 | `npm run build:unpack`    | Creates an unpacked app for the current platform in `dist/`   |
-| `npm run build:linux`     | Creates AppImage, `.deb` and `.rpm` packages in `dist/`       |
+| `npm run build:linux`     | Creates AppImage, `.deb`, `.rpm` and `.tar.gz` in `dist/`     |
 | `npm run build:extension` | Builds the Chrome and Firefox extensions in `extension/dist/` |
 
 Run platform packaging commands on the corresponding operating system. Local builds are unsigned unless signing credentials are configured. [CONTRIBUTING.md](CONTRIBUTING.md) covers packaging requirements, extension setup and testing.

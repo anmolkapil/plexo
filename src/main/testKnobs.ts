@@ -13,6 +13,11 @@ function positiveNumber(name: string, fallback: number): number {
 
 export const testKnobs = {
   userDataDir: env['PLEXO_USER_DATA'],
+  /** The Telegram service's e2e double (src/main/telegram/fake.ts): instant sign-in, fake
+   * Saved Messages media, and a file source that inflicts the DC's faults on demand. */
+  telegramFake: env['PLEXO_E2E_TELEGRAM_FAKE'] === '1',
+  /** Milliseconds the fake source's every chunk takes — a pause window for tests. */
+  telegramDelayMs: positiveNumber('PLEXO_E2E_TELEGRAM_DELAY_MS', 0),
   /** Keeps the window off-screen so a test run doesn't pop windows up over the desktop. */
   hideWindow: env['PLEXO_E2E_HIDE_WINDOW'] === '1',
   blockBytes: positiveNumber('PLEXO_E2E_BLOCK_BYTES', 8 * 1024 * 1024),
@@ -28,8 +33,14 @@ export const testKnobs = {
   hedgeAfterMs: positiveNumber('PLEXO_E2E_HEDGE_MS', 2_000),
   /** How long a magnet link may take to find peers that send its metadata. */
   magnetTimeoutMs: positiveNumber('PLEXO_E2E_MAGNET_MS', 3 * 60_000),
+  /** How long a magnet link only the DHT can help keeps looking once its first search finds no
+   * one (Deluge's magnet prefetch also waits 30 s). */
+  magnetGraceMs: positiveNumber('PLEXO_E2E_MAGNET_GRACE_MS', 30_000),
   /** Tests turn the DHT off, so a run never reaches out to the internet's DHT nodes. */
-  torrentDht: env['PLEXO_E2E_DHT'] !== '0'
+  torrentDht: env['PLEXO_E2E_DHT'] !== '0',
+  /** `PLEXO_E2E_DHT_BOOTSTRAP=127.0.0.1:9` starts the DHT from these nodes instead of the
+   * internet's, so a test can have a DHT that reaches no one. */
+  torrentDhtBootstrap: env['PLEXO_E2E_DHT_BOOTSTRAP']?.split(',').filter(Boolean)
 }
 
 /** `PLEXO_E2E_STREAMS=2` fixes how many streams each network runs and turns the automatic
@@ -52,7 +63,7 @@ export function testInterfaces(): NetworkInterfaceInfo[] | null {
     .split(',')
     .filter(Boolean)
     .map((entry) => {
-      const [id, address, subnet, kind] = entry.split('=')
+      const [id, address, subnet, kind, device] = entry.split('=')
       const inferredKind =
         kind === 'usb'
           ? ('usb' as const)
@@ -63,7 +74,7 @@ export function testInterfaces(): NetworkInterfaceInfo[] | null {
             : ('ethernet' as const)
       return {
         id,
-        device: id,
+        device: device || id,
         displayName: id,
         addresses: [{ address, family: isIP(address) === 6 ? 6 : 4, subnet: subnet || undefined }],
         kind: inferredKind

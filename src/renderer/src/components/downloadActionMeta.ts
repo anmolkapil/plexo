@@ -6,6 +6,7 @@ import {
   ListX,
   Pause,
   Play,
+  Radio,
   RotateCw,
   Trash2,
   Wrench,
@@ -118,6 +119,13 @@ export const ACTION_META: Record<ActionId, ActionMeta> = {
     failure: SOMETHING_WRONG,
     icon: Trash2,
     destructive: true
+  },
+  trackers: {
+    label: 'Trackers',
+    toolbar: 'Trackers',
+    single: true,
+    failure: SOMETHING_WRONG,
+    icon: Radio
   }
 }
 
