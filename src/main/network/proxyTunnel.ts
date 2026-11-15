@@ -17,23 +17,30 @@ function readExactBytes(
     let buffer = Buffer.alloc(0)
 
     const cleanup = (): void => {
-      socket.removeListener('data', onData)
+      socket.removeListener('readable', onReadable)
       socket.removeListener('error', onError)
       socket.removeListener('close', onClose)
       socket.removeListener('timeout', onTimeout)
       signal?.removeEventListener('abort', onAbort)
     }
 
-    const onData = (chunk: Buffer): void => {
-      buffer = Buffer.concat([buffer, chunk])
-      if (buffer.length >= length) {
-        cleanup()
-        const result = buffer.subarray(0, length)
-        const remainder = buffer.subarray(length)
-        if (remainder.length > 0) {
-          socket.unshift(remainder)
+    // Paused-mode reads: once the listener is gone, what follows stays buffered for whoever reads
+    // the tunnel next. A 'data' listener would leave the socket flowing with no one listening, and
+    // drop what a server sends first (an NNTP greeting).
+    const onReadable = (): void => {
+      let chunk: Buffer | null
+      while ((chunk = socket.read() as Buffer | null) !== null) {
+        buffer = Buffer.concat([buffer, chunk])
+        if (buffer.length >= length) {
+          cleanup()
+          const result = buffer.subarray(0, length)
+          const remainder = buffer.subarray(length)
+          if (remainder.length > 0) {
+            socket.unshift(remainder)
+          }
+          resolve(result)
+          return
         }
-        resolve(result)
       }
     }
 
@@ -65,7 +72,7 @@ function readExactBytes(
     }
     signal?.addEventListener('abort', onAbort, { once: true })
 
-    socket.on('data', onData)
+    socket.on('readable', onReadable)
     socket.once('error', onError)
     socket.once('close', onClose)
     socket.once('timeout', onTimeout)
@@ -81,26 +88,31 @@ function readHttpHeaders(
     let buffer = Buffer.alloc(0)
 
     const cleanup = (): void => {
-      socket.removeListener('data', onData)
+      socket.removeListener('readable', onReadable)
       socket.removeListener('error', onError)
       socket.removeListener('close', onClose)
       socket.removeListener('timeout', onTimeout)
       signal?.removeEventListener('abort', onAbort)
     }
 
-    const onData = (chunk: Buffer): void => {
-      buffer = Buffer.concat([buffer, chunk])
-      const delimiterIndex = buffer.indexOf('\r\n\r\n')
-      if (delimiterIndex !== -1) {
-        cleanup()
-        const headerText = buffer.subarray(0, delimiterIndex).toString('utf-8')
-        const remainder = buffer.subarray(delimiterIndex + 4)
-        if (remainder.length > 0) {
-          socket.unshift(remainder)
+    // Paused-mode reads, as in readExactBytes.
+    const onReadable = (): void => {
+      let chunk: Buffer | null
+      while ((chunk = socket.read() as Buffer | null) !== null) {
+        buffer = Buffer.concat([buffer, chunk])
+        const delimiterIndex = buffer.indexOf('\r\n\r\n')
+        if (delimiterIndex !== -1) {
+          cleanup()
+          const headerText = buffer.subarray(0, delimiterIndex).toString('utf-8')
+          const remainder = buffer.subarray(delimiterIndex + 4)
+          if (remainder.length > 0) {
+            socket.unshift(remainder)
+          }
+          const statusMatch = /^HTTP\/\d\.\d\s+(\d+)/i.exec(headerText)
+          const status = statusMatch ? parseInt(statusMatch[1], 10) : 0
+          resolve({ headers: headerText, status })
+          return
         }
-        const statusMatch = /^HTTP\/\d\.\d\s+(\d+)/i.exec(headerText)
-        const status = statusMatch ? parseInt(statusMatch[1], 10) : 0
-        resolve({ headers: headerText, status })
       }
     }
 
@@ -132,7 +144,7 @@ function readHttpHeaders(
     }
     signal?.addEventListener('abort', onAbort, { once: true })
 
-    socket.on('data', onData)
+    socket.on('readable', onReadable)
     socket.once('error', onError)
     socket.once('close', onClose)
     socket.once('timeout', onTimeout)

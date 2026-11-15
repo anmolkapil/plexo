@@ -232,3 +232,43 @@ test.describe('cancel and remove @smoke', () => {
     await expect.poll(() => existsSync(join(dirs.userData, 'downloads', id))).toBe(false)
   })
 })
+
+test.describe('window close with active downloads @smoke', () => {
+  test('closing the window keeps active downloads running and suspends cleanly on quit', async ({
+    plexo,
+    serve
+  }) => {
+    test.skip(
+      process.platform === 'darwin',
+      'minimize to tray on window close is for Windows and Linux'
+    )
+
+    const origin = await serve({ size: SIZE, bytesPerSecond: 256 * 1024 })
+    const reached = origin.hold(6 * BLOCK)
+    await plexo.start(origin.url(), origin.sha256, { connections: 2 })
+    await reached
+
+    const windowState = await plexo.evaluateMain(({ BrowserWindow }) => {
+      const win = BrowserWindow.getAllWindows()[0]
+      win.close()
+      return { isDestroyed: win.isDestroyed() }
+    }, null)
+
+    expect(windowState.isDestroyed, 'window is not destroyed').toBe(false)
+    expect(plexo.alive, 'app is still alive').toBe(true)
+
+    const nextReached = origin.hold(10 * BLOCK)
+    await nextReached
+
+    const windowCount = await plexo.evaluateMain(
+      ({ BrowserWindow }) => BrowserWindow.getAllWindows().length,
+      null
+    )
+    expect(windowCount, 'window remains open in background').toBe(1)
+
+    await plexo.relaunch()
+    const current = await plexo.currentHttp()
+    expect(current?.status).toBe('paused')
+    origin.release()
+  })
+})

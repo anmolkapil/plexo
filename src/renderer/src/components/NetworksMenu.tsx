@@ -1,4 +1,4 @@
-import { ChevronDown, ChevronRight } from 'lucide-react'
+import { ChevronDown, ChevronRight, CircleOff } from 'lucide-react'
 import { useState } from 'react'
 import { useNetworkUsage } from '../hooks/useNetworks'
 import { useNetworkVisuals } from '../hooks/useNetworkVisuals'
@@ -37,34 +37,49 @@ export function NetworksMenu({
     }
   }
   const total = [...speeds.values()].reduce((sum, speed) => sum + speed, 0)
+  const networkLabel =
+    interfaces.length === 0
+      ? 'No network'
+      : `${interfaces.length} ${interfaces.length === 1 ? 'network' : 'networks'}`
 
   return (
     <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger
-        render={<Button type="button" variant="secondary" className="gap-2.5 px-3 text-[13px]" />}
+        render={
+          <Button
+            type="button"
+            variant="secondary"
+            aria-label={networkLabel}
+            className="gap-1.5 px-2 text-[13px] md:gap-2.5 md:px-3"
+          />
+        }
       >
-        <span className="flex gap-1" aria-hidden>
-          {interfaces.slice(0, 4).map((iface) => (
-            <span
-              key={iface.id}
-              className="size-2 rounded-full"
-              style={{ background: networkVisual(iface.id, iface.kind, iface.displayName).solid }}
-            />
-          ))}
-        </span>
         {interfaces.length === 0 ? (
-          <span className="text-[var(--color-danger)]">No network</span>
+          <CircleOff className="size-3.5 text-[var(--color-danger)]" aria-hidden />
+        ) : (
+          <span className="flex gap-1" aria-hidden>
+            {interfaces.slice(0, 4).map((iface) => (
+              <span
+                key={iface.id}
+                className="size-2 rounded-full"
+                style={{ background: networkVisual(iface.id, iface.kind, iface.displayName).solid }}
+              />
+            ))}
+          </span>
+        )}
+        {interfaces.length === 0 ? (
+          <span className="hidden text-[var(--color-danger)] md:inline">No network</span>
         ) : (
           <>
-            {interfaces.length} {interfaces.length === 1 ? 'network' : 'networks'}
+            <span className="hidden md:inline">{networkLabel}</span>
             {total > 0 && (
-              <span className="font-mono text-[11.5px] text-muted-foreground">
+              <span className="hidden font-mono text-[11.5px] text-muted-foreground md:inline">
                 {formatSpeed(total)}
               </span>
             )}
           </>
         )}
-        <ChevronDown className="size-3.5 text-muted-foreground" />
+        <ChevronDown className="hidden size-3.5 text-muted-foreground md:block" />
       </PopoverTrigger>
       <PopoverContent align="end" className="w-[340px] gap-0 p-0">
         <div className="border-b-[0.5px] border-border px-4 py-3 text-[14px] font-semibold">

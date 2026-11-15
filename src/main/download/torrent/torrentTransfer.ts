@@ -2,6 +2,7 @@ import { isIP, Socket } from 'node:net'
 import { basename, dirname } from 'node:path'
 import type WebTorrent from 'webtorrent'
 import type { Store, Torrent, Wire } from 'webtorrent'
+import { normalizeTrackerUrl } from '../../../shared/torrentTrackers'
 import type { TorrentDownloadNetwork, TorrentPeerState } from '../../../shared/types'
 import { connectRoute } from '../../network/deviceBinding'
 import { routesFor, type NetworkRoute } from '../../network/routes'
@@ -11,7 +12,7 @@ import {
   type TransferHost,
   type TorrentTransferTarget
 } from '../transfer'
-import { createClient, loadClientNamer, storeNamed } from './engine'
+import { createClient, isTorrentPrivate, loadClientNamer, storeNamed } from './engine'
 import { bitfieldOf, creditPiece, pickNetwork } from './peers'
 
 /** Peers each network in use may have at once (webtorrent's maxConns is this times the networks). */
@@ -83,6 +84,7 @@ export class TorrentTransfer implements Transfer {
   private twinIds = new Map<string, string>()
   /** By twin key: when it may be dialled again. */
   private twinRetryAt = new Map<string, number>()
+  private isPrivate: boolean | null = null
 
   constructor(
     private readonly runtime: TorrentTransferTarget,
@@ -166,6 +168,7 @@ export class TorrentTransfer implements Transfer {
     const stop = this.runtime.stop.signal
     try {
       this.nameClient ??= await loadClientNamer()
+      this.isPrivate ??= await isTorrentPrivate(this.torrentFile)
       this.store ??= await storeNamed(basename(this.destination), (path) =>
         this.runtime.file.written.add(path)
       )
@@ -212,6 +215,22 @@ export class TorrentTransfer implements Transfer {
     if (this.torrent) this.selectFiles(this.torrent)
   }
 
+  /** The trackers changed (runtime.customTrackers). If running, the client is restarted
+   * so WebTorrent announces to the new trackers. */
+  trackersChanged(): void {
+    if (this.client) {
+      const restart = async (): Promise<void> => {
+        this.closeClient?.()
+        await this.ended
+        this.reset()
+        if (!this.runtime.stop.signal.aborted) {
+          this.reconcile()
+        }
+      }
+      void restart()
+    }
+  }
+
   /** Asks the engine for the chosen files' pieces only, all of them with no choice made. What it
    * fetched before stays: a deselected piece just isn't asked for. */
   private selectFiles(torrent: Torrent): void {
@@ -234,13 +253,21 @@ export class TorrentTransfer implements Transfer {
   }
 
   private add(client: WebTorrent): void {
+    const custom =
+      this.isPrivate === false && this.runtime.customTrackers
+        ? this.runtime.customTrackers
+            .map((url) => normalizeTrackerUrl(url))
+            .filter((url): url is string => Boolean(url))
+        : undefined
+
     const torrent = client.add(this.torrentFile, {
       path: dirname(this.destination),
       store: this.store!,
       // Trusted as done, bar a hash check of a piece or two per file (more if one fails).
       bitfield: bitfieldOf(this.runtime.pieces.map((block) => block.status === 'completed')),
       // Nothing until webtorrent is ready to be told which files (below), as on a change.
-      deselect: true
+      deselect: true,
+      announce: custom && custom.length > 0 ? custom : undefined
     })
     this.engineTorrent = torrent
     torrent.on('wire', (wire: Wire, address: string, key?: string) =>

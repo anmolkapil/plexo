@@ -1,8 +1,14 @@
 import { expect, test } from '@playwright/test'
 import { createServer, type IncomingMessage } from 'node:http'
-import { connect as netConnect, type AddressInfo } from 'node:net'
+import {
+  connect as netConnect,
+  createServer as createTcpServer,
+  type AddressInfo,
+  type Socket
+} from 'node:net'
 import type { NetworkInterfaceInfo, ProxyConfig } from '../src/shared/types'
-import { StreamConnection } from '../src/main/network/routes'
+import { requestHeaders } from '../src/main/download/browserContext'
+import { connectThrough, StreamConnection } from '../src/main/network/routes'
 
 const iface: NetworkInterfaceInfo = {
   id: 'wifi',
@@ -143,6 +149,25 @@ test('a network that comes back with a new address is reached at that one @smoke
     current = loopback
     const { res } = await connection.request(url, {})
     expect(await body(res)).toBe('ok')
+  } finally {
+    connection.close()
+    await new Promise<void>((resolve) => server.close(() => resolve()))
+  }
+})
+
+test('a link that includes a username and password sends basic authorization @smoke', async () => {
+  let authorization: string | undefined
+  const server = createServer((req, res) => {
+    authorization = req.headers.authorization
+    res.end('ok')
+  })
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve))
+  const connection = new StreamConnection(() => loopback, { timeoutMs: 2000 })
+  try {
+    const port = (server.address() as AddressInfo).port
+    const url = new URL(`http://user:p%40ss@127.0.0.1:${port}/file.zip`)
+    expect(await body((await connection.request(url, requestHeaders(url))).res)).toBe('ok')
+    expect(authorization).toBe(`Basic ${Buffer.from('user:p@ss').toString('base64')}`)
   } finally {
     connection.close()
     await new Promise<void>((resolve) => server.close(() => resolve()))
@@ -294,6 +319,64 @@ test('valid HTTP proxy tunnels requests through the proxy @smoke', async () => {
     await new Promise<void>((resolve) => targetServer.close(() => resolve()))
   }
 })
+
+// A news server speaks first, so bytes that arrive with the proxy's answer must not be lost.
+for (const type of ['http', 'socks5'] as const) {
+  test(`a non-HTTP connection (NNTP) goes through the network’s ${type} proxy @smoke`, async () => {
+    const tunneled: string[] = []
+    const newsServer = createTcpServer((socket) => socket.end('200 news ready\r\n'))
+    await new Promise<void>((resolve) => newsServer.listen(0, '127.0.0.1', resolve))
+    const newsPort = (newsServer.address() as AddressInfo).port
+
+    const tunnel = (client: Socket, target: string, established: Buffer): void => {
+      tunneled.push(target)
+      const [tHost, tPort] = target.split(':')
+      const targetSocket = netConnect(Number(tPort), tHost, () => {
+        client.write(established)
+        targetSocket.pipe(client)
+        client.pipe(targetSocket)
+      })
+      targetSocket.on('error', () => client.destroy())
+      client.on('error', () => targetSocket.destroy())
+    }
+    const proxyServer =
+      type === 'http'
+        ? createServer().on('connect', (req, client: Socket) =>
+            tunnel(client, req.url!, Buffer.from('HTTP/1.1 200 Connection Established\r\n\r\n'))
+          )
+        : // SOCKS5 without auth, IPv4 targets only: greeting, then CONNECT.
+          createTcpServer((client) => {
+            client.once('data', () => {
+              client.write(Buffer.from([0x05, 0x00]))
+              client.once('data', (request: Buffer) => {
+                const target = `${[...request.subarray(4, 8)].join('.')}:${request.readUInt16BE(8)}`
+                tunnel(client, target, Buffer.from([0x05, 0x00, 0x00, 0x01, 0, 0, 0, 0, 0, 0]))
+              })
+            })
+          })
+    await new Promise<void>((resolve) => proxyServer.listen(0, '127.0.0.1', resolve))
+    const proxyPort = (proxyServer.address() as AddressInfo).port
+
+    try {
+      const socket = await connectThrough(
+        loopback,
+        '127.0.0.1',
+        newsPort,
+        false,
+        2000,
+        new AbortController().signal,
+        { enabled: true, type, host: '127.0.0.1', port: proxyPort }
+      )
+      let greeting = ''
+      for await (const chunk of socket) greeting += chunk
+      expect(greeting).toBe('200 news ready\r\n')
+      expect(tunneled).toEqual([`127.0.0.1:${newsPort}`])
+    } finally {
+      await new Promise<void>((resolve) => proxyServer.close(() => resolve()))
+      await new Promise<void>((resolve) => newsServer.close(() => resolve()))
+    }
+  })
+}
 
 test('proxy settings update dynamically on reconnect @smoke', async () => {
   const targetServer = createServer((_req, res) => {

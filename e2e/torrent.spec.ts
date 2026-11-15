@@ -257,3 +257,73 @@ test.describe('uploading', () => {
     expect(done.uploadSpeedBytesPerSec ?? 0).toBe(0)
   })
 })
+
+test.describe('managing trackers', () => {
+  test('a torrent with an unreachable tracker finds the seeder after addTorrentTrackers', async ({
+    plexo
+  }) => {
+    const data = seededBytes(1 * MB, 61)
+    const torrent = await swarm.seed([named(data, 'isolated.bin')], { pieceLength: PIECE })
+    const { default: parseTorrent, toTorrentFile } = await import('parse-torrent' as string)
+    const parsed = await parseTorrent(torrent.torrentFile)
+    const realAnnounce = [...(parsed.announce as string[])]
+    parsed.announce = ['http://127.0.0.1:9/announce']
+    const rewritten = toTorrentFile(parsed)
+    const torrentPath = await torrentFileOnDisk({ ...torrent, torrentFile: rewritten })
+
+    const id = await plexo.start(torrentPath, sha256(data))
+    await new Promise((resolve) => setTimeout(resolve, 500))
+    const initial = await plexo.current()
+    expect(initial?.bytesDownloaded ?? 0).toBe(0)
+
+    await plexo.api.addTorrentTrackers(id, realAnnounce)
+    const done = await plexo.waitForTorrentStatus('completed', 30_000)
+    expect(done.bytesDownloaded).toBe(1 * MB)
+  })
+
+  test('trackers added while paused survive relaunch', async ({ plexo }) => {
+    const data = seededBytes(1 * MB, 62)
+    const torrent = await swarm.seed([named(data, 'paused-trackers.bin')], { pieceLength: PIECE })
+    const { default: parseTorrent, toTorrentFile } = await import('parse-torrent' as string)
+    const parsed = await parseTorrent(torrent.torrentFile)
+    const realAnnounce = [...(parsed.announce as string[])]
+    parsed.announce = ['http://127.0.0.1:9/announce']
+    const rewritten = toTorrentFile(parsed)
+    const torrentPath = await torrentFileOnDisk({ ...torrent, torrentFile: rewritten })
+
+    const id = await plexo.start(torrentPath, sha256(data))
+    await plexo.api.pauseDownload(id)
+    await plexo.waitForTorrentStatus('paused')
+
+    await plexo.api.addTorrentTrackers(id, realAnnounce)
+    const beforeRelaunch = await plexo.api.torrentTrackers(id)
+    expect(beforeRelaunch.customTrackers).toEqual(realAnnounce)
+
+    await plexo.relaunch()
+    const afterRelaunch = await plexo.api.torrentTrackers(id)
+    expect(afterRelaunch.customTrackers).toEqual(realAnnounce)
+
+    await plexo.api.resumeDownload(id)
+    const done = await plexo.waitForTorrentStatus('completed', 30_000)
+    expect(done.bytesDownloaded).toBe(1 * MB)
+  })
+
+  test('a private torrent refuses added trackers', async ({ plexo }) => {
+    const data = seededBytes(1 * MB, 63)
+    const torrent = await swarm.seed([named(data, 'private.bin')], { pieceLength: PIECE })
+    const { default: parseTorrent, toTorrentFile } = await import('parse-torrent' as string)
+    const parsed = await parseTorrent(torrent.torrentFile)
+    parsed.info = { ...parsed.info, private: 1 }
+    ;(parsed as { private?: number | boolean }).private = 1
+    const rewritten = toTorrentFile(parsed)
+    const torrentPath = await torrentFileOnDisk({ ...torrent, torrentFile: rewritten })
+
+    const id = await plexo.start(torrentPath, sha256(data))
+    const trackers = await plexo.api.torrentTrackers(id)
+    expect(trackers.isPrivate).toBe(true)
+
+    await expect(
+      plexo.api.addTorrentTrackers(id, ['http://127.0.0.1:1234/announce'])
+    ).rejects.toThrow(/private/i)
+  })
+})
