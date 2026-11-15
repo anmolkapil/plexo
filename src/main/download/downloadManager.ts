@@ -51,6 +51,7 @@ import { addToHistory, findInHistory, removeFromHistory } from './history'
 import { testKnobs } from '../testKnobs'
 import { DownloadFile } from './downloadFile'
 import { compareSamples, HttpTransfer, pickedStreams, splittable } from './httpTransfer'
+import { fromLimits, LimitReadout, limitedBy } from '../../shared/limitedBy'
 import { normalizeEtag } from './fileVersion'
 import { ensureDirectory, pathExists, reserveDestinationPath } from './paths'
 import { planBlocks, planDownload, planPieces } from './plan'
@@ -134,6 +135,8 @@ interface RuntimeFields {
   peakReadings: { time: number; bytes: number }[]
   /** Changes asked of a torrent's choice of files, counted: only the latest applies. */
   fileChoices: number
+  /** What holds it back, as its screen says it (see noteLimit). */
+  limitReadout: LimitReadout
 }
 
 interface HttpDownloadRuntime extends RuntimeFields, HttpTransferTarget {
@@ -537,8 +540,35 @@ export class DownloadManager {
       const { status } = runtime.state
       if (status !== 'downloading' && status !== 'paused' && status !== 'queued') continue
       this.reconcile(runtime)
+      if (status === 'downloading') this.noteLimit(runtime, Date.now(), true)
       this.scheduleUpdate(runtime)
     }
+  }
+
+  /** What holds the download back now (see shared/limitedBy.ts), into its state once it has held
+   * a few seconds. `changed`: the user just changed a limit, or a network reached one, so a reason
+   * a limit brings or takes away is said at once. Says whether what's shown changed. */
+  private noteLimit(runtime: DownloadRuntime, now: number, changed = false): boolean {
+    const { state, limitReadout } = runtime
+    const reason = limitedBy({
+      cap: this.limits.totalHeld(now),
+      networks: state.networks.map((network) => ({
+        id: network.id,
+        enabled: network.enabled,
+        status: network.status,
+        capped: this.limits.networkHeld(network.id, now)
+      })),
+      disk: state.kind === 'http' && !!state.diskLimited,
+      oneConnection: runtime.kind === 'http' && !splittable(runtime.requestPayload),
+      serverConnections:
+        runtime.kind === 'http' ? runtime.transfer.serverConnections?.() : undefined
+    })
+    const moved =
+      changed && (fromLimits(reason) || fromLimits(limitReadout.shown))
+        ? limitReadout.adopt(reason)
+        : limitReadout.update(reason, now)
+    if (moved) state.limitedBy = limitReadout.shown
+    return moved
   }
 
   private armScheduleTimer(): void {
@@ -669,7 +699,8 @@ export class DownloadManager {
       sentUnits: [],
       speedSampledAt: 0,
       peakReadings: [],
-      fileChoices: 0
+      fileChoices: 0,
+      limitReadout: new LimitReadout()
     }
   }
 
@@ -2101,6 +2132,9 @@ export class DownloadManager {
   private async run(runtime: DownloadRuntime): Promise<void> {
     if (runtime.stop.signal.aborted) runtime.stop = new AbortController()
     runtime.transfer.reset()
+    // Each run judges afresh: what held the last one back may be gone.
+    runtime.limitReadout = new LimitReadout()
+    runtime.state.limitedBy = undefined
     // Speeds are this run's: nothing carries over from the last one.
     runtime.meters.clear()
     if (runtime.kind === 'torrent') runtime.uploadMeters.clear()
@@ -2154,6 +2188,7 @@ export class DownloadManager {
         this.scheduleUpdate(runtime)
       }
       runtime.transfer.tick(now)
+      if (this.noteLimit(runtime, now)) this.scheduleUpdate(runtime)
     }
     // The last blocks are in, or the run was stopped: its streams wind down. Its last part reads
     // too, up to the moment it stopped (and where the next run picks up).

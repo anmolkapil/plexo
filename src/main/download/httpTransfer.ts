@@ -427,6 +427,14 @@ export class HttpTransfer implements Transfer {
     return this.workers.values()
   }
 
+  serverConnections(): number | undefined {
+    const ceilings = this.runtime.state.networks
+      .filter((network) => network.status === 'on')
+      .map((network) => this.concurrency?.serverCeiling(network.id))
+      .filter((ceiling) => ceiling !== undefined)
+    return ceilings.length > 0 ? Math.min(...ceilings) : undefined
+  }
+
   abort(): void {
     for (const self of this.chunkRuntimes.values()) self.controller.abort()
   }

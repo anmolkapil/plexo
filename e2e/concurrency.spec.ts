@@ -210,6 +210,24 @@ test.describe('stream count', () => {
     ])
   })
 
+  test('a server’s ceiling is told only while it is what holds the network back', () => {
+    let downloads = 1
+    const controller = new ConcurrencyController(MAX, true, () => Math.floor(MAX / downloads))
+    expect(controller.serverCeiling('a')).toBeUndefined()
+    controller.tick({
+      now: 0,
+      networks: [network('a', 16, { served: 10, refused: 6 })],
+      spareWork: 1000
+    })
+    expect(controller.serverCeiling('a')).toBe(10)
+    // Four downloads share the network: each runs 8, under the server's 10.
+    downloads = 4
+    expect(controller.serverCeiling('a')).toBeUndefined()
+    downloads = 1
+    expect(controller.serverCeiling('a')).toBe(10)
+    expect(controller.serverCeiling('b')).toBeUndefined()
+  })
+
   test('a count the user picked is kept, not grown, and still backs off when refused', () => {
     const controller = new ConcurrencyController(4, false)
     expect(controller.tick({ now: 0, networks: [network('a', 4)], spareWork: 1000 })).toEqual([])

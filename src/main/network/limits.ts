@@ -15,6 +15,9 @@ import { readJson, updateJson } from '../jsonFile'
 class Bucket {
   private tokens = 0
   private at = Date.now()
+  /** When it last made a reader wait: when the limit last held bytes back, rather than only
+   * being set. */
+  heldAt = -Infinity
 
   constructor(public rate: number) {}
 
@@ -23,9 +26,20 @@ class Bucket {
     this.tokens = Math.min(this.rate, this.tokens + ((now - this.at) / 1000) * this.rate)
     this.at = now
     this.tokens -= bytes
-    return this.tokens >= 0 ? 0 : (-this.tokens / this.rate) * 1000
+    if (this.tokens >= 0) return 0
+    this.heldAt = now
+    return (-this.tokens / this.rate) * 1000
+  }
+
+  /** It made a reader wait within the last HELD_MS. */
+  held(now: number): boolean {
+    return now - this.heldAt < HELD_MS
   }
 }
+
+/** A limit that held bytes back this recently is holding the download back now. Reads under a
+ * limit wait every few KB, so a second without one means the download no longer reaches it. */
+const HELD_MS = 1000
 
 type Usage = { key: string; bytes: Record<string, number> }
 const PERIODS: DataLimitPeriod[] = ['day', 'week', 'month']
@@ -41,6 +55,8 @@ const USAGE_SAVE_MS = 10_000
 
 export class Limits {
   private total: Bucket | null = null
+  /** What the total limit is: slow mode stands in for the speed limit while it's on. */
+  private totalKind: 'slow-mode' | 'speed-limit' = 'speed-limit'
   private perNetwork = new Map<string, Bucket>()
   /** Each network's data limit and selected calendar period. */
   private dataLimits = new Map<string, number>()
@@ -93,6 +109,7 @@ export class Limits {
       ? (settings.slowModeSpeed ?? DEFAULT_SLOW_MODE_SPEED)
       : settings.speedLimit
     this.total = adjust(this.total, total)
+    this.totalKind = settings.slowMode ? 'slow-mode' : 'speed-limit'
     const preferences = settings.networkPreferences ?? {}
     for (const id of new Set([...this.perNetwork.keys(), ...Object.keys(preferences)])) {
       const bucket = adjust(this.perNetwork.get(id) ?? null, preferences[id]?.speedLimit)
@@ -127,6 +144,17 @@ export class Limits {
       this.total?.take(bytes, now) ?? 0,
       this.perNetwork.get(networkId)?.take(bytes, now) ?? 0
     )
+  }
+
+  /** The limit over every download, if it held bytes back just now: what keeps every download
+   * from going faster. */
+  totalHeld(now = Date.now()): 'slow-mode' | 'speed-limit' | undefined {
+    return this.total?.held(now) ? this.totalKind : undefined
+  }
+
+  /** Whether the network's own speed limit held bytes back just now. */
+  networkHeld(networkId: string, now = Date.now()): boolean {
+    return !!this.perNetwork.get(networkId)?.held(now)
   }
 
   /** Whether the network has used up its data for the selected period. */

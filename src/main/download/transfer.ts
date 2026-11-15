@@ -44,6 +44,9 @@ export interface Transfer {
   wake(pick: (networkId: string) => boolean, reconnect: (networkId: string) => boolean): void
   /** The computer woke from sleep: every judgement made by the clock starts over. */
   systemResumed(now: number): void
+  /** The fewest connections the server takes over one of the networks in use, when it has
+   * refused more (see concurrency.ts). Only HTTP's finds that out. */
+  serverConnections?(): number | undefined
 }
 
 /** The parts of a download a transfer works on. The manager owns them; this is the same object. */
@@ -274,6 +277,7 @@ export function clearSpeeds(state: DownloadState): void {
   for (const connection of connections) connection.speedBytesPerSec = 0
   for (const network of state.networks) network.speedBytesPerSec = 0
   if (state.kind === 'http') state.diskLimited = undefined
+  state.limitedBy = undefined
   if (state.kind === 'torrent') {
     state.uploadSpeedBytesPerSec = 0
     for (const network of state.networks) network.uploadSpeedBytesPerSec = 0
