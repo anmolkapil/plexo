@@ -41,13 +41,16 @@ export interface NewsServerOptions {
   fault?: (article: { file: number; number: number }, request: number) => ArticleFault
   /** Waits this long before answering each BODY: slow enough for a test to act partway. */
   delayMs?: number
+  /** Listens on IPv6 as well as IPv4. */
+  dualStack?: boolean
 }
 
 /** - ok: the article as posted.
  * - corrupt: one byte of its data flipped, its checksum unchanged.
  * - cut: half of it, then the connection dropped.
- * - stall: half of it, then nothing. */
-export type ArticleFault = 'ok' | 'corrupt' | 'cut' | 'stall'
+ * - stall: half of it, then nothing.
+ * - drop: the connection dropped before any of it. */
+export type ArticleFault = 'ok' | 'corrupt' | 'cut' | 'stall' | 'drop'
 
 export interface ServedArticle {
   messageId: string
@@ -150,10 +153,13 @@ export class NewsServer {
   private readonly byId = new Map<string, Article>()
   private readonly requests = new Map<string, number>()
   private readonly sockets = new Set<Socket>()
-  private connections = 0
+  /** Connections it has taken, turned away or not. */
+  connections = 0
   readonly served: ServedArticle[] = []
   /** Connections turned away for going over maxConnections. */
   refused = 0
+  /** Every password it was sent (AUTHINFO PASS). */
+  readonly passwords: string[] = []
   port = 0
 
   constructor(private readonly options: NewsServerOptions) {
@@ -162,8 +168,13 @@ export class NewsServer {
     this.server = createServer((socket) => this.accept(socket))
   }
 
-  async start(): Promise<this> {
-    await new Promise<void>((resolve) => this.server.listen(0, '0.0.0.0', resolve))
+  /** On `port`, to start a stopped server again where it was; any free one by default. */
+  async start(port = 0): Promise<this> {
+    // No IPv6 here (dualStack): failing at once says why, rather than at the test's timeout.
+    await new Promise<void>((resolve, reject) => {
+      this.server.once('error', reject)
+      this.server.listen(port, this.options.dualStack ? '::' : '0.0.0.0', resolve)
+    })
     this.port = (this.server.address() as AddressInfo).port
     return this
   }
@@ -256,14 +267,12 @@ ${files.join('\n')}
             if (kind.toUpperCase() === 'USER') {
               user = value.join(' ')
               socket.write('381 Password required\r\n')
-            } else if (
-              user === this.options.username &&
-              value.join(' ') === this.options.password
-            ) {
-              signedIn = true
-              socket.write('281 Authentication accepted\r\n')
             } else {
-              socket.write('481 Authentication failed\r\n')
+              this.passwords.push(value.join(' '))
+              if (user === this.options.username && value.join(' ') === this.options.password) {
+                signedIn = true
+                socket.write('281 Authentication accepted\r\n')
+              } else socket.write('481 Authentication failed\r\n')
             }
             break
           }
@@ -298,6 +307,10 @@ ${files.join('\n')}
     this.requests.set(messageId, request)
     const fault = this.options.fault?.(article, request) ?? 'ok'
     this.served.push({ messageId, from, connection, fault })
+    if (fault === 'drop') {
+      socket.destroy()
+      return
+    }
     let body = article.body
     if (fault === 'corrupt') {
       body = Buffer.from(body)

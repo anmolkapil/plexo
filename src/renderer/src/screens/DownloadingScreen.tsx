@@ -391,6 +391,27 @@ export const DownloadingScreen = memo(function DownloadingScreen({
                   </Tooltip>
                 </>
               )}
+              {download.kind === 'nzb' && !!download.fromBackup && (
+                <>
+                  <Dot />
+                  <span>{download.fromBackup} from backup</span>
+                </>
+              )}
+              {download.kind === 'nzb' && download.backupError && (
+                <>
+                  <Dot />
+                  <Tooltip>
+                    <TooltipTrigger
+                      render={
+                        <span tabIndex={0} className="text-destructive outline-none">
+                          backup server error
+                        </span>
+                      }
+                    />
+                    <TooltipContent>{download.backupError}</TooltipContent>
+                  </Tooltip>
+                </>
+              )}
               {/* Several files: they open below. One is the name above. */}
               {download.kind === 'torrent' && download.files.total > 1 && (
                 <>

@@ -1,4 +1,5 @@
 import type { SpeedUnit } from '@shared/types'
+import { Settings } from 'lucide-react'
 import { useFreeSpace } from '../hooks/useFreeSpace'
 import { useAppStore } from '../store/useAppStore'
 import { formatBytes } from '../utils/format'
@@ -11,6 +12,8 @@ import { ToggleGroup, ToggleGroupItem } from './ui/toggle-group'
 import { Tooltip, TooltipContent, TooltipTrigger } from './ui/tooltip'
 import { UpdateIndicator } from './UpdateIndicator'
 
+const isMac = window.plexo.platform === 'darwin'
+const SETTINGS_SHORTCUT = isMac ? '⌘,' : 'Ctrl+,'
 /** MB/s or Mbps for every speed in the app; sits with the theme toggle as a view preference. */
 function SpeedUnitToggle(): React.JSX.Element {
   const speedUnit = useAppStore((store) => store.speedUnit)
@@ -61,6 +64,7 @@ export function StatusBar(): React.JSX.Element {
   const slowMode = useAppStore((store) => store.slowMode)
   const slowModeSpeed = useAppStore((store) => store.slowModeSpeed)
   const setSlowMode = useAppStore((store) => store.setSlowMode)
+  const openSettings = useAppStore((store) => store.openSettings)
   const destinationDir = useAppStore((store) => store.destinationDir)
   const free = useFreeSpace(destinationDir)
 
@@ -90,6 +94,21 @@ export function StatusBar(): React.JSX.Element {
         </Tooltip>
         <SpeedUnitToggle />
         <ThemeToggle />
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <button
+                type="button"
+                aria-label="Settings"
+                onClick={() => openSettings()}
+                className="flex size-[26px] shrink-0 cursor-default items-center justify-center rounded-[6px] border-[0.5px] border-border bg-secondary text-[var(--text-secondary)] hover:text-foreground [-webkit-app-region:no-drag]"
+              >
+                <Settings className="size-3.5" />
+              </button>
+            }
+          />
+          <TooltipContent>Settings ({SETTINGS_SHORTCUT})</TooltipContent>
+        </Tooltip>
       </div>
     </ScreenFooter>
   )

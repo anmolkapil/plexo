@@ -95,8 +95,10 @@ export interface IpcContract {
   /** The news server NZB downloads come from; null until one is set up. */
   usenetServer: { args: []; result: UsenetServer | null }
   saveUsenetServer: { args: [server: UsenetServerInput]; result: UsenetServer }
+  /** Sets the backup server for articles the news server doesn't have; null removes it. */
+  saveUsenetBackup: { args: [server: UsenetServerInput | null]; result: UsenetServer }
   /** Connects and signs in, over the computer's default route; throws what went wrong. */
-  testUsenetServer: { args: [server: UsenetServerInput]; result: void }
+  testUsenetServer: { args: [server: UsenetServerInput, backup?: boolean]; result: void }
   /** The notice about anonymous stats has been on screen (see main/stats.ts). */
   statsNoticeShown: { args: []; result: void }
   /** An error the window didn't catch, for the anonymous stats: its message stays in main. */

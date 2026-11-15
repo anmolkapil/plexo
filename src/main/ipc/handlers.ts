@@ -27,6 +27,7 @@ import { TelegramService, type TelegramServiceApi } from '../telegram/service'
 import { testUsenetServer } from '../download/nzb/nntp'
 import {
   loadUsenetServer,
+  saveUsenetBackup,
   saveUsenetServer,
   serverFromInput,
   viewOf
@@ -157,13 +158,14 @@ export function registerIpcHandlers(getWindow: () => BrowserWindow | null): Down
   ipcMain.on(IpcChannels.getInitialState, async (event) => {
     try {
       const settings = await loadSettings()
-      const { destinationDir } = settings
+      const { destinationDir, defaultDestinationDir } = settings
+      const effectiveDir = defaultDestinationDir ?? destinationDir
       // Capped: a folder on a dropped network share can take many seconds to answer, and launch
       // waits on this reply — past the cap it's treated as gone and Downloads is used instead.
       const destinationExists =
-        destinationDir !== undefined &&
+        effectiveDir !== undefined &&
         (await Promise.race([
-          stat(destinationDir).then(
+          stat(effectiveDir).then(
             (stats) => stats.isDirectory(),
             () => false
           ),
@@ -180,7 +182,8 @@ export function registerIpcHandlers(getWindow: () => BrowserWindow | null): Down
         slowMode: settings.slowMode ?? false,
         slowModeSpeed: settings.slowModeSpeed ?? DEFAULT_SLOW_MODE_SPEED,
         speedUnit: settings.speedUnit ?? 'bytes',
-        destinationDir: destinationExists ? destinationDir : undefined,
+        destinationDir: destinationExists ? effectiveDir : undefined,
+        defaultDestinationDir: settings.defaultDestinationDir,
         stats: statsSettings(settings)
       } satisfies InitialState
     } catch (error) {
@@ -317,8 +320,9 @@ export function registerIpcHandlers(getWindow: () => BrowserWindow | null): Down
     manager.usenetSwitched(server.enabled)
     return server
   })
-  handle('testUsenetServer', async (_event, input) =>
-    testUsenetServer(await serverFromInput(input))
+  handle('saveUsenetBackup', async (_event, input) => saveUsenetBackup(input))
+  handle('testUsenetServer', async (_event, input, backup) =>
+    testUsenetServer(await serverFromInput(input, backup === true))
   )
 
   handle('updateState', () => updateState())

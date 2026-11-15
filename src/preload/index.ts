@@ -71,7 +71,9 @@ const plexoApi = {
   dismissLink: (id: string) => invoke('dismissLink', id),
   usenetServer: () => invoke('usenetServer'),
   saveUsenetServer: (server: UsenetServerInput) => invoke('saveUsenetServer', server),
-  testUsenetServer: (server: UsenetServerInput) => invoke('testUsenetServer', server),
+  saveUsenetBackup: (server: UsenetServerInput | null) => invoke('saveUsenetBackup', server),
+  testUsenetServer: (server: UsenetServerInput, backup?: boolean) =>
+    invoke('testUsenetServer', server, backup),
   statsNoticeShown: () => invoke('statsNoticeShown'),
   reportError: (error: ReportedError) => invoke('reportError', error),
 
