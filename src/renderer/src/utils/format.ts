@@ -131,11 +131,6 @@ export function describeFileCount(chosen: number, total: number): string {
   return chosen === total ? files : `${chosen} of ${files}`
 }
 
-/** A torrent file's path within the torrent's own folder, which every path starts with. */
-export function pathInTorrent(path: string): string {
-  return path.split(/[\\/]/).slice(1).join('/') || path
-}
-
 /** What a download fetches: all of it, bar a torrent's pieces no chosen file needs and an NZB's
  * articles the server doesn't have. */
 export function wantedBytes(download: DownloadState | FinishedDownload): number {

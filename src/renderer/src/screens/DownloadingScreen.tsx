@@ -89,6 +89,13 @@ function BigStat({
   )
 }
 
+/** An NZB download's files, once its articles are in (see NzbPostProcess). */
+const STAGE_LABELS = {
+  verifying: 'Verifying with par2…',
+  repairing: 'Repairing with par2…',
+  unpacking: 'Unpacking…'
+} as const
+
 /** What the download is waiting on, when no network is carrying it. */
 function waitingFor(download: DownloadState): string | null {
   if (download.status !== 'downloading') return null
@@ -386,7 +393,7 @@ export const DownloadingScreen = memo(function DownloadingScreen({
                     <TooltipContent>
                       The news server doesn’t have{' '}
                       {missingArticles === 1 ? 'this article' : 'these articles'}. Once the download
-                      is done, repair its files with their .par2 files.
+                      is done, Plexo repairs its files with their .par2 files, if par2 is installed.
                     </TooltipContent>
                   </Tooltip>
                 </>
@@ -410,6 +417,16 @@ export const DownloadingScreen = memo(function DownloadingScreen({
                     />
                     <TooltipContent>{download.backupError}</TooltipContent>
                   </Tooltip>
+                </>
+              )}
+              {download.kind === 'nzb' && download.postProcess?.stage && !isPaused && (
+                <>
+                  <Dot />
+                  <span role="status" className="text-foreground">
+                    {STAGE_LABELS[download.postProcess.stage]}
+                    {download.postProcess.percent !== undefined &&
+                      ` ${download.postProcess.percent}%`}
+                  </span>
                 </>
               )}
               {/* Several files: they open below. One is the name above. */}

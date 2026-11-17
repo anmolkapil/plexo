@@ -12,7 +12,8 @@ export interface NetworkAddress {
 export type ThemeSource = 'light' | 'dark'
 
 export interface NetworkInterfaceInfo {
-  /** Stable identifier for this interface (currently the OS device name, e.g. "en0"). */
+  /** Stable identifier for this interface: the OS device name (e.g. "en0"), or "usb:<serial>" for
+   * a phone tethered over USB on Linux, whose device name changes each time it is plugged in. */
   id: string
   device: string
   displayName: string
@@ -426,6 +427,29 @@ export interface NzbDownloadState extends DownloadStateBase {
   backupError?: string
   /** The news server it downloads from, by host name. */
   server: string
+  /** Once its articles are in: the repair and unpacking done with the user's own tools (see
+   * main/download/nzb/postProcess.ts). Unset until then. */
+  postProcess?: NzbPostProcess
+}
+
+/** Repairing an NZB download with its .par2 files, then unpacking its archives. */
+export interface NzbPostProcess {
+  /** While it runs: what it is at, and how far along, when the tool says. Saved set, it was
+   * stopped partway (a quit, a crash): it runs again when the download is resumed. */
+  stage?: 'verifying' | 'repairing' | 'unpacking'
+  percent?: number
+  /** Its missing articles were restored from its .par2 files. */
+  repaired?: boolean
+  /** Its archives were unpacked into its folder. */
+  unpacked?: boolean
+  /** What unpacking moved into its folder so far (names there): a relaunch removes what an
+   * unpack cut short added. */
+  unpackedNames?: string[]
+  /** The files unpacking added, relative to its folder: its own, as its NZB's files are. */
+  unpackedFiles?: string[]
+  /** Why it left something undone: a tool not installed, a password-protected archive, a
+   * damaged one. */
+  note?: string
 }
 
 export type DownloadState =

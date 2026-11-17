@@ -1,4 +1,5 @@
 import { applyDownloadUpdate } from '@shared/downloadUpdate'
+import { carryOverDevicePreferences } from '@shared/networkPreferences'
 import type {
   AppSettings,
   DownloadSchedule,
@@ -182,8 +183,16 @@ export const useAppStore = create<AppStore>((set, get) => ({
     }
   },
 
-  receiveInterfaces: (interfaces) =>
-    set({ interfaces, interfacesStatus: 'ready', interfacesError: null }),
+  receiveInterfaces: (interfaces) => {
+    set({ interfaces, interfacesStatus: 'ready', interfacesError: null })
+    // Main moves them too, with no window open; this copy is what the window saves whole.
+    const saved = get().networkPreferences
+    const networkPreferences = carryOverDevicePreferences(saved, interfaces)
+    if (networkPreferences !== saved) {
+      set({ networkPreferences })
+      persist({ networkPreferences })
+    }
+  },
 
   // An explicit `undefined` in `patch` clears that field; main drops an entry left with neither.
   setNetworkPreference: (id, patch) => {
