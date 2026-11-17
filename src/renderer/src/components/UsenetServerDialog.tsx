@@ -70,7 +70,7 @@ export function UsenetServerButton({ host }: { host: string }): React.JSX.Elemen
             .catch(() => setServer(null))
             .finally(() => setOpen(true))
         }}
-        className="h-auto cursor-default gap-1 rounded-[4px] border-[0.5px] bg-card px-[7px] py-[3px] font-mono text-[10.5px] leading-none font-medium text-[var(--text-secondary)] dark:bg-card"
+        className="h-auto cursor-default gap-1 rounded-full border-[0.5px] bg-card px-[7px] py-[3px] font-mono text-[10.5px] leading-none font-medium text-[var(--text-secondary)] dark:bg-card"
       >
         <Server aria-hidden className="size-3" />
         {host}

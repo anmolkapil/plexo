@@ -135,7 +135,7 @@ function HttpStreamRows({
           <div
             role="row"
             key={stream.id}
-            className={`${rowClass} border-[var(--border-subtle)] bg-card py-[6px] font-mono text-[11px] leading-[1.2] ${index === 0 ? 'border-t-[0.5px] pt-[9px]' : ''} ${index === group.streams.length - 1 ? 'border-b-[0.5px] pb-[11px]' : ''}`}
+            className={`${rowClass} border-[var(--border-subtle)] bg-[var(--bg-tertiary)] py-[6px] font-mono text-[11px] leading-[1.2] ${index === 0 ? 'border-t-[0.5px] pt-[9px]' : ''} ${index === group.streams.length - 1 ? 'border-b-[0.5px] pb-[11px]' : ''}`}
           >
             <div role="cell" className="flex justify-center pl-5">
               <div
@@ -151,7 +151,7 @@ function HttpStreamRows({
                 {name} #{index + 1}
               </span>
               {progress.block && (
-                <span className="rounded-[3px] border-[0.5px] border-border bg-secondary px-[4.5px] py-[1.5px] text-[9px] leading-none whitespace-nowrap text-muted-foreground">
+                <span className="rounded-full border-[0.5px] border-border bg-secondary px-[5px] py-[1.5px] text-[9px] leading-none whitespace-nowrap text-muted-foreground">
                   {unit} #{progress.block.index + 1}
                 </span>
               )}
@@ -165,7 +165,7 @@ function HttpStreamRows({
                         border={visual.border}
                         text={visual.text}
                         tabIndex={0}
-                        className="h-[13px] rounded-[3px] px-[5px] py-px text-[9px] font-semibold tracking-[0.04em] outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
+                        className="h-[13px] rounded-full px-[5px] py-px text-[9px] font-semibold tracking-[0.04em] outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
                       >
                         {stream.hedge ? 'BACKUP' : 'SPLIT'}
                       </ColorBadge>
@@ -307,7 +307,7 @@ function PeerRows({
           <div
             role="row"
             key={peer.id}
-            className={`${rowClass} border-[var(--border-subtle)] bg-card py-[6px] font-mono text-[11px] leading-[1.2] ${index === 0 ? 'border-t-[0.5px] pt-[9px]' : ''} ${index === group.peers.length - 1 ? 'border-b-[0.5px] pb-[11px]' : ''}`}
+            className={`${rowClass} border-[var(--border-subtle)] bg-[var(--bg-tertiary)] py-[6px] font-mono text-[11px] leading-[1.2] ${index === 0 ? 'border-t-[0.5px] pt-[9px]' : ''} ${index === group.peers.length - 1 ? 'border-b-[0.5px] pb-[11px]' : ''}`}
           >
             <div role="cell" className="flex justify-center pl-5">
               {/* Its state, with its speed: no word needed beside it. */}
@@ -329,7 +329,7 @@ function PeerRows({
               </span>
               {/* The client it runs, as a stream shows its chunk. */}
               {peer.client && (
-                <span className="min-w-0 truncate rounded-[3px] border-[0.5px] border-border bg-secondary px-[4.5px] py-[1.5px] text-[9px] leading-none whitespace-nowrap text-muted-foreground">
+                <span className="min-w-0 truncate rounded-full border-[0.5px] border-border bg-secondary px-[5px] py-[1.5px] text-[9px] leading-none whitespace-nowrap text-muted-foreground">
                   {peer.client}
                 </span>
               )}
@@ -438,7 +438,7 @@ export function NetworkRow({
               bg={visual.bg}
               border={visual.border}
               text={visual.text}
-              className="h-[15px] rounded-[3px] px-[5px] py-px font-mono text-[8.5px] font-semibold tracking-[0.06em] uppercase"
+              className="h-[15px] rounded-full px-[5px] py-px font-mono text-[8.5px] font-semibold tracking-[0.06em] uppercase"
             >
               PROXY · {proxy!.type}
             </ColorBadge>

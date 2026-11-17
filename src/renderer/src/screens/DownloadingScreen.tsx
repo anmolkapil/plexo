@@ -281,7 +281,7 @@ export const DownloadingScreen = memo(function DownloadingScreen({
         </div>
       )}
       {/* Hero band — always visible under the header */}
-      <HeroBand>
+      <HeroBand className="mx-3 mt-3 shrink-0 rounded-[24px] border border-[var(--hero-border)]">
         {/* At their designed size: a wider window opens a gap between the speed and the chart
             (ml-auto) rather than stretching the merge into rails or the chart into a ribbon. */}
         <div className="flex items-center gap-[14px]">
@@ -327,7 +327,7 @@ export const DownloadingScreen = memo(function DownloadingScreen({
                           <span
                             role="img"
                             aria-label="Slow drive"
-                            className="inline-flex text-[var(--swatch-amber)]"
+                            className="inline-flex text-[var(--color-warning)]"
                           >
                             <AlertTriangle aria-hidden className="size-3" />
                           </span>
@@ -396,211 +396,214 @@ export const DownloadingScreen = memo(function DownloadingScreen({
       </HeroBand>
 
       {/* File info — always visible, never shrinks */}
-      <div className="shrink-0 p-[16px_20px_0px]">
-        <div className="flex items-center gap-[14px]">
-          <div className="flex size-11 shrink-0 items-center justify-center rounded-[14px] border-[0.5px] border-[var(--border-strong)] bg-card font-mono text-[10.5px] leading-none font-bold tracking-[0.04em] text-[var(--text-secondary)]">
-            {isFolder(download) ? (
-              <Folder aria-label="Folder" className="size-[18px]" />
-            ) : (
-              fileExtensionBadge(download.fileName)
-            )}
-          </div>
-          <div className="flex min-w-0 flex-1 flex-col gap-1.5">
-            <div className="flex min-w-0 items-center gap-2">
-              <TruncatedText
-                text={download.fileName}
-                className="font-sans text-[15px] leading-[1.3] font-semibold tracking-[-0.01em] text-foreground"
-              />
-              {isTorrent && <TorrentBadge />}
-              {download.kind === 'nzb' && <UsenetBadge />}
+      <div className="mx-3 mt-3 shrink-0 rounded-[22px] border border-[var(--border-subtle)] bg-card pb-4">
+        <div className="p-[16px_20px_0px]">
+          <div className="flex items-center gap-[14px]">
+            <div className="flex size-11 shrink-0 items-center justify-center rounded-[14px] border-[0.5px] border-[var(--border-strong)] bg-[var(--bg-tertiary)] font-mono text-[10.5px] leading-none font-bold tracking-[0.04em] text-[var(--text-secondary)]">
+              {isFolder(download) ? (
+                <Folder aria-label="Folder" className="size-[18px]" />
+              ) : (
+                fileExtensionBadge(download.fileName)
+              )}
             </div>
-            <div className="flex min-w-0 items-center gap-[7px] font-mono text-[12.5px] leading-[1.2] tabular-nums text-[var(--text-secondary)]">
-              <span>
-                {formatBytes(download.bytesDownloaded)}
-                {knownSize ? ` of ${formatBytes(wantedBytes(download))}` : ''}
-              </span>
-              {knownSize && (
-                <>
-                  <Dot />
-                  <span className="font-semibold text-foreground">{percent}%</span>
-                </>
-              )}
-              {isTorrent && (
-                <>
-                  <Dot />
-                  <span>
-                    {download.peers.length} {download.peers.length === 1 ? 'peer' : 'peers'}
-                  </span>
-                </>
-              )}
-              {download.kind === 'nzb' && (
-                <>
-                  <Dot />
-                  <span>
-                    {describeFileCount(download.nzbFiles.length, download.nzbFiles.length)}
-                  </span>
-                  <Dot />
-                  <UsenetServerButton host={download.server} />
-                </>
-              )}
-              {missingArticles > 0 && (
-                <>
-                  <Dot />
-                  <Tooltip>
-                    <TooltipTrigger
-                      render={
-                        <span tabIndex={0} className="text-destructive outline-none">
-                          {missingArticles} missing
-                        </span>
-                      }
-                    />
-                    <TooltipContent>
-                      The news server doesn’t have{' '}
-                      {missingArticles === 1 ? 'this article' : 'these articles'}. Once the download
-                      is done, Plexo repairs its files with their .par2 files, if par2 is installed.
-                    </TooltipContent>
-                  </Tooltip>
-                </>
-              )}
-              {download.kind === 'nzb' && !!download.fromBackup && (
-                <>
-                  <Dot />
-                  <span>{download.fromBackup} from backup</span>
-                </>
-              )}
-              {download.kind === 'nzb' && download.backupError && (
-                <>
-                  <Dot />
-                  <Tooltip>
-                    <TooltipTrigger
-                      render={
-                        <span tabIndex={0} className="text-destructive outline-none">
-                          backup server error
-                        </span>
-                      }
-                    />
-                    <TooltipContent>{download.backupError}</TooltipContent>
-                  </Tooltip>
-                </>
-              )}
-              {download.kind === 'nzb' && download.postProcess?.stage && !isPaused && (
-                <>
-                  <Dot />
-                  <span role="status" className="text-foreground">
-                    {STAGE_LABELS[download.postProcess.stage]}
-                    {download.postProcess.percent !== undefined &&
-                      ` ${download.postProcess.percent}%`}
-                  </span>
-                </>
-              )}
-              {/* Several files: they open below. One is the name above. */}
-              {download.kind === 'torrent' && download.files.total > 1 && (
-                <>
-                  <Dot />
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="xs"
-                    onClick={() => setFilesOpen((open) => !open)}
-                    aria-expanded={filesOpen}
-                    className="h-auto cursor-default rounded-full border-[0.5px] bg-card px-[7px] py-[3px] font-mono text-[10.5px] leading-none font-medium text-[var(--text-secondary)] aria-expanded:bg-secondary dark:bg-card"
-                  >
-                    {describeFileCount(download.files.chosen, download.files.total)}{' '}
-                    <span aria-hidden className="text-[7.5px] opacity-75">
-                      {filesOpen ? '▲' : '▼'}
-                    </span>
-                  </Button>
-                </>
-              )}
-              {download.kind === 'torrent' && (
-                <>
-                  <Dot />
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="xs"
-                    onClick={() => void perform('trackers', [download])}
-                    className="h-auto cursor-default rounded-full border-[0.5px] bg-card px-[7px] py-[3px] font-mono text-[10.5px] leading-none font-medium text-[var(--text-secondary)] hover:bg-secondary dark:bg-card"
-                  >
-                    Trackers
-                  </Button>
-                </>
-              )}
-              {!isPaused && download.timeLeftSeconds !== undefined && (
-                <>
-                  <Dot />
-                  <span className="text-[var(--text-secondary)]">
-                    {formatEta(download.timeLeftSeconds)} left
-                  </span>
-                </>
-              )}
-              {statusBadge && (
-                <ColorBadge
-                  bg={statusBadge.palette.bg}
-                  border={statusBadge.palette.border}
-                  text={statusBadge.palette.text}
-                  // Pinned for the same reason as the stream row's ACTIVE badge: sizing itself,
-                  // it pushed this text block past the 44px file-type icon beside it and nudged
-                  // everything below down. At h-4 the block stays under the icon, so the row
-                  // height is the icon's either way.
-                  className="h-4 rounded-[3.5px] px-[7px] py-0.5 text-[9.5px] font-semibold tracking-[0.08em]"
-                >
-                  {statusBadge.label}
-                </ColorBadge>
-              )}
-              {totalRetries > 0 && (
-                <>
-                  <Dot />
-                  <span className="text-[var(--color-usb)]">
-                    {totalRetries} {totalRetries === 1 ? 'retry' : 'retries'}
-                  </span>
-                </>
-              )}
-              {/* Last and to the right: the one part that gives way when the line runs short. */}
-              <Tooltip>
-                <TooltipTrigger
-                  render={
-                    <span className="ml-auto flex min-w-0 items-center gap-1.5 pl-3 text-[11px] text-muted-foreground">
-                      <Folder aria-hidden className="size-3 shrink-0" />
-                      <span className="sr-only">Saving to</span>
-                      <span className="truncate">
-                        {toDisplayPath(dirnameOf(download.destinationPath), homeDir)}
-                      </span>
-                    </span>
-                  }
+            <div className="flex min-w-0 flex-1 flex-col gap-1.5">
+              <div className="flex min-w-0 items-center gap-2">
+                <TruncatedText
+                  text={download.fileName}
+                  className="font-sans text-[15px] leading-[1.3] font-semibold tracking-[-0.01em] text-foreground"
                 />
-                <TooltipContent>Saving to: {download.destinationPath}</TooltipContent>
-              </Tooltip>
+                {isTorrent && <TorrentBadge />}
+                {download.kind === 'nzb' && <UsenetBadge />}
+              </div>
+              <div className="flex min-w-0 items-center gap-[7px] font-mono text-[12.5px] leading-[1.2] tabular-nums text-[var(--text-secondary)]">
+                <span>
+                  {formatBytes(download.bytesDownloaded)}
+                  {knownSize ? ` of ${formatBytes(wantedBytes(download))}` : ''}
+                </span>
+                {knownSize && (
+                  <>
+                    <Dot />
+                    <span className="font-semibold text-foreground">{percent}%</span>
+                  </>
+                )}
+                {isTorrent && (
+                  <>
+                    <Dot />
+                    <span>
+                      {download.peers.length} {download.peers.length === 1 ? 'peer' : 'peers'}
+                    </span>
+                  </>
+                )}
+                {download.kind === 'nzb' && (
+                  <>
+                    <Dot />
+                    <span>
+                      {describeFileCount(download.nzbFiles.length, download.nzbFiles.length)}
+                    </span>
+                    <Dot />
+                    <UsenetServerButton host={download.server} />
+                  </>
+                )}
+                {missingArticles > 0 && (
+                  <>
+                    <Dot />
+                    <Tooltip>
+                      <TooltipTrigger
+                        render={
+                          <span tabIndex={0} className="text-destructive outline-none">
+                            {missingArticles} missing
+                          </span>
+                        }
+                      />
+                      <TooltipContent>
+                        The news server doesn’t have{' '}
+                        {missingArticles === 1 ? 'this article' : 'these articles'}. Once the
+                        download is done, Plexo repairs its files with their .par2 files, if par2 is
+                        installed.
+                      </TooltipContent>
+                    </Tooltip>
+                  </>
+                )}
+                {download.kind === 'nzb' && !!download.fromBackup && (
+                  <>
+                    <Dot />
+                    <span>{download.fromBackup} from backup</span>
+                  </>
+                )}
+                {download.kind === 'nzb' && download.backupError && (
+                  <>
+                    <Dot />
+                    <Tooltip>
+                      <TooltipTrigger
+                        render={
+                          <span tabIndex={0} className="text-destructive outline-none">
+                            backup server error
+                          </span>
+                        }
+                      />
+                      <TooltipContent>{download.backupError}</TooltipContent>
+                    </Tooltip>
+                  </>
+                )}
+                {download.kind === 'nzb' && download.postProcess?.stage && !isPaused && (
+                  <>
+                    <Dot />
+                    <span role="status" className="text-foreground">
+                      {STAGE_LABELS[download.postProcess.stage]}
+                      {download.postProcess.percent !== undefined &&
+                        ` ${download.postProcess.percent}%`}
+                    </span>
+                  </>
+                )}
+                {/* Several files: they open below. One is the name above. */}
+                {download.kind === 'torrent' && download.files.total > 1 && (
+                  <>
+                    <Dot />
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="xs"
+                      onClick={() => setFilesOpen((open) => !open)}
+                      aria-expanded={filesOpen}
+                      className="h-auto cursor-default rounded-full border-[0.5px] bg-card px-[7px] py-[3px] font-mono text-[10.5px] leading-none font-medium text-[var(--text-secondary)] aria-expanded:bg-secondary dark:bg-card"
+                    >
+                      {describeFileCount(download.files.chosen, download.files.total)}{' '}
+                      <span aria-hidden className="text-[7.5px] opacity-75">
+                        {filesOpen ? '▲' : '▼'}
+                      </span>
+                    </Button>
+                  </>
+                )}
+                {download.kind === 'torrent' && (
+                  <>
+                    <Dot />
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="xs"
+                      onClick={() => void perform('trackers', [download])}
+                      className="h-auto cursor-default rounded-full border-[0.5px] bg-card px-[7px] py-[3px] font-mono text-[10.5px] leading-none font-medium text-[var(--text-secondary)] hover:bg-secondary dark:bg-card"
+                    >
+                      Trackers
+                    </Button>
+                  </>
+                )}
+                {!isPaused && download.timeLeftSeconds !== undefined && (
+                  <>
+                    <Dot />
+                    <span className="text-[var(--text-secondary)]">
+                      {formatEta(download.timeLeftSeconds)} left
+                    </span>
+                  </>
+                )}
+                {statusBadge && (
+                  <ColorBadge
+                    bg={statusBadge.palette.bg}
+                    border={statusBadge.palette.border}
+                    text={statusBadge.palette.text}
+                    // Pinned for the same reason as the stream row's ACTIVE badge: sizing itself,
+                    // it pushed this text block past the 44px file-type icon beside it and nudged
+                    // everything below down. At h-4 the block stays under the icon, so the row
+                    // height is the icon's either way.
+                    className="h-4 rounded-full px-[7px] py-0.5 text-[9.5px] font-semibold tracking-[0.08em]"
+                  >
+                    {statusBadge.label}
+                  </ColorBadge>
+                )}
+                {totalRetries > 0 && (
+                  <>
+                    <Dot />
+                    <span className="text-[var(--color-warning)]">
+                      {totalRetries} {totalRetries === 1 ? 'retry' : 'retries'}
+                    </span>
+                  </>
+                )}
+                {/* Last and to the right: the one part that gives way when the line runs short. */}
+                <Tooltip>
+                  <TooltipTrigger
+                    render={
+                      <span className="ml-auto flex min-w-0 items-center gap-1.5 pl-3 text-[11px] text-muted-foreground">
+                        <Folder aria-hidden className="size-3 shrink-0" />
+                        <span className="sr-only">Saving to</span>
+                        <span className="truncate">
+                          {toDisplayPath(dirnameOf(download.destinationPath), homeDir)}
+                        </span>
+                      </span>
+                    }
+                  />
+                  <TooltipContent>Saving to: {download.destinationPath}</TooltipContent>
+                </Tooltip>
+              </div>
             </div>
           </div>
+          {download.kind === 'torrent' && filesOpen && (
+            <TorrentFiles
+              downloadId={download.id}
+              pieces={download.pieces}
+              selected={download.files.selected}
+            />
+          )}
         </div>
-        {download.kind === 'torrent' && filesOpen && (
-          <TorrentFiles
-            downloadId={download.id}
-            pieces={download.pieces}
-            selected={download.files.selected}
-          />
-        )}
-      </div>
 
-      {/* Block grid: pinned with the file info. It's capped in height and scrolls itself. */}
-      <div className="shrink-0 px-5 pt-3">
-        <BlockGrid
-          blocks={download.kind === 'torrent' ? download.pieces : download.blocks}
-          groups={groups}
-          visuals={visuals}
-          knownSize={knownSize}
-          remainingBytes={remainingBytes}
-          isPaused={isPaused}
-          pieces={isTorrent}
-          articles={download.kind === 'nzb'}
-        />
+        {/* Block grid: pinned with the file info. It's capped in height and scrolls itself. */}
+        <div className="px-5 pt-3">
+          <BlockGrid
+            blocks={download.kind === 'torrent' ? download.pieces : download.blocks}
+            groups={groups}
+            visuals={visuals}
+            knownSize={knownSize}
+            remainingBytes={remainingBytes}
+            isPaused={isPaused}
+            pieces={isTorrent}
+            articles={download.kind === 'nzb'}
+          />
+        </div>
       </div>
 
       {/* Network table: only its rows scroll, under their column headers. Edge to edge: its rows
           pad themselves. */}
-      <div className="flex min-h-0 flex-1 flex-col overflow-y-auto pb-2">
-        <div className="mt-3">
+      <div className="mx-3 mt-3 mb-3 flex min-h-0 flex-1 flex-col overflow-y-auto rounded-[22px] border border-[var(--border-subtle)] bg-card pb-2">
+        <div>
           <div
             role="table"
             aria-label="Networks"
@@ -609,7 +612,7 @@ export const DownloadingScreen = memo(function DownloadingScreen({
           >
             <div
               role="row"
-              className="sticky top-0 z-10 col-span-full grid grid-cols-subgrid gap-x-3 border-b border-border bg-background pt-2.5 pb-[7px] font-mono text-[9.5px] leading-none tracking-[0.12em] text-muted-foreground uppercase"
+              className="sticky top-0 z-10 col-span-full grid grid-cols-subgrid gap-x-3 border-b border-border bg-card pt-2.5 pb-[7px] font-mono text-[9.5px] leading-none tracking-[0.12em] text-muted-foreground uppercase"
             >
               <div role="columnheader" aria-label="Status" />
               <div role="columnheader">Network</div>

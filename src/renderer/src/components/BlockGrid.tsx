@@ -290,7 +290,7 @@ export function BlockGrid({
     }
 
     return (
-      <div className="flex flex-col gap-[9px] rounded-[14px] border-[0.5px] border-border bg-card px-[14px] pt-[10px] pb-[11px]">
+      <div className="flex flex-col gap-[9px] rounded-[14px] border-[0.5px] border-border bg-[var(--bg-tertiary)] px-[14px] pt-[10px] pb-[11px]">
         <div className="flex flex-wrap items-center gap-[14px]">
           {groups.map((group, idx) => {
             const visual = visuals[idx]

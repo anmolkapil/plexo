@@ -58,7 +58,7 @@ export function DetailHeader({ download }: { download: DownloadItem }): React.JS
       <button
         type="button"
         onClick={() => setView({ name: 'list' })}
-        className="-ml-2 flex items-center gap-1 rounded-md px-1.5 py-1 font-sans text-[15px] leading-none font-medium text-[var(--text-secondary)] hover:text-foreground"
+        className="-ml-2 flex items-center gap-1 rounded-full px-1.5 py-1 font-sans text-[15px] leading-none font-medium text-[var(--text-secondary)] hover:text-foreground"
       >
         <ChevronLeft className="size-4.5" />
         Downloads

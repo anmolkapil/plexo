@@ -114,7 +114,7 @@ export function NetworksMenu({
                 </span>
                 {/* The system's own name for the adapter, beside the user's. A long one (a Windows
                     driver name) is cut off, and only then is there a tooltip with all of it. */}
-                <span className="relative z-10 flex max-w-[110px] min-w-0 shrink-0 rounded-[4px] border-[0.5px] border-border bg-foreground/5 px-1.5 font-mono text-[10.5px] text-muted-foreground">
+                <span className="relative z-10 flex max-w-[110px] min-w-0 shrink-0 rounded-full border-[0.5px] border-border bg-foreground/5 px-1.5 font-mono text-[10.5px] text-muted-foreground">
                   <TruncatedText text={iface.displayName} />
                 </span>
               </div>

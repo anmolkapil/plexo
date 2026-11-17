@@ -614,7 +614,7 @@ function NewDownloadForm({ onDone }: { onDone: () => void }): React.JSX.Element 
                 </span>
               </div>
             ) : (
-              <div className="flex min-w-0 flex-1 items-center gap-2 text-[12.5px] text-[var(--color-usb-text)]">
+              <div className="flex min-w-0 flex-1 items-center gap-2 text-[12.5px] text-[var(--color-warning-text)]">
                 <AlertTriangle aria-hidden className="size-3.5 shrink-0" />
                 Set up your news server to download this NZB.
               </div>
@@ -798,7 +798,7 @@ function NewDownloadForm({ onDone }: { onDone: () => void }): React.JSX.Element 
         )}
 
         {subnetConflict && (
-          <div className="flex items-start gap-2 text-[12px] leading-snug text-[var(--color-usb-text)]">
+          <div className="flex items-start gap-2 text-[12px] leading-snug text-[var(--color-warning-text)]">
             <AlertTriangle className="mt-0.5 size-3.5 shrink-0" />
             {subnetConflict.names.join(' and ')} share a subnet ({subnetConflict.subnet}), so the
             computer sends both down one route and they can’t be combined.
@@ -817,7 +817,7 @@ function NewDownloadForm({ onDone }: { onDone: () => void }): React.JSX.Element 
           </div>
         )}
         {usedUpPick.length > 0 && (
-          <div className="flex items-start gap-2 text-[12px] leading-snug text-[var(--color-usb-text)]">
+          <div className="flex items-start gap-2 text-[12px] leading-snug text-[var(--color-warning-text)]">
             <AlertTriangle className="mt-0.5 size-3.5 shrink-0" />
             {usedUpPick
               .map((iface) => networkVisual(iface.id, iface.kind, iface.displayName).name)
@@ -828,7 +828,7 @@ function NewDownloadForm({ onDone }: { onDone: () => void }): React.JSX.Element 
           </div>
         )}
         {interfaces.length > 0 && availableIds.length === 0 && (
-          <div className="flex items-start gap-2 text-[12px] leading-snug text-[var(--color-usb-text)]">
+          <div className="flex items-start gap-2 text-[12px] leading-snug text-[var(--color-warning-text)]">
             <AlertTriangle className="mt-0.5 size-3.5 shrink-0" />
             Every network has reached its data limit. Raise one in Speed &amp; data limits.
           </div>

@@ -347,7 +347,7 @@ function GeneralPage({
         <h4 className={headingClass}>Downloads at once</h4>
         <p className={hintClass}>Other downloads wait in the queue and start automatically.</p>
         <div className="flex items-center gap-3 text-[13.5px]">
-          <div className="flex items-center rounded-lg border border-input">
+          <div className="flex items-center rounded-full border border-input">
             <Button
               type="button"
               variant="ghost"

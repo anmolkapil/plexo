@@ -98,6 +98,10 @@
   --color-accent-onsolid: #ffffff;
   --color-success: #1f8a70;
 
+  /* Warnings keep the old amber: USB is grey now, and grey reads as nothing wrong. */
+  --color-warning: #d97706;
+  --color-warning-text: #92400e;
+
   --color-danger: #dc2626;
   --color-danger-bg: #fef2f2;
   --color-danger-border: #fecaca;
@@ -218,6 +222,9 @@
     --color-accent-pressed: #c94a06;
     --color-accent-onsolid: #ffffff;
     --color-success: #4ea89a;
+
+    --color-warning: #d8a44c;
+    --color-warning-text: #e8bb6d;
 
     --color-danger: #eda3a3;
     --color-danger-bg: #2c1c1c;
