@@ -48,6 +48,9 @@ interface Attempt {
   block: HttpBlockState
   streamId: number
   networkId: string
+  /** The download's link when the request went out: it can be replaced since (see
+   * refreshLink). */
+  url: string
   /** Where the request begins, as an offset into the block. Null until it is known. */
   startOffset: number | null
   /** Where it stops, as an offset into the block, exclusive; null for a block of unknown length.
@@ -124,6 +127,8 @@ const debug: (...args: unknown[]) => void = process.env['PLEXO_DEBUG']
   : () => {}
 
 const MAX_CHUNK_RETRIES = 5
+/** What a server answers a link it no longer takes with: a signed one that ran out, say. */
+const LINK_REFUSED = [401, 403, 410]
 const RETRY_BASE_DELAY_MS = testKnobs.retryBaseDelayMs
 const RETRY_MAX_DELAY_MS = 15_000
 // A network that can't reach the server keeps one stream asking (see reconcile). That is one
@@ -134,6 +139,18 @@ const UNREACHABLE_RETRY_MS = 5_000
 // RETRY_AFTER_MAX_MS.
 const SERVER_BUSY_FOR_MS = testKnobs.serverBusyForMs
 const RETRY_AFTER_MAX_MS = 120_000
+
+/** What `answer` settles to, or false if `signal` aborts first (or `answer` fails). */
+function unlessAborted(answer: Promise<boolean>, signal: AbortSignal): Promise<boolean> {
+  if (signal.aborted) return Promise.resolve(false)
+  return new Promise((resolve) => {
+    const onAbort = (): void => resolve(false)
+    signal.addEventListener('abort', onAbort, { once: true })
+    answer
+      .then(resolve, () => resolve(false))
+      .finally(() => signal.removeEventListener('abort', onAbort))
+  })
+}
 
 /** Doubling from RETRY_BASE_DELAY_MS, with ±20% jitter as gRPC's backoff has: a network that
  * drops fails all its streams at once, and they shouldn't all come back at the same instant. */
@@ -325,6 +342,11 @@ export class HttpTransfer implements Transfer {
   private concurrency: ConcurrencyController | null
   /** Whether the disk is what holds the download back, for Auto, the user and hedges. */
   private readonly disk = new DiskWatch()
+  /** The link the server last turned away this run, and whether a fresh one came of asking for it
+   * (see refreshLink). */
+  private linkRefresh: { refused: string; refreshed: Promise<boolean> } | null = null
+  /** The links a block came in from this run. */
+  private servedLinks = new Set<string>()
 
   constructor(
     private readonly runtime: HttpTransferTarget,
@@ -436,6 +458,8 @@ export class HttpTransfer implements Transfer {
     this.aheadByBlock.clear()
     this.reconciled.clear()
     this.disk.reset()
+    this.linkRefresh = null
+    this.servedLinks.clear()
   }
 
   systemResumed(now: number): void {
@@ -666,6 +690,7 @@ export class HttpTransfer implements Transfer {
       block,
       streamId: chunk.id,
       networkId: chunk.interfaceId,
+      url: this.runtime.requestPayload.url,
       startOffset,
       end: work.kind === 'split' ? work.end! : partEnd(block, inFlight, segments, startOffset),
       received: 0,
@@ -747,7 +772,7 @@ export class HttpTransfer implements Transfer {
 
       attempt.startedAt = Date.now()
       await downloadChunk({
-        url: this.runtime.requestPayload.url,
+        url: attempt.url,
         browser: this.runtime.requestPayload.browser,
         rangeStart: block.rangeStart + startOffset,
         rangeEnd: attempt.end === null ? null : block.rangeStart + attempt.end - 1,
@@ -978,6 +1003,7 @@ export class HttpTransfer implements Transfer {
     }
 
     this.endAttempt(self, attempt)
+    this.servedLinks.add(attempt.url)
     self.failures = 0
     self.strikes = 0
     if (block.rangeEnd === null) {
@@ -1086,6 +1112,22 @@ export class HttpTransfer implements Transfer {
       this.letGo(chunk, self, attempt, deliveredNothing)
       this.host.failNetwork(network, message)
       return 'stop'
+    }
+
+    // A link the server no longer takes, a signed one that ran out, say: with a fresh one from the
+    // link the download was given, every stream goes on, nothing counted against it.
+    if (error instanceof HttpStatusError && LINK_REFUSED.includes(error.status)) {
+      const refreshed = await unlessAborted(this.refreshLink(attempt.url), self.wait)
+      if (
+        self.controller.signal.aborted ||
+        (this.runtime.state.status as DownloadStatus) !== 'downloading'
+      ) {
+        return this.finishStopped(chunk, self, attempt)
+      }
+      if (refreshed) {
+        this.letGo(chunk, self, attempt, false)
+        return 'continue'
+      }
     }
 
     // What the server's answer says about the network: a connection failing while the whole
@@ -1354,6 +1396,25 @@ export class HttpTransfer implements Transfer {
     }
 
     this.host.scheduleUpdate()
+  }
+
+  /**
+   * After the server turned `url` away: whether there's a fresh link to go on with. A request
+   * sent before the link was replaced just goes again. Otherwise the manager is asked once per
+   * link turned away, and every stream it turned away waits on that one answer. A link a refresh
+   * switched to is only refreshed in turn once a block has come in from it, so a link that is
+   * turned away from the start doesn't have the one it came from asked again and again; a run
+   * (a resume) starts that over.
+   */
+  private refreshLink(url: string): Promise<boolean> {
+    const current = this.runtime.requestPayload.url
+    if (url !== current) return Promise.resolve(true)
+    if (this.linkRefresh?.refused === url) return this.linkRefresh.refreshed
+    if (this.linkRefresh && !this.servedLinks.has(url)) return Promise.resolve(false)
+    const refreshed = this.host.refreshLink?.()
+    if (!refreshed) return Promise.resolve(false)
+    this.linkRefresh = { refused: url, refreshed }
+    return refreshed
   }
 
   /**
