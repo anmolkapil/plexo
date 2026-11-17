@@ -398,7 +398,7 @@ export const DownloadingScreen = memo(function DownloadingScreen({
       {/* File info — always visible, never shrinks */}
       <div className="shrink-0 p-[16px_20px_0px]">
         <div className="flex items-center gap-[14px]">
-          <div className="flex size-11 shrink-0 items-center justify-center rounded-[10px] border-[0.5px] border-[var(--border-strong)] bg-card font-mono text-[10.5px] leading-none font-bold tracking-[0.04em] text-[var(--text-secondary)]">
+          <div className="flex size-11 shrink-0 items-center justify-center rounded-[14px] border-[0.5px] border-[var(--border-strong)] bg-card font-mono text-[10.5px] leading-none font-bold tracking-[0.04em] text-[var(--text-secondary)]">
             {isFolder(download) ? (
               <Folder aria-label="Folder" className="size-[18px]" />
             ) : (
@@ -503,7 +503,7 @@ export const DownloadingScreen = memo(function DownloadingScreen({
                     size="xs"
                     onClick={() => setFilesOpen((open) => !open)}
                     aria-expanded={filesOpen}
-                    className="h-auto cursor-default rounded-[4px] border-[0.5px] bg-card px-[7px] py-[3px] font-mono text-[10.5px] leading-none font-medium text-[var(--text-secondary)] aria-expanded:bg-secondary dark:bg-card"
+                    className="h-auto cursor-default rounded-full border-[0.5px] bg-card px-[7px] py-[3px] font-mono text-[10.5px] leading-none font-medium text-[var(--text-secondary)] aria-expanded:bg-secondary dark:bg-card"
                   >
                     {describeFileCount(download.files.chosen, download.files.total)}{' '}
                     <span aria-hidden className="text-[7.5px] opacity-75">
@@ -520,7 +520,7 @@ export const DownloadingScreen = memo(function DownloadingScreen({
                     variant="outline"
                     size="xs"
                     onClick={() => void perform('trackers', [download])}
-                    className="h-auto cursor-default rounded-[4px] border-[0.5px] bg-card px-[7px] py-[3px] font-mono text-[10.5px] leading-none font-medium text-[var(--text-secondary)] hover:bg-secondary dark:bg-card"
+                    className="h-auto cursor-default rounded-full border-[0.5px] bg-card px-[7px] py-[3px] font-mono text-[10.5px] leading-none font-medium text-[var(--text-secondary)] hover:bg-secondary dark:bg-card"
                   >
                     Trackers
                   </Button>

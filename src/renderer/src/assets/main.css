@@ -48,16 +48,16 @@
   --hero-border: #e2e4e8;
 
   /* Network + brand palette — light-mode originals, adapted to sit on a white ground. */
-  --color-wifi: #1f8a70;
-  --color-wifi-bg: #e6f6f2;
-  --color-wifi-border: #b8e6dc;
-  --color-wifi-text: #0e6b54;
+  --color-wifi: #f36712;
+  --color-wifi-bg: #fff1e8;
+  --color-wifi-border: #fdd0b2;
+  --color-wifi-text: #b04604;
   --color-wifi-onsolid: #ffffff;
 
-  --color-usb: #d97706;
-  --color-usb-bg: #fef3c7;
-  --color-usb-border: #fde68a;
-  --color-usb-text: #92400e;
+  --color-usb: #8c8c94;
+  --color-usb-bg: #f1f1f3;
+  --color-usb-border: #d9d9de;
+  --color-usb-text: #4a4a51;
   --color-usb-onsolid: #ffffff;
 
   --color-ethernet: #4f64a5;
@@ -73,10 +73,11 @@
   --color-neutral-onsolid: #ffffff;
 
   /* Network colors a user can pick (theme.ts NETWORK_COLOR_SWATCHES): deep enough on white for a
-     white glyph, as the kinds' are. Teal, amber and steel are the kinds' own. */
-  --swatch-teal: #1f8a70;
+     white glyph, as the kinds' are. The teal, amber and steel ids are the kinds' own; teal and
+     amber keep their stored ids but now hold the site's orange and grey. */
+  --swatch-teal: #f36712;
   --swatch-teal-onsolid: #ffffff;
-  --swatch-amber: #d97706;
+  --swatch-amber: #8c8c94;
   --swatch-amber-onsolid: #ffffff;
   --swatch-steel: #4f64a5;
   --swatch-steel-onsolid: #ffffff;
@@ -91,7 +92,9 @@
   --swatch-coral: #c4572a;
   --swatch-coral-onsolid: #ffffff;
 
-  --color-accent: #d97706;
+  --color-accent: #f36712;
+  --color-accent-hover: #ff7d2e;
+  --color-accent-pressed: #c94a06;
   --color-accent-onsolid: #ffffff;
   --color-success: #1f8a70;
 
@@ -103,9 +106,9 @@
      text-black, so the outline reads as part of the brand instead of a harsh axis line. */
   --node-accent: #5f6e78;
 
-  /* Shared corner radius for shadcn/Base UI components — matches the 8px most hand-styled
-     buttons/cards already use (see theme.ts), so new and existing components read as one system. */
-  --radius: 8px;
+  /* Shared corner radius for shadcn/Base UI components — the website's inner-card radius (14px),
+     so the app's cards, menus and dialogs share the site's softer corners. */
+  --radius: 14px;
 }
 
 /* Maps shadcn/Base UI's expected semantic tokens onto Plexo's existing palette above, instead of
@@ -144,42 +147,42 @@
 
 @media (prefers-color-scheme: dark) {
   :root {
-    --hero-bg: linear-gradient(180deg, #202325 0%, #1b1e20 100%);
-    --hero-border: #2b2f33;
-    /* Graphite instrument-panel background — exact hex values from the "Plexo v2" design doc. */
-    --bg: #1b1e20;
-    --bg-secondary: #202325;
-    --bg-tertiary: #202325;
-    --input-bg: #242729;
-    --track-bg: #262a2d;
+    --hero-bg: linear-gradient(180deg, #17171a 0%, #131315 100%);
+    --hero-border: rgba(255, 255, 255, 0.06);
+    /* Near-black panels and cards — the marketing site's dark palette (landing.css, hero mock). */
+    --bg: #0e0e10;
+    --bg-secondary: #17171a;
+    --bg-tertiary: #222225;
+    --input-bg: #222225;
+    --track-bg: rgba(255, 255, 255, 0.08);
 
-    --text: #eae7e2;
-    --text-secondary: #a9adb2;
-    --text-tertiary: #8d9196;
+    --text: #ededef;
+    --text-secondary: #a1a1a8;
+    --text-tertiary: #8c8c94;
 
-    --border: #2b2f33;
-    --border-subtle: #23262a;
-    --border-strong: #33383c;
-    --footer-border: #2b2f33;
+    --border: rgba(255, 255, 255, 0.08);
+    --border-subtle: rgba(255, 255, 255, 0.06);
+    --border-strong: rgba(255, 255, 255, 0.12);
+    --footer-border: rgba(255, 255, 255, 0.06);
 
-    --icon-muted: #33383c;
-    --icon-muted-strong: #3a3f44;
-    --scrollbar-thumb: #3a3f44;
+    --icon-muted: #3a3a40;
+    --icon-muted-strong: #46464d;
+    --scrollbar-thumb: #3a3a40;
 
     --checkbox-shadow: rgba(0, 0, 0, 0.4);
     --checkbox-inset-shadow: rgba(0, 0, 0, 0.3);
 
-    --color-wifi: #4ea89a;
-    --color-wifi-bg: #22312e;
-    --color-wifi-border: #3a5450;
-    --color-wifi-text: #7fc9bb;
-    --color-wifi-onsolid: #10201d;
+    --color-wifi: #f36712;
+    --color-wifi-bg: #2a1a10;
+    --color-wifi-border: #5a2e12;
+    --color-wifi-text: #ff8a3d;
+    --color-wifi-onsolid: #ffffff;
 
-    --color-usb: #d8a44c;
-    --color-usb-bg: #33291a;
-    --color-usb-border: #54421f;
-    --color-usb-text: #e8bb6d;
-    --color-usb-onsolid: #221806;
+    --color-usb: #c8c8ce;
+    --color-usb-bg: #232326;
+    --color-usb-border: #3a3a40;
+    --color-usb-text: #ededef;
+    --color-usb-onsolid: #17171a;
 
     --color-ethernet: #7e93bd;
     --color-ethernet-bg: #232a38;
@@ -193,10 +196,10 @@
     --color-neutral-text: #a9adb2;
     --color-neutral-onsolid: #16181a;
 
-    --swatch-teal: #4ea89a;
-    --swatch-teal-onsolid: #10201d;
-    --swatch-amber: #d8a44c;
-    --swatch-amber-onsolid: #221806;
+    --swatch-teal: #f36712;
+    --swatch-teal-onsolid: #ffffff;
+    --swatch-amber: #c8c8ce;
+    --swatch-amber-onsolid: #17171a;
     --swatch-steel: #7e93bd;
     --swatch-steel-onsolid: #141a26;
     --swatch-rose: #c97b7b;
@@ -210,15 +213,17 @@
     --swatch-coral: #d99168;
     --swatch-coral-onsolid: #241209;
 
-    --color-accent: #d8a44c;
-    --color-accent-onsolid: #1b1408;
+    --color-accent: #f36712;
+    --color-accent-hover: #ff7d2e;
+    --color-accent-pressed: #c94a06;
+    --color-accent-onsolid: #ffffff;
     --color-success: #4ea89a;
 
     --color-danger: #eda3a3;
     --color-danger-bg: #2c1c1c;
     --color-danger-border: #4a2a2a;
 
-    --node-accent: #f7f4ef;
+    --node-accent: #ededef;
   }
 }
 

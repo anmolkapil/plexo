@@ -64,7 +64,7 @@ function ProgressBar({
   return (
     <div
       role="cell"
-      className={`w-full overflow-hidden rounded-full border-[0.5px] border-[var(--border-strong)] bg-[var(--track-bg)] ${className}`}
+      className={`w-full overflow-hidden rounded-[4px] border-[0.5px] border-[var(--border-strong)] bg-[var(--track-bg)] ${className}`}
     >
       <div
         role="progressbar"
@@ -75,7 +75,7 @@ function ProgressBar({
         {/* The indicator includes its empty track. Only its decorative fill changes width. */}
         <div
           aria-hidden="true"
-          className="h-full rounded-full transition-[width] duration-200 ease-out"
+          className="h-full rounded-[4px] transition-[width] duration-200 ease-out"
           style={{ width: `${percent}%`, background: color }}
         />
       </div>
@@ -450,7 +450,7 @@ export function NetworkRow({
               size="xs"
               onClick={() => setExpanded((value) => !value)}
               aria-expanded={expanded}
-              className="h-auto cursor-default rounded-[4px] border-[0.5px] bg-card px-[7px] py-[3px] font-mono text-[10.5px] leading-none font-medium text-[var(--text-secondary)] aria-expanded:bg-secondary dark:bg-card"
+              className="h-auto cursor-default rounded-full border-[0.5px] bg-card px-[7px] py-[3px] font-mono text-[10.5px] leading-none font-medium text-[var(--text-secondary)] aria-expanded:bg-secondary dark:bg-card"
             >
               {connections.length} {noun}
               {connections.length === 1 ? '' : 's'}{' '}
