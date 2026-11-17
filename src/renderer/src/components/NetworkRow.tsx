@@ -75,7 +75,7 @@ function ProgressBar({
         {/* The indicator includes its empty track. Only its decorative fill changes width. */}
         <div
           aria-hidden="true"
-          className="h-full rounded-[4px] transition-[width] duration-200 ease-out"
+          className="h-full rounded-[4px] transition-[width] duration-500 ease-linear"
           style={{ width: `${percent}%`, background: color }}
         />
       </div>

@@ -130,9 +130,10 @@ export function CombineDiagram({
                       animationName: 'plexo-dash',
                       animationDuration: `${style.seconds}s`,
                       animationTimingFunction: 'linear',
-                      animationIterationCount: 'infinite'
+                      animationIterationCount: 'infinite',
+                      transition: 'opacity 0.4s'
                     }
-                  : undefined
+                  : { transition: 'opacity 0.4s' }
               }
             />
           )

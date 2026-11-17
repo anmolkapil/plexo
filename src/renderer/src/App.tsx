@@ -55,7 +55,15 @@ function CurrentScreen(): React.JSX.Element {
     return store.downloads[view.id] ?? store.history.find((entry) => entry.id === view.id) ?? null
   })
   const cancelled = shown && !('unitsWritten' in shown) && shown.status === 'cancelled'
-  return shown && !cancelled ? renderDownload(shown) : <DownloadsScreen />
+  // Keyed by what's shown, so switching between the list and a download fades the new screen in.
+  return (
+    <div
+      key={shown && !cancelled ? shown.id : 'list'}
+      className="h-full animate-[plexo-screen-in_0.2s_ease-out]"
+    >
+      {shown && !cancelled ? renderDownload(shown) : <DownloadsScreen />}
+    </div>
+  )
 }
 
 function SettingsModal(): React.JSX.Element {

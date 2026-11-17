@@ -436,7 +436,7 @@ export function BlockGrid({
                           background: fillColor,
                           opacity:
                             cell.provisionalBytes > 0 && cell.bytesDownloaded === 0 ? 0.55 : 1,
-                          transition: 'width 0.15s, background 0.15s'
+                          transition: 'width 0.5s linear, background 0.15s'
                         }}
                       />
                     )}
