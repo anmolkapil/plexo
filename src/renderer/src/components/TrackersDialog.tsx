@@ -142,7 +142,7 @@ export function TrackersDialog({
                       {url}
                     </span>
                     {custom && (
-                      <span className="shrink-0 rounded bg-secondary px-1 py-0.5 text-[9.5px] font-sans font-medium text-muted-foreground">
+                      <span className="shrink-0 rounded-full bg-secondary px-1.5 py-0.5 text-[9.5px] font-sans font-medium text-muted-foreground">
                         Custom
                       </span>
                     )}

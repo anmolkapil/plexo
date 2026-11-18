@@ -139,7 +139,7 @@ const indent = (depth: number): string => `${4 + depth * 14}px`
 
 /** The look of the All/None buttons, sized to sit on the file list's header. */
 const toolbarButton =
-  'rounded px-1.5 py-0.5 font-mono text-[10px] tracking-[0.08em] text-[var(--text-secondary)] uppercase hover:bg-secondary hover:text-foreground disabled:opacity-40'
+  'rounded-full px-1.5 py-0.5 font-mono text-[10px] tracking-[0.08em] text-[var(--text-secondary)] uppercase hover:bg-secondary hover:text-foreground disabled:opacity-40'
 
 function FolderRow({
   node,
@@ -170,7 +170,7 @@ function FolderRow({
         onClick={onToggle}
         aria-label={`${collapsed ? 'Expand' : 'Collapse'} ${node.name}`}
         aria-expanded={!collapsed}
-        className="relative z-10 flex size-4 shrink-0 items-center justify-center rounded text-muted-foreground hover:bg-secondary hover:text-foreground"
+        className="relative z-10 flex size-4 shrink-0 items-center justify-center rounded-full text-muted-foreground hover:bg-secondary hover:text-foreground"
       >
         {collapsed ? (
           <Folder aria-hidden className="size-3.5" />

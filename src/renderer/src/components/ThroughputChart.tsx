@@ -1,11 +1,13 @@
 import { SPEED_HISTORY_SECONDS } from '@shared/types'
-import { useState } from 'react'
+import { useLayoutEffect, useRef, useState } from 'react'
 import { useFormatSpeed } from '../hooks/useFormatSpeed'
 import { useAppStore } from '../store/useAppStore'
 import { speedTicks } from '../utils/format'
 
 const WIDTH = 560
 const HEIGHT = 130
+/** A sample lands about once a second, so the shape slides one slot over that long. */
+const SLIDE_MS = 1000
 const labelClass = 'font-mono text-[9px] leading-none text-muted-foreground tabular-nums'
 
 interface ThroughputChartProps {
@@ -69,6 +71,29 @@ export function ThroughputChart({
   )
 
   const outline = totals.map(toPoint).join(' ')
+
+  // Each new sample would shift the shape one slot left in a single jump. Instead, the shape is
+  // drawn in its new place and slides in from one slot to the right, picking up any slide still
+  // running so a sample that comes early never snaps.
+  const plotRef = useRef<SVGGElement>(null)
+  const slideRef = useRef<Animation | null>(null)
+  const signature = `${length}:${totals.join(',')}`
+  const shownSignature = useRef(signature)
+  useLayoutEffect(() => {
+    if (shownSignature.current === signature) return
+    shownSignature.current = signature
+    const plot = plotRef.current
+    if (!plot || endsAt !== 'now') return
+    if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return
+    const running = slideRef.current
+    const left =
+      running?.playState === 'running' ? 1 - Number(running.currentTime ?? 0) / SLIDE_MS : 0
+    running?.cancel()
+    slideRef.current = plot.animate(
+      [{ transform: `translateX(${xStep * (1 + left)}px)` }, { transform: 'translateX(0)' }],
+      { duration: SLIDE_MS, easing: 'linear' }
+    )
+  }, [signature, endsAt, xStep])
 
   const peakTotal = Math.max(0, ...totals)
   const latestTotal = totals[totals.length - 1] ?? 0
@@ -136,17 +161,19 @@ export function ThroughputChart({
                 />
               ))}
             </g>
-            {layers.map((layer, index) => (
-              <polygon key={index} points={layer.points} fill={layer.solid} fillOpacity={0.62} />
-            ))}
-            <polyline
-              points={outline}
-              fill="none"
-              stroke="var(--node-accent)"
-              strokeWidth={2}
-              strokeOpacity={0.85}
-              vectorEffect="non-scaling-stroke"
-            />
+            <g ref={plotRef}>
+              {layers.map((layer, index) => (
+                <polygon key={index} points={layer.points} fill={layer.solid} fillOpacity={0.62} />
+              ))}
+              <polyline
+                points={outline}
+                fill="none"
+                stroke="var(--node-accent)"
+                strokeWidth={2}
+                strokeOpacity={0.85}
+                vectorEffect="non-scaling-stroke"
+              />
+            </g>
           </svg>
           {readout !== null && hovered !== null && (
             <>

@@ -232,14 +232,14 @@ export function NetworkEditPopover({
               {/* Proxy Type Segmented Control */}
               <div className="flex flex-col gap-1">
                 <span className={fieldLabelClass}>Protocol</span>
-                <div className="grid grid-cols-4 gap-1 rounded-md bg-muted/50 p-0.5">
+                <div className="grid grid-cols-4 gap-1 rounded-full bg-muted/50 p-0.5">
                   {PROXY_TYPES.map((t) => (
                     <button
                       key={t.id}
                       type="button"
                       onClick={() => setProxyType(t.id)}
                       className={cn(
-                        'rounded-[4px] py-1 text-center font-mono text-[10px] font-semibold transition-all',
+                        'rounded-full py-1 text-center font-mono text-[10px] font-semibold transition-all',
                         proxyType === t.id
                           ? 'bg-background text-foreground shadow-xs'
                           : 'text-muted-foreground hover:text-foreground'

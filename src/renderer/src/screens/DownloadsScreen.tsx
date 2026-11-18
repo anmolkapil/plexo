@@ -731,7 +731,7 @@ const DownloadRow = memo(function DownloadRow({
           {segments.length > 0 && (
             <div
               className={cn(
-                'flex h-1 overflow-hidden rounded-full bg-muted',
+                'flex h-1 overflow-hidden rounded-full bg-muted transition-opacity duration-300',
                 // Not moving: the colors stay, faded, so it doesn't read as running.
                 !isFinished(item) &&
                   (item.status === 'paused' || item.status === 'queued') &&
@@ -743,7 +743,8 @@ const DownloadRow = memo(function DownloadRow({
                   key={segment.id}
                   style={{
                     width: `${Math.min(100, segment.share * 100)}%`,
-                    background: segment.color
+                    background: segment.color,
+                    transition: 'width 0.5s linear'
                   }}
                 />
               ))}
@@ -782,7 +783,7 @@ const DownloadRow = memo(function DownloadRow({
         type="button"
         aria-label={`Open ${item.fileName}`}
         onClick={() => onOpen(item.id)}
-        className="rounded-md p-1 text-muted-foreground transition-colors group-hover/download-row:text-foreground focus-visible:outline-2 focus-visible:outline-ring"
+        className="rounded-full p-1 text-muted-foreground transition-colors group-hover/download-row:text-foreground focus-visible:outline-2 focus-visible:outline-ring"
       >
         <ChevronRight className="size-4" />
       </button>

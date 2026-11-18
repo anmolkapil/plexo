@@ -21,7 +21,7 @@ function makeKindPalette(name: string, label: string): KindPalette {
   }
 }
 
-// Teal / amber / steel per network, per the "Plexo v2" design — exact hex values live as
+// Orange / grey / steel per network, per the marketing site — exact hex values live as
 // CSS custom properties (main.css) so dark mode reproduces the design precisely while light
 // mode gets a coherent, hand-tuned counterpart in the same hues.
 export const KIND_PALETTE: Record<NetworkInterfaceKind, KindPalette> = {
@@ -32,7 +32,7 @@ export const KIND_PALETTE: Record<NetworkInterfaceKind, KindPalette> = {
   other: makeKindPalette('neutral', 'NET')
 }
 
-// The brand amber doubles as the USB network color, exactly as in the design.
+// The brand orange doubles as the Wi-Fi network color, exactly as on the site.
 export const DANGER = 'var(--color-danger)'
 
 // The table's 20px side gutters live inside the first and last tracks (30px = 20 + the status
@@ -71,8 +71,9 @@ function swatch<Id extends string>(
 // kind defaults above — each ships its own on-solid text color so it's legible without having
 // to compute contrast for an arbitrary user-picked hue at runtime, in light mode and dark.
 export const NETWORK_COLOR_SWATCHES = [
-  swatch('teal', 'Teal'),
-  swatch('amber', 'Amber'),
+  // Ids stay 'teal'/'amber' so saved picks keep working; the colors are now the site's.
+  swatch('teal', 'Orange'),
+  swatch('amber', 'Silver'),
   swatch('steel', 'Steel'),
   swatch('rose', 'Rose'),
   swatch('violet', 'Violet'),

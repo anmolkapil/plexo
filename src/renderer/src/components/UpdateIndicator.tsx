@@ -54,7 +54,7 @@ export function UpdateIndicator(): React.JSX.Element {
             aria-label={label}
             onClick={() => void window.plexo.showUpdateMenu()}
             className={cn(
-              'flex h-[26px] min-w-[26px] shrink-0 cursor-default items-center justify-center gap-1.5 rounded-[6px] border-[0.5px] border-border bg-secondary px-[5px] [-webkit-app-region:no-drag]',
+              'flex h-[26px] min-w-[26px] shrink-0 cursor-default items-center justify-center gap-1.5 rounded-full border-[0.5px] border-border bg-secondary px-[5px] [-webkit-app-region:no-drag]',
               status === 'available' || status === 'ready'
                 ? 'text-primary'
                 : 'text-[var(--text-secondary)]'

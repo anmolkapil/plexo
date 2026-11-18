@@ -31,13 +31,13 @@ function SpeedUnitToggle(): React.JSX.Element {
             }}
             size="xs"
             spacing={0.5}
-            className="h-[26px] rounded-[6px] border-[0.5px] border-border p-0.5 [-webkit-app-region:no-drag]"
+            className="h-[26px] rounded-full border-[0.5px] border-border p-0.5 [-webkit-app-region:no-drag]"
           >
             {(['bytes', 'bits'] as const).map((unit) => (
               <ToggleGroupItem
                 key={unit}
                 value={unit}
-                className="h-full rounded-[4px] px-1.5 font-mono text-[11px] font-medium text-muted-foreground aria-pressed:bg-background aria-pressed:text-foreground"
+                className="h-full rounded-full px-1.5 font-mono text-[11px] font-medium text-muted-foreground aria-pressed:bg-background aria-pressed:text-foreground"
               >
                 {unit === 'bytes' ? 'MB/s' : 'Mbps'}
               </ToggleGroupItem>
@@ -101,7 +101,7 @@ export function StatusBar(): React.JSX.Element {
                 type="button"
                 aria-label="Settings"
                 onClick={() => openSettings()}
-                className="flex size-[26px] shrink-0 cursor-default items-center justify-center rounded-[6px] border-[0.5px] border-border bg-secondary text-[var(--text-secondary)] hover:text-foreground [-webkit-app-region:no-drag]"
+                className="flex size-[26px] shrink-0 cursor-default items-center justify-center rounded-full border-[0.5px] border-border bg-secondary text-[var(--text-secondary)] hover:text-foreground [-webkit-app-region:no-drag]"
               >
                 <Settings className="size-3.5" />
               </button>
