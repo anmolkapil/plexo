@@ -1,6 +1,11 @@
 import { execFileSync, spawnSync } from 'node:child_process'
 import { createServer, type Server } from 'node:http'
-import { connect as netConnect, createServer as createTcpServer, type AddressInfo } from 'node:net'
+import {
+  connect as netConnect,
+  createServer as createTcpServer,
+  type AddressInfo,
+  type Socket
+} from 'node:net'
 import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { crc32 } from 'node:zlib'
@@ -73,8 +78,9 @@ async function useServer(
   })
 }
 
-/** A SOCKS5 proxy without auth, IPv4 targets only (greeting, then CONNECT), noting each target. */
-async function socksProxy(): Promise<{
+/** A SOCKS5 proxy without auth, IPv4 targets only (greeting, then CONNECT), noting each target.
+ * With `refuse`, it notes the target and turns it down: "not allowed by ruleset". */
+async function socksProxy({ refuse = false } = {}): Promise<{
   targets: string[]
   port: number
   close: () => Promise<void>
@@ -87,6 +93,10 @@ async function socksProxy(): Promise<{
         const host = [...request.subarray(4, 8)].join('.')
         const port = request.readUInt16BE(8)
         targets.push(`${host}:${port}`)
+        if (refuse) {
+          client.end(Buffer.from([0x05, 0x02, 0x00, 0x01, 0, 0, 0, 0, 0, 0]))
+          return
+        }
         const upstream = netConnect(port, host, () => {
           client.write(Buffer.from([0x05, 0x00, 0x00, 0x01, 0, 0, 0, 0, 0, 0]))
           upstream.pipe(client)
@@ -96,6 +106,34 @@ async function socksProxy(): Promise<{
         client.on('error', () => upstream.destroy())
       })
     })
+  })
+  await new Promise<void>((resolve) => proxy.listen(0, '127.0.0.1', resolve))
+  const { port } = proxy.address() as AddressInfo
+  return {
+    targets,
+    port,
+    close: () => new Promise<void>((resolve) => proxy.close(() => resolve()))
+  }
+}
+
+/** An HTTP proxy that only tunnels (CONNECT), noting each target. */
+async function httpProxy(): Promise<{
+  targets: string[]
+  port: number
+  close: () => Promise<void>
+}> {
+  const targets: string[] = []
+  const proxy = createServer().on('connect', (request, client: Socket, head: Buffer) => {
+    targets.push(request.url ?? '')
+    const [host, port] = (request.url ?? '').split(':')
+    const upstream = netConnect(Number(port), host, () => {
+      client.write('HTTP/1.1 200 Connection Established\r\n\r\n')
+      if (head.length > 0) upstream.write(head)
+      upstream.pipe(client)
+      client.pipe(upstream)
+    })
+    upstream.on('error', () => client.destroy())
+    client.on('error', () => upstream.destroy())
   })
   await new Promise<void>((resolve) => proxy.listen(0, '127.0.0.1', resolve))
   const { port } = proxy.address() as AddressInfo
@@ -395,6 +433,139 @@ test.describe('NZB downloads', () => {
     } finally {
       await close()
     }
+  })
+
+  test('the server test goes through the proxy set on the network, as downloads do', async ({
+    plexo
+  }) => {
+    const server = await newsServer()
+    await useServer(plexo, server, { connections: 2 })
+    const { targets, port, close } = await socksProxy()
+    try {
+      await plexo.api.updateSettings({
+        networkPreferences: {
+          a: { proxy: { enabled: true, type: 'socks5', host: '127.0.0.1', port } }
+        }
+      })
+      const input = { host: '127.0.0.1', port: server.port, tls: false, username: '' }
+      await plexo.api.testUsenetServer({ ...input, connections: 2 })
+      expect(targets).toEqual([`127.0.0.1:${server.port}`])
+
+      // The Test button in the server's settings, the same way.
+      const dialog = await openUsenetPage(plexo)
+      await dialog.getByRole('button', { name: 'Change server' }).click()
+      const form = plexo.page.getByRole('dialog', { name: 'Usenet server' })
+      await form.getByRole('button', { name: 'Test' }).click()
+      await expect(form.getByText('Connected and signed in.')).toBeVisible()
+      expect(targets).toEqual([`127.0.0.1:${server.port}`, `127.0.0.1:${server.port}`])
+    } finally {
+      await close()
+    }
+  })
+
+  test('the server test goes through an HTTP proxy too', async ({ plexo }) => {
+    const server = await newsServer()
+    await useServer(plexo, server, { connections: 2 })
+    const { targets, port, close } = await httpProxy()
+    try {
+      await plexo.api.updateSettings({
+        networkPreferences: {
+          a: { proxy: { enabled: true, type: 'http', host: '127.0.0.1', port } }
+        }
+      })
+      await plexo.api.testUsenetServer({
+        host: '127.0.0.1',
+        port: server.port,
+        tls: false,
+        username: '',
+        connections: 2
+      })
+      expect(targets).toEqual([`127.0.0.1:${server.port}`])
+    } finally {
+      await close()
+    }
+  })
+
+  test('a proxy that turns the server away fails the server test, with what it said', async ({
+    plexo
+  }) => {
+    const server = await newsServer()
+    await useServer(plexo, server, { connections: 2 })
+    const { targets, port, close } = await socksProxy({ refuse: true })
+    try {
+      await plexo.api.updateSettings({
+        networkPreferences: {
+          a: { proxy: { enabled: true, type: 'socks5', host: '127.0.0.1', port } }
+        }
+      })
+      await expect(
+        plexo.api.testUsenetServer({
+          host: '127.0.0.1',
+          port: server.port,
+          tls: false,
+          username: '',
+          connections: 2
+        })
+      ).rejects.toThrow(
+        /Couldn’t reach 127\.0\.0\.1 through the proxy set on a\. \(SOCKS5 .*Connection not allowed by ruleset\)/
+      )
+      expect(targets).toEqual([`127.0.0.1:${server.port}`])
+    } finally {
+      await close()
+    }
+  })
+
+  test('the server test skips a network left out of new downloads, and its proxy', async ({
+    plexo
+  }) => {
+    test.skip(!LAN_ADDRESS, 'needs a second local address')
+    const server = await newsServer()
+    const { targets, port, close } = await socksProxy()
+    try {
+      await plexo.api.updateSettings({
+        networkPreferences: {
+          a: { off: true, proxy: { enabled: true, type: 'socks5', host: '127.0.0.1', port } }
+        }
+      })
+      await plexo.api.testUsenetServer({
+        host: '127.0.0.1',
+        port: server.port,
+        tls: false,
+        username: '',
+        connections: 2
+      })
+      expect(targets).toEqual([])
+    } finally {
+      await close()
+    }
+  })
+
+  test('the server test says when nothing is listening on the port', async ({ plexo }) => {
+    const closed = createTcpServer()
+    await new Promise<void>((resolve) => closed.listen(0, '127.0.0.1', resolve))
+    const { port } = closed.address() as AddressInfo
+    await new Promise<void>((resolve) => closed.close(() => resolve()))
+    await expect(
+      plexo.api.testUsenetServer({
+        host: '127.0.0.1',
+        port,
+        tls: false,
+        username: '',
+        connections: 2
+      })
+    ).rejects.toThrow(`127.0.0.1 isn’t accepting connections on port ${port}.`)
+  })
+
+  test('the server test says when the address can’t be found', async ({ plexo }) => {
+    await expect(
+      plexo.api.testUsenetServer({
+        host: 'news.plexo-test.invalid',
+        port: 119,
+        tls: false,
+        username: '',
+        connections: 2
+      })
+    ).rejects.toThrow('Couldn’t find news.plexo-test.invalid. Check the address.')
   })
 
   test('shares the connections across both networks', async ({ plexo }) => {
