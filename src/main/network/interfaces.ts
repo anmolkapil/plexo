@@ -2,6 +2,7 @@ import { execFile } from 'node:child_process'
 import { networkInterfaces } from 'node:os'
 import { promisify } from 'node:util'
 import type { NetworkAddress, NetworkInterfaceInfo, NetworkInterfaceKind } from '../../shared/types'
+import { reportFailure } from '../reporting'
 import { testInterfaces } from '../testKnobs'
 import { classifyInterface } from './classifyInterface'
 import { getLinuxAdapters, type LinuxAdapter } from './linuxAdapters'
@@ -194,6 +195,7 @@ const POLL_MS = 1000
  * or gets a new address, so it looks every second. `onChange` hears of every change.
  */
 export class NetworkMonitor {
+  private discoveryFailed = false
   private list: NetworkInterfaceInfo[] | null = null
   private polling: Promise<NetworkInterfaceInfo[]> = Promise.resolve([])
 
@@ -219,7 +221,15 @@ export class NetworkMonitor {
     this.polling = this.polling
       .catch(() => [])
       .then(async () => {
-        const next = await listActiveInterfaces().catch(() => this.list ?? [])
+        let next: NetworkInterfaceInfo[]
+        try {
+          next = await listActiveInterfaces()
+          this.discoveryFailed = false
+        } catch (error) {
+          if (!this.discoveryFailed) reportFailure('network', error)
+          this.discoveryFailed = true
+          next = this.list ?? []
+        }
         if (JSON.stringify(next) !== JSON.stringify(this.list)) {
           this.list = next
           await this.onChange(next)

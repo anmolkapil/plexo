@@ -879,7 +879,7 @@ test.describe('Backup news server', () => {
 async function openUsenetPage(plexo: PlexoApp): Promise<Locator> {
   await plexo.page.getByRole('button', { name: /^\d+ networks?/ }).click()
   await plexo.page.getByRole('button', { name: 'Speed & data limits', exact: true }).click()
-  const dialog = plexo.page.getByRole('dialog', { name: 'Speed & data limits' })
+  const dialog = plexo.page.getByRole('dialog', { name: 'Settings' })
   await dialog.getByRole('button', { name: /^Usenet/ }).click()
   return dialog
 }

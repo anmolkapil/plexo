@@ -341,17 +341,20 @@ export async function testUsenetServer(
     // A refused connection or a missing host is the proxy's when there is one: what it said
     // is passed on as it said it.
     if (proxied) {
-      throw new Error(`Couldn’t reach ${host} through the proxy set on ${name}. (${error.message})`)
+      throw new Error(
+        `Couldn’t reach ${host} through the proxy set on ${name}. (${error.message})`,
+        { cause: error }
+      )
     }
     const code = errorCode(error)
     if (code === 'ENOTFOUND' || code === 'EAI_AGAIN') {
-      throw new Error(`Couldn’t find ${host}. Check the address.`)
+      throw new Error(`Couldn’t find ${host}. Check the address.`, { cause: error })
     }
     if (code === 'ECONNREFUSED') {
-      throw new Error(`${host} isn’t accepting connections on port ${port}.`)
+      throw new Error(`${host} isn’t accepting connections on port ${port}.`, { cause: error })
     }
     if (/^Connection stalled/.test(error.message)) {
-      throw new Error(`${host} didn’t answer on port ${port}.`)
+      throw new Error(`${host} didn’t answer on port ${port}.`, { cause: error })
     }
     throw error
   })
@@ -365,11 +368,12 @@ export async function testUsenetServer(
     connection.close()
   } catch (error) {
     if (error instanceof NntpAuthError) {
-      throw new Error('The server didn’t accept the username or password.')
+      throw new Error('The server didn’t accept the username or password.', { cause: error })
     }
     if (error instanceof NntpRefusedError) {
       throw new Error(
-        `The server turned the connection away, often because every connection the account allows is in use. (${error.message})`
+        `The server turned the connection away, often because every connection the account allows is in use. (${error.message})`,
+        { cause: error }
       )
     }
     throw error

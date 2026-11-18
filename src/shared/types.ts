@@ -564,6 +564,8 @@ export interface DownloadSchedule {
 /** What app-settings.json holds, and what the renderer sends to change it (merged over the saved
  * values, `undefined` clearing one). A missing field was never set. */
 export interface AppSettings {
+  /** Absent until Continue in the v1 welcome dialog. The choice also marks onboarding complete. */
+  v1ErrorReporting?: boolean
   downloadSchedule?: DownloadSchedule
   themeSource?: ThemeSource
   /** Only ever saved as false: updates download on their own unless turned off. */
@@ -599,6 +601,8 @@ export const DEFAULT_SLOW_MODE_SPEED = 2 * 1024 ** 2
 /** Everything the renderer needs for its first paint, read synchronously by the preload so no
  * saved value flashes in over a default a moment after launch. */
 export interface InitialState {
+  v1ErrorReporting?: boolean
+  reportingAvailability: 'configured' | 'unconfigured' | 'do-not-track'
   downloadSchedule?: DownloadSchedule
   homeDir: string
   downloadsDir: string

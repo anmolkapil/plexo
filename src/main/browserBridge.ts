@@ -1,3 +1,4 @@
+import { reportFailure } from './reporting'
 import { randomUUID } from 'node:crypto'
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http'
 import { app } from 'electron'
@@ -46,9 +47,12 @@ export async function startBridge(bridgeHost: BridgeHost): Promise<void> {
   host = bridgeHost
   extensionUsed = (await loadSettings()).browserExtensionUsed === true
   for (const port of BRIDGE_PORTS) {
-    const server = createServer(
-      (req, res) => void handle(req, res, port).catch(() => end(res, 500))
-    )
+    const server = createServer((req, res) => {
+      void handle(req, res, port).catch((error) => {
+        reportFailure('bridge', error)
+        end(res, 500)
+      })
+    })
     const listened = await new Promise<boolean>((resolve) => {
       server.once('error', () => resolve(false))
       server.listen(port, '127.0.0.1', () => resolve(true))
@@ -194,6 +198,7 @@ async function checked(
       gone.then(() => 'gone')
     ])
   } catch (error) {
+    reportFailure('probeUrl', error)
     return error instanceof Error ? error.message : String(error)
   } finally {
     clearTimeout(timer)

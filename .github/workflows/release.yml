@@ -50,12 +50,29 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Build app
+        env:
+          SENTRY_DSN: ${{ secrets.SENTRY_DSN }}
+        run: npm run build
+
+      - name: Upload private source maps
+        shell: bash
+        env:
+          SENTRY_DSN: ${{ secrets.SENTRY_DSN }}
+          SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
+          SENTRY_ORG: ${{ secrets.SENTRY_ORG }}
+          SENTRY_PROJECT: ${{ secrets.SENTRY_PROJECT }}
+        run: |
+          if [[ -n "$SENTRY_DSN" && -n "$SENTRY_AUTH_TOKEN" && -n "$SENTRY_ORG" && -n "$SENTRY_PROJECT" ]]; then
+            npx --no-install sentry-cli sourcemaps upload --release "plexo@$(node -p "require('./package.json').version")" out
+          fi
+
       # Without the certificate secrets the Mac build is unsigned, and can't update itself; without
       # the API key ones it's signed but not notarized. electron-builder's own CSC_LINK import, as
       # documented; it needs 26.16.1+, before which it unlocked its keychain with the wrong password
       # (electron-userland/electron-builder#10101). Exported on the Mac only: Windows would
       # otherwise try to sign with CSC_LINK too.
-      - name: Build
+      - name: Package
         shell: bash
         env:
           MAC_CERTIFICATE_P12_BASE64: ${{ secrets.MAC_CERTIFICATE_P12_BASE64 }}
@@ -73,7 +90,6 @@ jobs:
             echo "$APPLE_API_KEY_P8" > "$RUNNER_TEMP/apple-api-key.p8"
             export APPLE_API_KEY="$RUNNER_TEMP/apple-api-key.p8"
           fi
-          npm run build
           npx electron-builder ${{ matrix.target }} --publish never
           # electron-builder builds unsigned, quietly, when it finds no identity; such a build could
           # never install an update over a signed one.

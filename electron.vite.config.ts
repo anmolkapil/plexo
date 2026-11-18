@@ -20,9 +20,14 @@ export default defineConfig({
         '@shared': resolve('src/shared')
       }
     },
-    define: telegramDefine
+    build: { sourcemap: 'hidden' },
+    define: {
+      ...telegramDefine,
+      __PLEXO_SENTRY_DSN__: JSON.stringify(process.env.SENTRY_DSN || '')
+    }
   },
   preload: {
+    build: { sourcemap: 'hidden', externalizeDeps: { exclude: ['@sentry/electron'] } },
     resolve: {
       alias: {
         '@shared': resolve('src/shared')
@@ -30,6 +35,7 @@ export default defineConfig({
     }
   },
   renderer: {
+    build: { sourcemap: 'hidden' },
     resolve: {
       alias: {
         '@renderer': resolve('src/renderer/src'),
