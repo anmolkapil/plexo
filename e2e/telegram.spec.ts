@@ -132,4 +132,13 @@ test.describe('Telegram Saved Messages downloads', () => {
     const done = await plexo.waitForStatus('completed', 30_000)
     expect(done.id).toBe(id)
   })
+
+  test('keeps to the speed limit', async ({ plexo }) => {
+    await plexo.api.updateSettings({ speedLimit: 512 * KB })
+    const started = Date.now()
+    await startItem(plexo, 1, 'video', 'clip.mp4', 3 * KB * KB)
+    await plexo.waitForStatus('completed', 30_000)
+    // 3 MiB at 512 KB/s is 6 s; unthrottled, the fake serves it in under 1 s.
+    expect(Date.now() - started).toBeGreaterThan(5_000)
+  })
 })

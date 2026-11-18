@@ -414,7 +414,7 @@ export class TelegramTransfer implements Transfer {
       }
 
       try {
-        await this.host.limits.take(networkId, usable)
+        await delay(this.host.limits.take(networkId, usable), self.controller.signal)
         await this.write(offset, settled.subarray(0, usable))
       } catch (error) {
         // The write side (a full disk, a dropped drive) isn't Telegram's doing: end the
