@@ -46,18 +46,27 @@ export async function isTorrentPrivate(torrentFile: Uint8Array): Promise<boolean
 }
 
 /**
- * webtorrent's own file store, writing the torrent's top entry (its folder, or its one file) under
- * `name` rather than the torrent's: a download claims a free name, "Name (1)" when the torrent's
- * is taken. `onWritten` hears each file a piece landed in, once it's written.
+ * webtorrent's own file store, writing each of the torrent's files where safeTorrentPaths says —
+ * `paths`, in the torrent's order — rather than where the torrent names it: there a name Windows
+ * can't save has one it can. The top entry (its folder, or its one file) goes under `name`: a
+ * download claims a free name, "Name (1)" when the torrent's is taken. `onWritten` hears each file
+ * a piece landed in, once it's written.
  */
-export async function storeNamed(name: string, onWritten: (path: string) => void): Promise<Store> {
+export async function storeNamed(
+  name: string,
+  paths: readonly string[],
+  onWritten: (path: string) => void
+): Promise<Store> {
   const { default: FsChunkStore } = await import('fs-chunk-store')
   return class extends FsChunkStore {
     constructor(chunkLength: number, options: StoreOptions) {
+      if (options.files.length !== paths.length) {
+        throw new Error('This torrent’s files don’t match the ones checked')
+      }
       super(chunkLength, {
         ...options,
-        files: options.files.map((file) => ({
-          path: join(name, ...file.path.split(/[\\/]/).slice(1)),
+        files: options.files.map((file, index) => ({
+          path: join(name, ...paths[index].split(/[\\/]/).slice(1)),
           length: file.length,
           offset: file.offset
         }))

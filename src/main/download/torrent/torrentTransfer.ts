@@ -61,7 +61,8 @@ export class TorrentTransfer implements Transfer {
   private ended: Promise<void> | null = null
   private peers = new Map<Wire, Peer>()
   private nextPeerId = 0
-  /** webtorrent's file store, writing under the download's name; loaded with the first run. */
+  /** webtorrent's file store, writing under the download's name, each file where it's saved;
+   * loaded with the first run. */
   private store: Store | null = null
   /** The run's torrent, once ready for its files to be chosen. */
   private torrent: Torrent | null = null
@@ -91,7 +92,9 @@ export class TorrentTransfer implements Transfer {
     private readonly host: TransferHost,
     private readonly torrentFile: Uint8Array,
     /** The download, in place: the torrent's folder or file (TorrentDestination.path). */
-    private readonly destination: string
+    private readonly destination: string,
+    /** Where each of the torrent's files is saved, in its order (safeTorrentPaths). */
+    private readonly paths: readonly string[]
   ) {}
 
   reconcile(): void {
@@ -169,7 +172,7 @@ export class TorrentTransfer implements Transfer {
     try {
       this.nameClient ??= await loadClientNamer()
       this.isPrivate ??= await isTorrentPrivate(this.torrentFile)
-      this.store ??= await storeNamed(basename(this.destination), (path) =>
+      this.store ??= await storeNamed(basename(this.destination), this.paths, (path) =>
         this.runtime.file.written.add(path)
       )
       const client = await createClient({

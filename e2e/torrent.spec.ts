@@ -155,6 +155,79 @@ test.describe('choosing files', () => {
   })
 })
 
+test.describe('names a system can’t save', () => {
+  // A torrent is made anywhere, and can name its files what Windows refuses: forbidden characters
+  // (as in #202, a "|" in the torrent's own name), a trailing dot or space, device names. Each
+  // is saved under a name Windows takes, the same one again after a relaunch.
+  const WINDOWS = process.platform === 'win32'
+  const TOP = '[Trix] Blue Box | Ao no Hako '
+  // [as the torrent names it, where it's saved (on Windows, elsewhere)]. webtorrent's storage
+  // drops what Windows forbids from a file's own name on every system, as it always has.
+  const LAYOUT: [string, string, string][] = [
+    ['Season 1. /01 | Episode.mkv', 'Season 1/01  Episode.mkv', 'Season 1. /01  Episode.mkv'],
+    ['Extras|Bonus/notes.', 'Extras_Bonus/notes', 'Extras|Bonus/notes.'],
+    ['Extras|Bonus/CON.txt', 'Extras_Bonus/_CON.txt', 'Extras|Bonus/CON.txt'],
+    ['Extras|Bonus/report.txt ', 'Extras_Bonus/report.txt', 'Extras|Bonus/report.txt '],
+    ['NUL', '_NUL', 'NUL'],
+    // "x." would be saved as "x" on Windows, which the folder after it already has: it gives way.
+    ['x./a.bin', 'x (2)/a.bin', 'x./a.bin'],
+    ['x/b.bin', 'x/b.bin', 'x/b.bin']
+  ]
+  const sizes = [1500 * KB, 7, 900 * KB + 3, 5, 9, 1500 * KB + 11, 1500 * KB + 1]
+
+  const files = LAYOUT.map(([path], index) => named(seededBytes(sizes[index], 81 + index), path))
+  const total = sizes.reduce((sum, size) => sum + size, 0)
+  /** What the download of `chosen` files (all of them, by default) must leave on disk. */
+  const savedTree = (chosen = files.map((_, index) => index)): string =>
+    treeSha(chosen.map((index) => ({ path: LAYOUT[index][WINDOWS ? 1 : 2], data: files[index] })))
+  /** Slow enough to stop partway: three seeders at 300 KB/s each. */
+  async function seedSlowly(): Promise<Torrent> {
+    const seed = (): Promise<Torrent> =>
+      swarm.seed(files, { folder: TOP, pieceLength: PIECE, uploadLimit: 300 * KB, inMemory: true })
+    let torrent = await seed()
+    for (let seeder = 1; seeder < 3; seeder++) torrent = await seed()
+    return torrent
+  }
+
+  test('they download, resume after a relaunch, and are saved under names Windows takes', async ({
+    plexo
+  }) => {
+    const torrent = await seedSlowly()
+    const id = await plexo.start(await torrentFileOnDisk(torrent, 'blue-box'), savedTree())
+    await plexo.waitUntil((state) => state.bytesDownloaded >= 2 * MB, 30_000)
+    await plexo.relaunch()
+    const paused = await plexo.waitForTorrentStatus('paused')
+    expect(paused.fileName).toBe(WINDOWS ? '[Trix] Blue Box _ Ao no Hako' : TOP)
+
+    // What's done is found again where it was saved: only what was missing is fetched.
+    const sentBefore = swarm.uploaded()
+    await plexo.api.resumeDownload(id)
+    await plexo.waitForTorrentStatus('completed', 60_000)
+    expect(swarm.uploaded() - sentBefore).toBeLessThanOrEqual(
+      total - paused.bytesDownloaded + 8 * PIECE
+    )
+  })
+
+  test('the files not chosen are removed under the names they were saved as', async ({ plexo }) => {
+    const torrent = await swarm.seed(files, { folder: TOP, pieceLength: PIECE, inMemory: true })
+    // The pieces at the chosen files' edges write part of notes., CON.txt, NUL and x./a.bin too.
+    const chosen = [0, 3, 6]
+    await plexo.start(await torrentFileOnDisk(torrent, 'blue-box'), savedTree(chosen), {
+      selectedFiles: chosen
+    })
+    await plexo.waitForTorrentStatus('completed', 30_000)
+  })
+
+  test('cancelled partway, nothing of it is left', async ({ plexo }) => {
+    const torrent = await seedSlowly()
+    const id = await plexo.start(await torrentFileOnDisk(torrent, 'blue-box'), savedTree())
+    await plexo.waitUntil((state) => state.bytesDownloaded >= 1 * MB, 30_000)
+    await plexo.api.cancelDownload(id)
+    // The checks see to it that nothing is left at the destination.
+    await plexo.waitForTorrentStatus('cancelled')
+  })
+})
+
 test.describe('torrents over two networks', () => {
   test.skip(!LAN_ADDRESS, 'needs a second local address to stand in for a second network')
 

@@ -725,6 +725,7 @@ export class DownloadManager {
     file: TorrentDestination,
     pieces: TorrentDownloadState['pieces'],
     torrentFile: Uint8Array,
+    paths: readonly string[],
     customTrackers: string[] = []
   ): TorrentDownloadRuntime {
     const target: TorrentTransferTarget = {
@@ -748,7 +749,7 @@ export class DownloadManager {
     }
     const runtime: TorrentDownloadRuntime = Object.assign(target, this.runtimeFields(), {
       kind: 'torrent' as const,
-      transfer: new TorrentTransfer(target, host, torrentFile, file.path)
+      transfer: new TorrentTransfer(target, host, torrentFile, file.path, paths)
     })
     return runtime
   }
@@ -1005,6 +1006,7 @@ export class DownloadManager {
         ),
         pieces,
         torrentFile,
+        torrent.files.map((file) => file.path),
         persisted.customTrackers
       )
     } else if (persisted.state.kind === 'nzb' && requestPayload.kind === 'nzb') {
@@ -1233,7 +1235,14 @@ export class DownloadManager {
         pieceLength: torrent.pieceLength,
         startedAt: Date.now()
       }
-      runtime = this.newTorrentRuntime(state, requestPayload, file, pieces, torrentFile)
+      runtime = this.newTorrentRuntime(
+        state,
+        requestPayload,
+        file,
+        pieces,
+        torrentFile,
+        torrent.files.map((entry) => entry.path)
+      )
     } else if (requestPayload.kind === 'telegram') {
       // The dialog's idea of the file was a hint; Telegram's answer is the truth (a photo's
       // size is 0: unknown until the download ends).
