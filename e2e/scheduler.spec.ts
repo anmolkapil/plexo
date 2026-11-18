@@ -463,6 +463,27 @@ test.describe('scheduler: splitting what is left', () => {
     expect(split(raced)).toBeUndefined()
   })
 
+  test('not a part whose holder waits on its writer: what it has yet to read may be on its way', () => {
+    // Held at 500 of 1000: split, the free stream would take 750–1000, which the holder's
+    // connection may well have brought in already. The other block, 150 left, can't be halved.
+    const held = { ...part(0, 'a', 0, 1000, 500), writeWaiting: true }
+    const s = capped([
+      [0, [held]],
+      [1, [part(1, 'a', 0, 1000, 850)]]
+    ])
+    expect(split(s)).toBeUndefined()
+    // Once its writer takes more, it is split like any other.
+    expect(split(capped([[0, [{ ...held, writeWaiting: false }]]]))).toBe('split:0@750-1000')
+  })
+
+  test('…while another block that is just slow is still split', () => {
+    const s = capped([
+      [0, [{ ...part(0, 'a', 0, 1000, 200), writeWaiting: true }]],
+      [1, [part(1, 'a', 0, 1000, 500)]]
+    ])
+    expect(split(s)).toBe('split:1@750-1000')
+  })
+
   test('not by a network that got nothing from the block', () => {
     const s = capped([[0, [part(0, 'a', 0, 1000, 0)]]], undefined, {
       avoid: new Map([[0, 'a']])

@@ -182,7 +182,11 @@ function nextGap(state: SchedulerState, networkId: string): Work | undefined {
 
 /** The back half of the part with the most bytes left, if both halves are at least
  * minSplitBytes. Only once nothing is waiting, and while the disk keeps up. A part being raced
- * is left whole: both racers would have to be cut short. */
+ * is left whole: both racers would have to be cut short. So is one whose holder is waiting on its
+ * writer: the disk sets its pace, not the connection, so a second request can't finish it sooner.
+ * And its reader has stopped while the server goes on sending, so the bytes after what it has
+ * read may already be on their way, all the way to the end of its part: cut there, they would
+ * arrive only to be dropped, and be fetched again by the split. */
 function nextSplit(
   state: SchedulerState,
   who: Requester,
@@ -202,7 +206,8 @@ function nextSplit(
     if (state.avoid.get(index) === who.networkId) continue
     const raced = attempts.some((attempt) => attempt.kind === 'hedge')
     for (const attempt of attempts) {
-      if (attempt.abortReason || (raced && attempt.kind !== 'split')) continue
+      if (attempt.abortReason || attempt.writeWaiting || (raced && attempt.kind !== 'split'))
+        continue
       const { startOffset, end, networkReceived } = attempt
       if (startOffset == null || end == null || networkReceived === undefined) continue
       const reached = startOffset + networkReceived
