@@ -1,5 +1,6 @@
 import { mkdir, readFile, readdir } from 'node:fs/promises'
 import { join } from 'node:path'
+import { toDisplayPath } from '../src/renderer/src/utils/format'
 import { expect, test } from './fixtures'
 
 /** The destination picker goes through native OS UI — stub it. */
@@ -10,6 +11,15 @@ async function stubNativeUi(
   await plexo.evaluateMain(({ dialog }, dest) => {
     dialog.showOpenDialog = (async () => ({ canceled: false, filePaths: [dest] })) as never
   }, destination)
+}
+
+/** A folder as the app shows it. Folders under the home folder are shortened to "~/..." (see
+ * toDisplayPath), and on Windows the temp folder these tests run in is under home, so the full
+ * path never appears there. What is saved is still the full path, which the tests below read
+ * from app-settings.json where it matters. */
+async function shown(plexo: import('./fixtures').PlexoApp, folder: string): Promise<string> {
+  const home = await plexo.evaluateMain(({ app }) => app.getPath('home'), null)
+  return toDisplayPath(folder, home)
 }
 
 test.describe('pinned default download location & settings preferences', () => {
@@ -52,7 +62,7 @@ test.describe('pinned default download location & settings preferences', () => {
     // Verify New download defaults to pinned folder
     await plexo.newDownload()
     const newDownloadDialog = page.getByRole('dialog', { name: 'New download' })
-    await expect(newDownloadDialog.getByText(customDir)).toBeVisible()
+    await expect(newDownloadDialog.getByText(await shown(plexo, customDir))).toBeVisible()
     await page.keyboard.press('Escape')
 
     // Relaunch app and verify setting persisted
@@ -61,7 +71,7 @@ test.describe('pinned default download location & settings preferences', () => {
     await pageAfter.getByRole('button', { name: 'Settings', exact: true }).click()
     const dialogAfter = pageAfter.getByRole('dialog', { name: 'Speed & data limits' })
     const sectionAfter = dialogAfter.locator('section', { hasText: 'Default download folder' })
-    await expect(sectionAfter.getByText(customDir)).toBeVisible()
+    await expect(sectionAfter.getByText(await shown(plexo, customDir))).toBeVisible()
     await dialogAfter.getByRole('button', { name: 'Cancel' }).click()
   })
 
@@ -84,11 +94,11 @@ test.describe('pinned default download location & settings preferences', () => {
     await link.fill(origin.url())
 
     const newDownloadDialog = plexo.page.getByRole('dialog', { name: 'New download' })
-    await expect(newDownloadDialog.getByText(pinnedDir)).toBeVisible()
+    await expect(newDownloadDialog.getByText(await shown(plexo, pinnedDir))).toBeVisible()
 
     // Change folder for this one download
     await newDownloadDialog.getByRole('button', { name: 'Change' }).click()
-    await expect(newDownloadDialog.getByText(oneOffDir)).toBeVisible()
+    await expect(newDownloadDialog.getByText(await shown(plexo, oneOffDir))).toBeVisible()
 
     // Start download
     await newDownloadDialog.getByRole('button', { name: 'Download' }).click()
@@ -99,7 +109,7 @@ test.describe('pinned default download location & settings preferences', () => {
 
     // Open New download again — it must still default to pinnedDir!
     await plexo.newDownload()
-    await expect(newDownloadDialog.getByText(pinnedDir)).toBeVisible()
+    await expect(newDownloadDialog.getByText(await shown(plexo, pinnedDir))).toBeVisible()
     await plexo.page.keyboard.press('Escape')
   })
 
@@ -116,7 +126,7 @@ test.describe('pinned default download location & settings preferences', () => {
     await page.getByRole('button', { name: 'Settings', exact: true }).click()
     const dialog = page.getByRole('dialog', { name: 'Speed & data limits' })
     const section = dialog.locator('section', { hasText: 'Default download folder' })
-    await expect(section.getByText(customDir)).toBeVisible()
+    await expect(section.getByText(await shown(plexo, customDir))).toBeVisible()
 
     // Click Change
     await section.getByRole('button', { name: 'Change' }).click()
@@ -142,7 +152,7 @@ test.describe('pinned default download location & settings preferences', () => {
     // Main rejects the missing pinned folder before the renderer sees it, so the dialog shows its
     // usable fallback and exposes Change.
     await expect(destinationRow).toBeVisible()
-    await expect(destinationRow).not.toContainText(missingDir)
+    await expect(destinationRow).not.toContainText(await shown(plexo, missingDir))
     await expect(destinationRow.getByRole('button', { name: 'Change' })).toBeVisible()
     await plexo.page.keyboard.press('Escape')
 
@@ -164,7 +174,7 @@ test.describe('pinned default download location & settings preferences', () => {
     await page.getByRole('button', { name: 'Settings', exact: true }).click()
     const dialog = page.getByRole('dialog', { name: 'Speed & data limits' })
     const section = dialog.locator('section', { hasText: 'Default download folder' })
-    await expect(section.getByText(customDir)).toBeVisible()
+    await expect(section.getByText(await shown(plexo, customDir))).toBeVisible()
 
     // Click Reset to default
     const resetBtn = section.getByRole('button', { name: 'Reset to default' })
@@ -191,7 +201,7 @@ test.describe('pinned default download location & settings preferences', () => {
     const section = plexo.page
       .getByRole('dialog', { name: 'Speed & data limits' })
       .locator('section', { hasText: 'Default download folder' })
-    await expect(section.getByText(legacyDir)).toBeVisible()
+    await expect(section.getByText(await shown(plexo, legacyDir))).toBeVisible()
     await expect(section.getByText('(system default)')).toBeHidden()
     await plexo.page.getByRole('button', { name: 'Cancel' }).click()
   })
@@ -211,7 +221,7 @@ test.describe('pinned default download location & settings preferences', () => {
 
     const dialog = plexo.page.getByRole('dialog', { name: 'New download' })
     await dialog.getByRole('button', { name: 'Change' }).click()
-    await expect(dialog.getByText(rememberedDir)).toBeVisible()
+    await expect(dialog.getByText(await shown(plexo, rememberedDir))).toBeVisible()
     await dialog.getByRole('button', { name: 'Download' }).click()
     await plexo.waitForHttpStatus('completed')
 
@@ -219,7 +229,7 @@ test.describe('pinned default download location & settings preferences', () => {
     await plexo.page.getByRole('button', { name: 'Downloads' }).click()
     await plexo.newDownload()
     const dialogNext = plexo.page.getByRole('dialog', { name: 'New download' })
-    await expect(dialogNext.getByText(rememberedDir)).toBeVisible()
+    await expect(dialogNext.getByText(await shown(plexo, rememberedDir))).toBeVisible()
     await plexo.page.keyboard.press('Escape')
 
     // Verify settings updated on disk
@@ -245,7 +255,7 @@ test.describe('pinned default download location & settings preferences', () => {
 
     const dialog = plexo.page.getByRole('dialog', { name: 'New download' })
     await dialog.getByRole('button', { name: 'Change' }).click()
-    await expect(dialog.getByText(originalDir)).toBeVisible()
+    await expect(dialog.getByText(await shown(plexo, originalDir))).toBeVisible()
     await dialog.getByRole('button', { name: 'Download' }).click()
 
     // Wait for the download to start and pause it
@@ -273,7 +283,7 @@ test.describe('pinned default download location & settings preferences', () => {
     // And verify subsequent new download defaults to newDefaultDir
     await plexo.newDownload()
     const newDialog = plexo.page.getByRole('dialog', { name: 'New download' })
-    await expect(newDialog.getByText(newDefaultDir)).toBeVisible()
+    await expect(newDialog.getByText(await shown(plexo, newDefaultDir))).toBeVisible()
     await plexo.page.keyboard.press('Escape')
   })
 })
