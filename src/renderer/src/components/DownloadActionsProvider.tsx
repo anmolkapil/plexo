@@ -52,6 +52,14 @@ export function DownloadActionsProvider({
           const failed = results.find((result) => result.status === 'rejected')
           return failed ? fail(failed.reason) : true
         }
+        case 'next':
+          // Each goes to the front in turn, so the last sent is first: they keep the list's order.
+          try {
+            for (const item of [...targets].reverse()) await window.plexo.startNext(item.id)
+            return true
+          } catch (cause) {
+            return fail(cause)
+          }
         case 'fix':
           setFixing(targets[0] as DownloadState)
           return true

@@ -1649,6 +1649,19 @@ export class DownloadManager {
     void this.resumeAfterVerifying(runtime, false)
   }
 
+  /** Puts a queued download first in line, so it's the one that starts when a place is free.
+   * Nothing running is paused for it, and no more run at once than downloadsAtOnce: it only
+   * moves ahead of the others waiting. Waiting for the schedule, it's the first to start when
+   * the window opens, and its place is saved with it, so a scheduled queue keeps that order
+   * through a restart. */
+  async startNext(id: string): Promise<void> {
+    const runtime = this.runtimes.get(id)
+    if (!runtime || runtime.cancelPromise || runtime.state.status !== 'queued') return
+    this.enqueue(runtime, true)
+    this.pushUpdate(runtime)
+    await this.persistNow(runtime)
+  }
+
   // A file that changed on the server while this download was paused is caught by the first
   // chunk request after resuming: its response is checked against the version the download
   // started on (see runWorker), which can tell a real change from a relabelled server. Whether a
