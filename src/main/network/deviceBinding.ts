@@ -1,12 +1,11 @@
-import { connect, Socket, type SocketConstructorOpts } from 'node:net'
+import { createRequire } from 'node:module'
+import { connect, Socket, type SocketConstructorOpts, type TcpNetConnectOpts } from 'node:net'
 import { networkInterfaces } from 'node:os'
 import type { NetworkRoute } from './routes'
 
-// Linux picks a socket's outgoing interface from the routing table alone: binding to an
-// interface's IP (Node's `localAddress`) still sends the packets out the default route, where the
-// network that doesn't own that IP drops them. SO_BINDTODEVICE pins the socket to the interface
-// itself. Node has no setsockopt, so the socket is made through libc and handed to Node as an fd.
-// Unprivileged since Linux 5.7. macOS and Windows already route by source address.
+// On Linux and Windows, localAddress selects the source IP but not necessarily the outgoing
+// interface. Pin the socket before handing it to Node: SO_BINDTODEVICE on Linux (unprivileged
+// since 5.7), IP[V6]_UNICAST_IF on Windows. macOS already routes by source address.
 
 const AF_INET = 2
 const AF_INET6 = 10
@@ -14,6 +13,13 @@ const SOCK_STREAM = 1
 const SOCK_CLOEXEC = 0o2000000
 const SOL_SOCKET = 1
 const SO_BINDTODEVICE = 25
+const WINDOWS_AF_INET6 = 23
+const IPPROTO_TCP = 6
+const IPPROTO_IP = 0
+const IPPROTO_IPV6 = 41
+const UNICAST_IF = 31
+const WSA_FLAG_OVERLAPPED = 0x01
+const WSA_FLAG_NO_HANDLE_INHERIT = 0x80
 
 interface Libc {
   socket: (domain: number, type: number, protocol: number) => number
@@ -22,8 +28,9 @@ interface Libc {
   errno: () => number
 }
 
+type OpenSocket = (device: string, family: 4 | 6) => Socket
 /** Set once the support check below passes; until then everything falls back to localAddress. */
-let libc: Libc | null = null
+let openSocket: OpenSocket | null = null
 let support: Promise<boolean> | null = null
 
 function openOnDevice(lib: Libc, device: string, family: 4 | 6): number {
@@ -39,11 +46,82 @@ function openOnDevice(lib: Libc, device: string, family: 4 | 6): number {
   return fd
 }
 
-/** Whether each network can carry its own connections. Always true off Linux. */
+interface TcpHandle {
+  open(socket: number): number
+  close(): void
+}
+
+function windowsSocketFactory(): OpenSocket {
+  const koffi: typeof import('koffi') = createRequire(__filename)('koffi')
+  const ws = koffi.load('ws2_32.dll')
+  const ip = koffi.load('iphlpapi.dll')
+  const socket = ws.func('intptr_t __stdcall WSASocketW(int, int, int, void *, uint32_t, uint32_t)')
+  const setOption = ws.func('int __stdcall setsockopt(intptr_t, int, int, const void *, int)')
+  const close = ws.func('int __stdcall closesocket(intptr_t)')
+  const lastError = ws.func('int __stdcall WSAGetLastError()')
+  const toLuid = ip.func('uint32_t __stdcall ConvertInterfaceAliasToLuid(const char16_t *, void *)')
+  const toIndex = ip.func('uint32_t __stdcall ConvertInterfaceLuidToIndex(const void *, void *)')
+  // shortcut: process.binding('tcp_wrap') is internal (DEP0111, docs-only); if a future Electron drops it, the support probe fails and Plexo falls back to localAddress
+  const { TCP, constants } = (
+    process as NodeJS.Process & {
+      binding(name: 'tcp_wrap'): {
+        TCP: new (type: number) => TcpHandle
+        constants: { SOCKET: number }
+      }
+    }
+  ).binding('tcp_wrap')
+
+  return (device, family) => {
+    const luid = Buffer.alloc(8)
+    const index = Buffer.alloc(4)
+    const status = toLuid(device, luid) || toIndex(luid, index)
+    if (status) throw new Error(`Couldn't resolve adapter ${device} (Windows ${status})`)
+    // IPv6 takes the native ULONG; IPv4 takes the same index in network byte order.
+    if (family === 4) index.writeUInt32BE(index.readUInt32LE())
+    const raw: number | bigint = socket(
+      family === 6 ? WINDOWS_AF_INET6 : AF_INET,
+      SOCK_STREAM,
+      IPPROTO_TCP,
+      null,
+      0,
+      WSA_FLAG_OVERLAPPED | WSA_FLAG_NO_HANDLE_INHERIT
+    )
+    if (raw === -1 || raw === -1n) throw new Error(`WSASocketW failed (WSA ${lastError()})`)
+    let handle: TcpHandle | undefined
+    let adopted = false
+    try {
+      if (raw < 0 || raw > 0x7fffffff)
+        throw new Error('SOCKET exceeds the signed int range of TCP.open')
+      const level = family === 6 ? IPPROTO_IPV6 : IPPROTO_IP
+      if (setOption(raw, level, UNICAST_IF, index, index.length) !== 0) {
+        throw new Error(`Couldn't bind a socket to ${device} (WSA ${lastError()})`)
+      }
+      handle = new TCP(constants.SOCKET)
+      const err = handle.open(Number(raw))
+      if (err) throw new Error(`TCP.open failed (${err})`)
+      adopted = true
+      return new Socket({ handle, manualStart: true } as SocketConstructorOpts)
+    } catch (error) {
+      if (!adopted) close(raw)
+      handle?.close()
+      throw error
+    }
+  }
+}
+
+/** Whether each network can carry its own connections. */
 export function deviceBindingSupported(): Promise<boolean> {
   support ??= (async () => {
-    if (process.platform !== 'linux') return true
     try {
+      if (process.platform === 'win32') {
+        const candidate = windowsSocketFactory()
+        const loopback = deviceFor('127.0.0.1')
+        if (!loopback) throw new Error('No IPv4 loopback adapter')
+        candidate(loopback, 4).destroy()
+        openSocket = candidate
+        return true
+      }
+      if (process.platform !== 'linux') return true
       const { default: koffi } = await import('koffi')
       const lib = koffi.load('libc.so.6')
       const candidate: Libc = {
@@ -54,7 +132,11 @@ export function deviceBindingSupported(): Promise<boolean> {
       }
       // Loopback always exists, so this only fails when the kernel refuses (EPERM before 5.7).
       candidate.close(openOnDevice(candidate, 'lo', 4))
-      libc = candidate
+      openSocket = (device, family) =>
+        new Socket({
+          fd: openOnDevice(candidate, device, family),
+          manualStart: true
+        } as SocketConstructorOpts)
       return true
     } catch (error) {
       console.warn('Per-network binding unavailable, using the default route:', error)
@@ -68,31 +150,36 @@ export function deviceBindingSupported(): Promise<boolean> {
 export function connectRoute(route: NetworkRoute, port: number): Socket {
   const { device, localAddress, remoteAddress, family } = route
   const loopback = remoteAddress === '::1' || remoteAddress.startsWith('127.')
-  if (!libc || loopback) {
+  if (loopback) {
     return connect({ host: remoteAddress, port, localAddress, family })
   }
 
-  let fd: number
-  try {
-    fd = openOnDevice(libc, device, family)
-  } catch (error) {
-    // The interface vanished since it was listed — surface it like any other connect error.
-    const socket = new Socket()
-    process.nextTick(() => socket.destroy(error as Error))
-    return socket
-  }
-  // manualStart: a socket wrapped around an fd starts reading at once, before it's connected.
-  // Bind both the device and source address: an interface may have several IPv6 addresses.
-  return new Socket({ fd, manualStart: true } as SocketConstructorOpts).connect({
-    host: remoteAddress,
-    port,
-    localAddress,
-    family
-  })
+  return dial(device, { host: remoteAddress, port, localAddress, family })
 }
 
-function deviceFor(localAddress: string, host: string): string | undefined {
-  if (host === 'localhost' || host.startsWith('127.') || host === '::1') return undefined
+function dial(device: string | undefined, options: TcpNetConnectOpts & { family?: 4 | 6 }): Socket {
+  if (!openSocket) return connect(options)
+  let socket: Socket | undefined
+  try {
+    if (!device && options.localAddress) {
+      device = deviceFor(options.localAddress)
+      if (!device && process.platform === 'win32')
+        throw new Error(`No adapter owns ${options.localAddress}`)
+    }
+    if (!device) return connect(options)
+    const family =
+      options.family ?? (options.localAddress?.includes(':') || options.host?.includes(':') ? 6 : 4)
+    socket = openSocket(device, family)
+    return socket.connect({ ...options, family })
+  } catch (error) {
+    // The interface vanished since it was listed — surface it like any other connect error.
+    const failed = socket ?? new Socket()
+    process.nextTick(() => failed.destroy(error as Error))
+    return failed
+  }
+}
+
+function deviceFor(localAddress: string): string | undefined {
   for (const [device, addresses] of Object.entries(networkInterfaces())) {
     if (addresses?.some((addr) => addr.address === localAddress)) return device
   }
@@ -111,26 +198,5 @@ export function connectFrom(
     return connect({ host, port })
   }
 
-  const device = deviceName ?? (libc && localAddress ? deviceFor(localAddress, host) : undefined)
-  if (!libc || !device) {
-    return connect({ host, port, localAddress: localAddress || undefined })
-  }
-
-  const isIpv6 = Boolean(localAddress?.includes(':') || host.includes(':'))
-  const family = isIpv6 ? 6 : 4
-  let fd: number
-  try {
-    fd = openOnDevice(libc, device, family)
-  } catch (error) {
-    // The interface vanished since it was listed — surface it like any other connect error.
-    const socket = new Socket()
-    process.nextTick(() => socket.destroy(error as Error))
-    return socket
-  }
-  return new Socket({ fd, manualStart: true } as SocketConstructorOpts).connect({
-    host,
-    port,
-    localAddress: localAddress || undefined,
-    family
-  })
+  return dial(deviceName, { host, port, localAddress: localAddress || undefined })
 }

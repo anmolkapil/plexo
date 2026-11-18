@@ -10,8 +10,7 @@ import {
   AlertDialogTitle
 } from './ui/alert-dialog'
 
-/** Linux before 5.7 can't pin a connection to one network, so everything leaves through the
- * default route — only worth saying once there's a second network that won't get used. */
+/** Only warn once there's a second network that won't get used. */
 export function NetworkBindingDialog(): React.JSX.Element {
   const networkCount = useAppStore((store) => store.interfaces.length)
   const [supported, setSupported] = useState(true)
@@ -32,10 +31,9 @@ export function NetworkBindingDialog(): React.JSX.Element {
         <AlertDialogHeader>
           <AlertDialogTitle>Only your default network can be used</AlertDialogTitle>
           <AlertDialogDescription>
-            This system doesn&apos;t let apps send a connection through a specific network, which
-            needs Linux kernel 5.7 or newer. Every connection will go through your default network,
-            so the others will show no ping and won&apos;t add speed. Updating your system fixes
-            this.
+            Plexo couldn&apos;t bind connections to individual networks. Downloads will use your
+            system&apos;s routing instead, so the other networks may not add speed.
+            {window.plexo.platform === 'linux' && ' On Linux, this requires kernel 5.7 or newer.'}
           </AlertDialogDescription>
         </AlertDialogHeader>
         <AlertDialogFooter>
