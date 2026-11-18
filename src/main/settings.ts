@@ -1,6 +1,6 @@
 import { rm } from 'node:fs/promises'
 import { isAbsolute, join } from 'node:path'
-import { app, nativeTheme } from 'electron'
+import { app, nativeTheme, safeStorage } from 'electron'
 import {
   DOWNLOADS_AT_ONCE,
   type AppSettings,
@@ -13,6 +13,7 @@ import {
 import { readJson, updateJson } from './jsonFile'
 import { DEFAULT_DOWNLOAD_SCHEDULE, validSchedule } from '../shared/downloadSchedule'
 import { carryOverDevicePreferences } from '../shared/networkPreferences'
+import { sameProxyEndpoint } from '../shared/proxy'
 
 function settingsPath(): string {
   return join(app.getPath('userData'), 'app-settings.json')
@@ -24,7 +25,45 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 const VALID_PROXY_TYPES: readonly ProxyType[] = ['http', 'https', 'socks4', 'socks5']
 
-function sanitizeProxyConfig(value: unknown): ProxyConfig | undefined {
+/** A proxy as app-settings.json keeps it: its password sealed with the computer's keychain, as
+ * the news server's is (see nzb/usenetServer.ts). A file saved before passwords were sealed has
+ * `password` in the clear instead; sealProxyPasswords seals it at the next launch, and any save
+ * does too. */
+type SavedProxy = ProxyConfig & { sealedPassword?: string }
+
+/** Proxy passwords by network id, when this computer has no keychain to seal them with: kept
+ * until Plexo quits rather than written in the clear. */
+const inMemory = new Map<string, string>()
+
+/** As for the news server's password: never written in the clear, and on Linux without a
+ * keyring (where safeStorage falls back to a fixed key), not written at all. */
+export function canSealPasswords(): boolean {
+  if (!safeStorage.isEncryptionAvailable()) return false
+  return !(process.platform === 'linux' && safeStorage.getSelectedStorageBackend() === 'basic_text')
+}
+
+function seal(password: string): string | undefined {
+  if (!canSealPasswords()) return undefined
+  try {
+    return safeStorage.encryptString(password).toString('base64')
+  } catch {
+    // The keychain refused: kept for this session instead.
+    return undefined
+  }
+}
+
+function unseal(sealed: string): string | undefined {
+  if (!canSealPasswords()) return undefined
+  try {
+    return safeStorage.decryptString(Buffer.from(sealed, 'base64'))
+  } catch {
+    // Sealed by another keychain (a restored profile, say): it has to be entered again. It
+    // stays saved meanwhile, for a session that can still open it.
+    return undefined
+  }
+}
+
+function sanitizeProxyConfig(value: unknown): SavedProxy | undefined {
   if (!isRecord(value)) return undefined
   const enabled = typeof value.enabled === 'boolean' ? value.enabled : false
   const type =
@@ -43,6 +82,10 @@ function sanitizeProxyConfig(value: unknown): ProxyConfig | undefined {
     typeof value.username === 'string' && value.username.length > 0 ? value.username : undefined
   const password =
     typeof value.password === 'string' && value.password.length > 0 ? value.password : undefined
+  const sealedPassword =
+    typeof value.sealedPassword === 'string' && value.sealedPassword.length > 0
+      ? value.sealedPassword
+      : undefined
 
   return {
     enabled,
@@ -50,8 +93,96 @@ function sanitizeProxyConfig(value: unknown): ProxyConfig | undefined {
     host,
     port,
     ...(username ? { username } : {}),
-    ...(password ? { password } : {})
+    ...(password ? { password } : {}),
+    ...(sealedPassword ? { sealedPassword } : {})
   }
+}
+
+/** Each network's preferences with `change` applied to its proxy, the others as they are. */
+function mapProxies(
+  preferences: NetworkPreferences,
+  change: (proxy: SavedProxy, id: string) => ProxyConfig
+): NetworkPreferences {
+  return Object.fromEntries(
+    Object.entries(preferences).map(([id, preference]) => [
+      id,
+      preference.proxy ? { ...preference, proxy: change(preference.proxy, id) } : preference
+    ])
+  )
+}
+
+/** As the main process uses it: its password unsealed, for the proxy connection. */
+function unsealed({ sealedPassword, password, ...proxy }: SavedProxy, id: string): ProxyConfig {
+  const known = inMemory.get(id) ?? (sealedPassword ? unseal(sealedPassword) : password)
+  return {
+    ...proxy,
+    ...(known ? { password: known } : {}),
+    // One this session can't unseal is still saved: left blank in the window, it stays.
+    ...(known || sealedPassword ? { hasPassword: true } : {})
+  }
+}
+
+/** What the window may see: whether there's a password, never the password itself. */
+export function networkPreferencesForWindow(preferences: NetworkPreferences): NetworkPreferences {
+  return mapProxies(preferences, (proxy) => ({ ...proxy, password: undefined }))
+}
+
+/** A password from before they were sealed, sealed now. Left as it was when this computer has no
+ * keychain: written in the clear by an older version, it would otherwise be lost. */
+function sealedFromClear({ password, ...proxy }: SavedProxy): SavedProxy {
+  const sealedPassword = password ? seal(password) : undefined
+  return sealedPassword ? { ...proxy, sealedPassword } : { ...proxy, ...(password && { password }) }
+}
+
+/** The settings as the file keeps them: no proxy password in the clear that can be sealed. */
+function passwordsSealed(settings: AppSettings): AppSettings {
+  return settings.networkPreferences
+    ? { ...settings, networkPreferences: mapProxies(settings.networkPreferences, sealedFromClear) }
+    : settings
+}
+
+/** The networks as the window sends them, each proxy's password as the file will keep it: a new
+ * one sealed (or, with no keychain, kept for this session), '' clearing it, and none keeping the
+ * one already saved — the window never has it to send back — as long as it's still for the same
+ * proxy and username. Sent with another type, host, port or username, it's dropped: a password
+ * never goes to a proxy it wasn't typed for. */
+function withSavedPasswords(sent: unknown, saved: NetworkPreferences): unknown {
+  if (!isRecord(sent)) return sent
+  // A network left out is reset: its password goes with it.
+  for (const id of inMemory.keys()) if (!(id in sent)) inMemory.delete(id)
+  const result: Record<string, unknown> = {}
+  for (const [id, value] of Object.entries(sent)) {
+    if (!isRecord(value) || !isRecord(value.proxy)) {
+      inMemory.delete(id)
+      result[id] = value
+      continue
+    }
+    const { password } = value.proxy
+    // Only a password: nothing sealed comes from the window.
+    const fields = { ...value.proxy, password: undefined, sealedPassword: undefined }
+    let proxy: Record<string, unknown> = fields
+    const kept = saved[id]?.proxy as SavedProxy | undefined
+    const next = sanitizeProxyConfig(fields)
+    if (password === undefined && kept && next && sameProxyEndpoint(kept, next)) {
+      proxy = {
+        ...fields,
+        ...(kept.sealedPassword && { sealedPassword: kept.sealedPassword }),
+        ...(kept.password && { password: kept.password })
+      }
+    } else if (typeof password === 'string' && password !== '') {
+      const sealedPassword = seal(password)
+      if (sealedPassword) {
+        inMemory.delete(id)
+        proxy = { ...fields, sealedPassword }
+      } else {
+        inMemory.set(id, password)
+      }
+    } else {
+      inMemory.delete(id)
+    }
+    result[id] = { ...value, proxy }
+  }
+  return result
 }
 
 /** A rate or an amount of bytes: a positive whole number, or nothing. */
@@ -136,13 +267,30 @@ function sanitizeSettings(parsed: unknown): AppSettings {
   return settings
 }
 
+/** The settings, proxy passwords unsealed: for the main process only (see
+ * networkPreferencesForWindow). */
 export async function loadSettings(): Promise<AppSettings> {
   // Reading can fall back to defaults; only a save must not act on a failed read.
   try {
-    return sanitizeSettings(await readJson(settingsPath()))
+    const settings = sanitizeSettings(await readJson(settingsPath()))
+    return settings.networkPreferences
+      ? { ...settings, networkPreferences: mapProxies(settings.networkPreferences, unsealed) }
+      : settings
   } catch {
     return {}
   }
+}
+
+/** Seals the proxy passwords a file from an older version has in the clear. Writes nothing when
+ * there are none, or no keychain to seal them with. */
+export async function sealProxyPasswords(): Promise<void> {
+  if (!canSealPasswords()) return
+  const { networkPreferences } = sanitizeSettings(await readJson(settingsPath()))
+  const inClear = Object.values(networkPreferences ?? {}).some((preference) =>
+    Boolean(preference.proxy?.password)
+  )
+  if (!inClear) return
+  await updateJson(settingsPath(), (current) => passwordsSealed(sanitizeSettings(current)))
 }
 
 /** Merges `patch` over what's saved. */
@@ -155,11 +303,18 @@ export function saveSettings(patch: unknown): Promise<void> {
     return Promise.reject(new Error('Choose different start and stop times and at least one day.'))
   }
   return updateJson(settingsPath(), (current) => {
-    const merged = { ...sanitizeSettings(current), ...(isRecord(patch) ? patch : {}) }
+    const saved = sanitizeSettings(current)
+    const merged = { ...saved, ...(isRecord(patch) ? patch : {}) }
     if (isRecord(patch) && 'defaultDestinationDir' in patch && !patch.defaultDestinationDir) {
       delete (merged as Record<string, unknown>).defaultDestinationDir
     }
-    return sanitizeSettings(merged)
+    if (isRecord(patch) && patch.networkPreferences !== undefined) {
+      merged.networkPreferences = withSavedPasswords(
+        patch.networkPreferences,
+        saved.networkPreferences ?? {}
+      ) as NetworkPreferences
+    }
+    return passwordsSealed(sanitizeSettings(merged))
   })
 }
 
