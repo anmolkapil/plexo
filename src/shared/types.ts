@@ -515,7 +515,12 @@ export interface ProxyConfig {
   host: string
   port: number
   username?: string
+  /** Only the main process holds it, as the proxy connection needs it: app-settings.json keeps
+   * it sealed (see main/settings.ts), and the window is never sent it. What the window sends
+   * is a new password, '' to clear the saved one, or nothing to keep it. */
   password?: string
+  /** A password is saved: set in what the window is sent, in place of the password. */
+  hasPassword?: boolean
 }
 
 export type DataLimitPeriod = 'day' | 'week' | 'month'
@@ -616,6 +621,9 @@ export interface InitialState {
   /** The last folder picked, if it still exists — otherwise the renderer uses downloadsDir. */
   destinationDir?: string
   defaultDestinationDir?: string
+  /** This computer has no keychain to seal a proxy's password with: one typed is kept only until
+   * Plexo quits (see main/settings.ts). */
+  noKeychain?: boolean
 }
 
 interface StartDownloadRequestBase {
