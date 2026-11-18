@@ -1,0 +1,37 @@
+# Throwaway: PR #274 spike, delete with the branch.
+name: Spike Windows koffi routing
+on:
+  push:
+    branches: [spike/windows-koffi]
+
+jobs:
+  spike:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, windows-11-arm]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      # Only what the spike needs, at the versions Plexo ships.
+      - name: Install koffi and Electron
+        working-directory: spike
+        run: |
+          npm init -y > $null
+          npm install koffi@2.16.3 electron@44.4.4
+
+      - name: Under Node
+        working-directory: spike
+        run: node windows-koffi.mjs
+
+      - name: Under Electron (as Plexo runs)
+        if: always()
+        working-directory: spike
+        env:
+          ELECTRON_RUN_AS_NODE: '1'
+        run: npx electron windows-koffi.mjs
