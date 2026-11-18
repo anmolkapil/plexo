@@ -1,12 +1,22 @@
+import { execFileSync, spawnSync } from 'node:child_process'
 import { createServer, type Server } from 'node:http'
 import { connect as netConnect, createServer as createTcpServer, type AddressInfo } from 'node:net'
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
+import { crc32 } from 'node:zlib'
 import { join } from 'node:path'
 import type { NzbDownloadState, UsenetServerInput } from '../src/shared/types'
 import type { Locator } from '@playwright/test'
-import { expect, expectNzb, LAN_ADDRESS, test, type PlexoApp } from './fixtures'
-import { NewsServer, type NewsServerOptions } from './newsServer'
+import {
+  expect,
+  expectNzb,
+  LAN_ADDRESS,
+  PROJECT_ROOT,
+  test,
+  treeSha,
+  type PlexoApp
+} from './fixtures'
+import { NewsServer, type NewsFile, type NewsServerOptions } from './newsServer'
 import { seededBytes } from './origin'
 
 // Downloading from Usenet: an NZB's articles fetched from a local news server (newsServer.ts),
@@ -15,10 +25,12 @@ import { seededBytes } from './origin'
 
 const KB = 1024
 
+// Neither archives nor .par2 files: what these download is checked as it was posted, whatever
+// tools the computer has (repairing and unpacking are tested on their own, at the end).
 const RELEASE = [
-  { name: 'Test.Release.part1.rar', data: seededBytes(200 * KB, 41) },
-  { name: 'Test.Release.part2.rar', data: seededBytes(90 * KB + 7, 42) },
-  { name: 'Test.Release.par2', data: seededBytes(3 * KB + 1, 43) }
+  { name: 'Test.Release.part1.bin', data: seededBytes(200 * KB, 41) },
+  { name: 'Test.Release.part2.bin', data: seededBytes(90 * KB + 7, 42) },
+  { name: 'Test.Release.txt', data: seededBytes(3 * KB + 1, 43) }
 ]
 
 let servers: NewsServer[] = []
@@ -59,6 +71,39 @@ async function useServer(
     connections: 4,
     ...settings
   })
+}
+
+/** A SOCKS5 proxy without auth, IPv4 targets only (greeting, then CONNECT), noting each target. */
+async function socksProxy(): Promise<{
+  targets: string[]
+  port: number
+  close: () => Promise<void>
+}> {
+  const targets: string[] = []
+  const proxy = createTcpServer((client) => {
+    client.once('data', () => {
+      client.write(Buffer.from([0x05, 0x00]))
+      client.once('data', (request: Buffer) => {
+        const host = [...request.subarray(4, 8)].join('.')
+        const port = request.readUInt16BE(8)
+        targets.push(`${host}:${port}`)
+        const upstream = netConnect(port, host, () => {
+          client.write(Buffer.from([0x05, 0x00, 0x00, 0x01, 0, 0, 0, 0, 0, 0]))
+          upstream.pipe(client)
+          client.pipe(upstream)
+        })
+        upstream.on('error', () => client.destroy())
+        client.on('error', () => upstream.destroy())
+      })
+    })
+  })
+  await new Promise<void>((resolve) => proxy.listen(0, '127.0.0.1', resolve))
+  const { port } = proxy.address() as AddressInfo
+  return {
+    targets,
+    port,
+    close: () => new Promise<void>((resolve) => proxy.close(() => resolve()))
+  }
 }
 
 test.describe('NZB downloads', () => {
@@ -336,28 +381,8 @@ test.describe('NZB downloads', () => {
   test('goes through the proxy set on the network', async ({ plexo }) => {
     const server = await newsServer()
     await useServer(plexo, server, { connections: 2 })
-    // SOCKS5 without auth, IPv4 targets only: greeting, then CONNECT.
-    const targets: string[] = []
-    const proxy = createTcpServer((client) => {
-      client.once('data', () => {
-        client.write(Buffer.from([0x05, 0x00]))
-        client.once('data', (request: Buffer) => {
-          const host = [...request.subarray(4, 8)].join('.')
-          const port = request.readUInt16BE(8)
-          targets.push(`${host}:${port}`)
-          const upstream = netConnect(port, host, () => {
-            client.write(Buffer.from([0x05, 0x00, 0x00, 0x01, 0, 0, 0, 0, 0, 0]))
-            upstream.pipe(client)
-            client.pipe(upstream)
-          })
-          upstream.on('error', () => client.destroy())
-          client.on('error', () => upstream.destroy())
-        })
-      })
-    })
-    await new Promise<void>((resolve) => proxy.listen(0, '127.0.0.1', resolve))
+    const { targets, port, close } = await socksProxy()
     try {
-      const port = (proxy.address() as AddressInfo).port
       await plexo.api.updateSettings({
         networkPreferences: {
           a: { proxy: { enabled: true, type: 'socks5', host: '127.0.0.1', port } }
@@ -368,7 +393,7 @@ test.describe('NZB downloads', () => {
       expect(targets.length).toBeGreaterThan(0)
       expect(new Set(targets)).toEqual(new Set([`127.0.0.1:${server.port}`]))
     } finally {
-      await new Promise<void>((resolve) => proxy.close(() => resolve()))
+      await close()
     }
   })
 
@@ -384,6 +409,298 @@ test.describe('NZB downloads', () => {
     for (const network of done.networks.filter((network) => network.enabled)) {
       expect(network.bytesDownloaded).toBeGreaterThan(0)
     }
+  })
+})
+
+async function useBackup(
+  plexo: PlexoApp,
+  server: NewsServer,
+  settings: Partial<UsenetServerInput> = {}
+): Promise<void> {
+  await plexo.api.saveUsenetBackup({
+    host: '127.0.0.1',
+    port: server.port,
+    tls: false,
+    username: '',
+    password: '',
+    connections: 2,
+    ...settings
+  })
+}
+
+/** The articles a server was asked for, by message ID. */
+const askedFor = (server: NewsServer): Set<string> =>
+  new Set(server.served.map((article) => article.messageId))
+
+test.describe('Backup news server', () => {
+  const lacking = (article: { file: number; number: number }): boolean =>
+    article.file === 0 && (article.number === 3 || article.number === 7)
+
+  test('articles the news server doesn’t have come from the backup server', async ({ plexo }) => {
+    const main = await newsServer({ missing: lacking })
+    const backup = await newsServer()
+    await useServer(plexo, main)
+    await useBackup(plexo, backup)
+
+    // Nothing missing in the end: the backup server filled the gaps.
+    await plexo.start(
+      await nzbOnDisk(main),
+      main.expectedSha(() => false)
+    )
+    const done = await plexo.waitForNzbStatus('completed', 30_000)
+    expect(done.missingBytes).toBe(0)
+    expect(done.fromBackup).toBe(2)
+    expect(done.backupError).toBeUndefined()
+    // Only what the news server lacked was asked of the backup.
+    expect(backup.served.every((article) => article.fault === 'ok')).toBe(true)
+    expect(askedFor(backup).size).toBe(2)
+    // The complete screen says so too, not only the downloading one.
+    await plexo.page.getByText('Test.Release', { exact: true }).first().click()
+    await expect(plexo.page.getByText('2 articles came from the backup server.')).toBeVisible()
+  })
+
+  test('an article neither server has counts as missing', async ({ plexo }) => {
+    const main = await newsServer({ missing: lacking })
+    const backup = await newsServer({
+      missing: (article) => article.file === 0 && article.number === 7
+    })
+    await useServer(plexo, main)
+    await useBackup(plexo, backup)
+
+    const expected = main.expectedSha((article) => article.file === 0 && article.number === 7)
+    await plexo.start(await nzbOnDisk(main), expected)
+    const done = await plexo.waitForNzbStatus('completed', 30_000)
+    expect(done.nzbFiles[0].missing).toBe(1)
+    expect(done.fromBackup).toBe(1)
+    expect(done.blocks.filter((block) => block.status === 'missing')).toHaveLength(1)
+  })
+
+  test('the backup server isn’t connected to while nothing is missing', async ({ plexo }) => {
+    const main = await newsServer()
+    const backup = await newsServer()
+    await useServer(plexo, main)
+    await useBackup(plexo, backup)
+
+    await plexo.start(await nzbOnDisk(main), main.expectedSha())
+    const done = await plexo.waitForNzbStatus('completed', 30_000)
+    expect(done.fromBackup).toBeUndefined()
+    expect(backup.connections).toBe(0)
+  })
+
+  test('a backup server out of reach is waited for, and the download finishes once it answers', async ({
+    plexo
+  }) => {
+    const main = await newsServer({ missing: lacking })
+    const backup = await newsServer()
+    const { port } = backup
+    await backup.stop()
+    await useServer(plexo, main)
+    await useBackup(plexo, backup, { port })
+
+    await plexo.start(
+      await nzbOnDisk(main),
+      main.expectedSha(() => false)
+    )
+    // Not given up on: it keeps trying, and the download waits for it.
+    const waiting = await plexo.waitUntil(
+      (state) => state.kind === 'nzb' && /can’t be reached/.test(state.backupError ?? ''),
+      15_000
+    )
+    expect(waiting.status).toBe('downloading')
+    expect(waiting.kind === 'nzb' && waiting.missingBytes).toBe(0)
+
+    await backup.start(port)
+    const done = await plexo.waitForNzbStatus('completed', 30_000)
+    expect(done.missingBytes).toBe(0)
+    expect(done.fromBackup).toBe(2)
+    expect(done.backupError).toBeUndefined()
+  })
+
+  test('a backup server that turns the sign-in down leaves the articles missing', async ({
+    plexo
+  }) => {
+    const main = await newsServer({ missing: lacking })
+    const backup = await newsServer({ username: 'reader', password: 'right' })
+    await useServer(plexo, main)
+    await useBackup(plexo, backup, { username: 'reader', password: 'right' })
+    // Tested with the backup's saved password, not the news server's.
+    const input = { host: '127.0.0.1', port: backup.port, tls: false, username: 'reader' }
+    await plexo.api.testUsenetServer({ ...input, connections: 2 }, true)
+    await expect(plexo.api.testUsenetServer({ ...input, connections: 2 })).rejects.toThrow(
+      /username or password/
+    )
+
+    await useBackup(plexo, backup, { username: 'reader', password: 'wrong' })
+    await plexo.start(await nzbOnDisk(main), main.expectedSha())
+    const done = await plexo.waitForNzbStatus('completed', 30_000)
+    expect(done.nzbFiles[0].missing).toBe(2)
+    expect(done.backupError).toMatch(/didn’t accept the username or password/)
+  })
+
+  test('fixed after it turned the sign-in down, the backup server sends what was missing on a resume', async ({
+    plexo
+  }) => {
+    // The first articles, so they're missing well before the download is done.
+    const main = await newsServer({
+      missing: (article) => article.file === 0 && article.number <= 2,
+      delayMs: 200
+    })
+    const backup = await newsServer({ username: 'reader', password: 'right' })
+    await useServer(plexo, main, { connections: 2 })
+    await useBackup(plexo, backup, { username: 'reader', password: 'wrong' })
+
+    const id = await plexo.start(
+      await nzbOnDisk(main),
+      main.expectedSha(() => false)
+    )
+    await plexo.waitUntil((state) => state.kind === 'nzb' && state.nzbFiles[0].missing === 2)
+    await plexo.api.pauseDownload(id)
+    const paused = await plexo.waitForNzbStatus('paused')
+    expect(paused.backupError).toMatch(/didn’t accept the username or password/)
+
+    await useBackup(plexo, backup, { username: 'reader', password: 'right' })
+    await plexo.api.resumeDownload(id)
+    const done = await plexo.waitForNzbStatus('completed', 30_000)
+    expect(done.missingBytes).toBe(0)
+    expect(done.nzbFiles[0].missing).toBe(0)
+    expect(done.fromBackup).toBe(2)
+    expect(done.backupError).toBeUndefined()
+  })
+
+  test('through the proxy set on the network, the backup server is connected to as well', async ({
+    plexo
+  }) => {
+    const main = await newsServer({ missing: lacking })
+    const backup = await newsServer()
+    await useServer(plexo, main, { connections: 2 })
+    await useBackup(plexo, backup)
+    const { targets, port, close } = await socksProxy()
+    try {
+      await plexo.api.updateSettings({
+        networkPreferences: {
+          a: { proxy: { enabled: true, type: 'socks5', host: '127.0.0.1', port } }
+        }
+      })
+      await plexo.start(
+        await nzbOnDisk(main),
+        main.expectedSha(() => false)
+      )
+      const done = await plexo.waitForNzbStatus('completed', 30_000)
+      expect(done.missingBytes).toBe(0)
+      expect(done.fromBackup).toBe(2)
+      // Every connection the backup server took came through the proxy, none past it.
+      expect(backup.connections).toBeGreaterThan(0)
+      const toBackup = targets.filter((target) => target === `127.0.0.1:${backup.port}`)
+      expect(toBackup).toHaveLength(backup.connections)
+      expect(new Set(targets)).toEqual(
+        new Set([`127.0.0.1:${main.port}`, `127.0.0.1:${backup.port}`])
+      )
+    } finally {
+      await close()
+    }
+  })
+
+  test('an article damaged every time on the news server comes from the backup, counted once', async ({
+    plexo
+  }) => {
+    const damaged = (article: { file: number; number: number }): boolean =>
+      article.file === 0 && (article.number === 2 || article.number === 5)
+    const main = await newsServer({ fault: (article) => (damaged(article) ? 'corrupt' : 'ok') })
+    const backup = await newsServer()
+    await useServer(plexo, main)
+    await useBackup(plexo, backup)
+
+    await plexo.start(
+      await nzbOnDisk(main),
+      main.expectedSha(() => false)
+    )
+    const done = await plexo.waitForNzbStatus('completed', 30_000)
+    expect(done.missingBytes).toBe(0)
+    expect(done.nzbFiles.every((file) => file.missing === 0)).toBe(true)
+    expect(done.fromBackup).toBe(2)
+    expect(askedFor(backup).size).toBe(2)
+    // The damaged copies' bytes aren't counted on top of the backup's: each byte once.
+    expect(done.bytesDownloaded).toBe(done.totalBytes)
+    const perNetwork = done.networks.reduce((sum, network) => sum + network.bytesDownloaded, 0)
+    expect(perNetwork).toBe(done.totalBytes)
+  })
+
+  test.describe('a network with no route to the backup server', () => {
+    // a reaches both servers over IPv4; c, IPv6 only, reaches only the news server ("localhost").
+    test.use({ appEnv: { PLEXO_E2E_INTERFACES: 'a=127.0.0.1,c=::1' } })
+
+    test('leaves the backup server to the networks that have one', async ({ plexo }) => {
+      const main = await newsServer({ missing: lacking, dualStack: true })
+      const backup = await newsServer()
+      await useServer(plexo, main, { host: 'localhost' })
+      await useBackup(plexo, backup)
+
+      await plexo.start(
+        await nzbOnDisk(main),
+        main.expectedSha(() => false),
+        { networks: ['a', 'c'] }
+      )
+      const done = await plexo.waitForNzbStatus('completed', 30_000)
+      expect(done.missingBytes).toBe(0)
+      expect(done.fromBackup).toBe(2)
+      expect(done.backupError).toBeUndefined()
+      expect(new Set(main.served.map((article) => article.from))).toEqual(
+        new Set(['127.0.0.1', '::1'])
+      )
+    })
+  })
+
+  test.describe('a news server answering only 430 for a while', () => {
+    test.use({ appEnv: { PLEXO_E2E_SILENT_MS: '1500' } })
+
+    test('is still reachable when a connection drops, so the backup keeps its share', async ({
+      plexo
+    }) => {
+      // One connection: the 430s come one after another for 3 s, longer than SILENT_MS, then the
+      // connection drops three times on the next article before it comes.
+      const main = await newsServer({
+        articleBytes: 4 * KB,
+        missing: (article) => article.file === 0 && article.number <= 30,
+        fault: (article, request) =>
+          article.file === 0 && article.number === 31 && request <= 3 ? 'drop' : 'ok',
+        delayMs: 100
+      })
+      const backup = await newsServer({ articleBytes: 4 * KB })
+      await useServer(plexo, main, { connections: 1 })
+      await useBackup(plexo, backup)
+
+      await plexo.start(
+        await nzbOnDisk(main),
+        main.expectedSha(() => false),
+        { networks: ['a'] }
+      )
+      const done = await plexo.waitForNzbStatus('completed', 30_000)
+      expect(done.fromBackup).toBe(30)
+      // Out of reach would have cut the backup to one connection (see shareConnections).
+      const unreachable = plexo.sessions
+        .flat()
+        .some((state) => state.networks.some((network) => network.status === 'unreachable'))
+      expect(unreachable).toBe(false)
+    })
+  })
+
+  test('a backup server connection waits for the next missing article, not a new sign-in', async ({
+    plexo
+  }) => {
+    // Gaps scattered through the NZB, a few articles apart.
+    const main = await newsServer({ missing: (article) => article.number % 4 === 0, delayMs: 100 })
+    const backup = await newsServer()
+    await useServer(plexo, main, { connections: 2 })
+    await useBackup(plexo, backup, { connections: 2 })
+
+    await plexo.start(
+      await nzbOnDisk(main),
+      main.expectedSha(() => false),
+      { networks: ['a'] }
+    )
+    const done = await plexo.waitForNzbStatus('completed', 30_000)
+    expect(done.fromBackup).toBe(main.missingCount)
+    expect(backup.connections).toBeLessThanOrEqual(2)
   })
 })
 
@@ -417,7 +734,7 @@ test.describe('Usenet settings', () => {
     const server = await newsServer()
     const file = join(plexo.dirs.userData, 'usenet-server.json')
     // Saved before there was a switch: on. Its password sealed by a keychain this session can't
-    // open (another login's, say), so it reads as none.
+    // open (another login's, say).
     const password = Buffer.from('sealed elsewhere').toString('base64')
     await writeFile(
       file,
@@ -539,7 +856,7 @@ test.describe('Usenet settings', () => {
 
     const form = plexo.page.getByRole('dialog', { name: 'Usenet server' })
     await form.getByLabel('Server').fill('127.0.0.1')
-    await form.getByRole('switch').click()
+    await form.getByRole('switch', { name: 'SSL' }).click()
     await form.getByLabel('Port').fill(String(server.port))
     await form.getByLabel('Connections').fill('2')
     await form.getByRole('button', { name: 'Save' }).click()
@@ -559,8 +876,678 @@ test.describe('Usenet settings', () => {
     await plexo.start(await nzbOnDisk(server), server.expectedSha())
     await plexo.waitForNzbStatus('completed', 30_000)
   })
+
+  test('a saved password goes only to the server and username it was saved for', async ({
+    plexo
+  }) => {
+    const server = await newsServer({ username: 'reader', password: 'right' })
+    const elsewhere = { host: 'old.example.com', username: 'reader', password: 'old-secret' }
+    await useServer(plexo, server, elsewhere)
+    await useBackup(plexo, server, elsewhere)
+    // Moved to this server without the password typed again: neither role sends the old one here.
+    const moved = { host: '127.0.0.1', port: server.port, tls: false, username: 'reader' }
+    for (const backup of [false, true]) {
+      await expect(
+        plexo.api.testUsenetServer({ ...moved, connections: 2 }, backup)
+      ).rejects.toThrow(/username or password/)
+    }
+
+    let dialog = await openUsenetPage(plexo)
+    await dialog.getByRole('button', { name: 'Change server' }).click()
+    const form = plexo.page.getByRole('dialog', { name: 'Usenet server' })
+    await expect(form.getByLabel('Password')).toHaveAttribute('placeholder', 'Saved')
+    await form.getByLabel('Server').fill('127.0.0.1')
+    await expect(form.getByLabel('Password')).toHaveAttribute('placeholder', '')
+    await expect(form.getByText(/^Enter the password/)).toBeVisible()
+    await form.getByRole('button', { name: 'Test' }).click()
+    await expect(form.getByText(/username or password/)).toBeVisible()
+    await form.getByRole('button', { name: 'Save' }).click()
+    await expect(form).toBeHidden()
+    expect(server.passwords).not.toContain('old-secret')
+    expect((await plexo.api.usenetServer())?.hasPassword).toBe(false)
+    await dialog.getByRole('button', { name: 'Cancel' }).click()
+
+    // The same server and username: the saved password is still used.
+    await useServer(plexo, server, { username: 'reader', password: 'right' })
+    await plexo.api.testUsenetServer({ ...moved, connections: 2 })
+    dialog = await openUsenetPage(plexo)
+    await dialog.getByRole('button', { name: 'Change server' }).click()
+    await expect(form.getByLabel('Password')).toHaveAttribute('placeholder', 'Saved')
+    await expect(form.getByText(/^Enter the password/)).toBeHidden()
+    await form.getByRole('button', { name: 'Test' }).click()
+    await expect(form.getByText('Connected and signed in.')).toBeVisible()
+  })
+})
+
+test.describe('Backup server settings', () => {
+  test('set up from the Usenet page, kept on restart, and an older file still loads', async ({
+    plexo
+  }) => {
+    const main = await newsServer()
+    const backup = await newsServer()
+    const file = join(plexo.dirs.userData, 'usenet-server.json')
+    // Saved before there was a backup server.
+    await writeFile(
+      file,
+      JSON.stringify({ host: '127.0.0.1', port: main.port, tls: false, connections: 3 })
+    )
+    await plexo.relaunch()
+    expect(await plexo.api.usenetServer()).toMatchObject({ host: '127.0.0.1', connections: 3 })
+    expect((await plexo.api.usenetServer())?.backup).toBeUndefined()
+
+    const dialog = await openUsenetPage(plexo)
+    await dialog.getByRole('button', { name: 'Set up backup server' }).click()
+    const form = plexo.page.getByRole('dialog', { name: 'Backup server' })
+    await form.getByLabel('Server').fill('127.0.0.1')
+    await form.getByRole('switch').click()
+    await form.getByLabel('Port').fill(String(backup.port))
+    await form.getByLabel('Connections').fill('2')
+    await form.getByRole('button', { name: 'Test' }).click()
+    await expect(form.getByText('Connected and signed in.')).toBeVisible()
+    await form.getByRole('button', { name: 'Save' }).click()
+    await expect(form).toBeHidden()
+    await expect(dialog.getByText(`127.0.0.1:${backup.port}`)).toBeVisible()
+
+    // Saving the news server from its own form keeps the backup.
+    await dialog.getByRole('button', { name: 'Change server' }).click()
+    const mainForm = plexo.page.getByRole('dialog', { name: 'Usenet server' })
+    await mainForm.getByLabel('Connections').fill('5')
+    await mainForm.getByRole('button', { name: 'Save' }).click()
+    await expect(mainForm).toBeHidden()
+    await dialog.getByRole('button', { name: 'Cancel' }).click()
+
+    await plexo.relaunch()
+    expect(await plexo.api.usenetServer()).toMatchObject({
+      enabled: true,
+      port: main.port,
+      connections: 5,
+      backup: { host: '127.0.0.1', port: backup.port, tls: false, connections: 2 }
+    })
+  })
+
+  test('the backup server is removed from the Usenet page', async ({ plexo }) => {
+    const main = await newsServer()
+    const backup = await newsServer()
+    await useServer(plexo, main)
+    await useBackup(plexo, backup)
+
+    const dialog = await openUsenetPage(plexo)
+    await expect(dialog.getByText(`127.0.0.1:${backup.port}`)).toBeVisible()
+    await dialog.getByRole('button', { name: 'Remove', exact: true }).click()
+    await plexo.page
+      .getByRole('alertdialog', { name: 'Remove the backup server?' })
+      .getByRole('button', { name: 'Remove' })
+      .click()
+    await expect(dialog.getByText(`127.0.0.1:${backup.port}`)).toBeHidden()
+    await expect(dialog.getByRole('button', { name: 'Set up backup server' })).toBeVisible()
+    expect((await plexo.api.usenetServer())?.backup).toBeUndefined()
+    expect(await plexo.api.usenetServer()).toMatchObject({ port: main.port })
+  })
+
+  test('passwords sealed by a keychain this session can’t open stay saved, for either server', async ({
+    plexo
+  }) => {
+    const main = await newsServer()
+    const backup = await newsServer()
+    const file = join(plexo.dirs.userData, 'usenet-server.json')
+    const mainPassword = Buffer.from('main, sealed elsewhere').toString('base64')
+    const backupPassword = Buffer.from('backup, sealed elsewhere').toString('base64')
+    const at = (port: number): object => ({ host: '127.0.0.1', port, tls: false, connections: 2 })
+    await writeFile(
+      file,
+      JSON.stringify({
+        ...at(main.port),
+        password: mainPassword,
+        backup: { ...at(backup.port), password: backupPassword }
+      })
+    )
+    await plexo.relaunch()
+    expect(await plexo.api.usenetServer()).toMatchObject({
+      hasPassword: true,
+      passwordUnread: true,
+      backup: { hasPassword: true, passwordUnread: true }
+    })
+
+    // Saving either server without a password typed keeps both as they were.
+    const dialog = await openUsenetPage(plexo)
+    for (const [button, name] of [
+      ['Change backup server', 'Backup server'],
+      ['Change server', 'Usenet server']
+    ]) {
+      await dialog.getByRole('button', { name: button }).click()
+      const form = plexo.page.getByRole('dialog', { name })
+      await expect(form.getByText(/keychain can’t open it/)).toBeVisible()
+      await form.getByLabel('Connections').fill('3')
+      await form.getByRole('button', { name: 'Save' }).click()
+      await expect(form).toBeHidden()
+      const saved = JSON.parse(await readFile(file, 'utf-8'))
+      expect([saved.password, saved.backup.password]).toEqual([mainPassword, backupPassword])
+    }
+  })
 })
 
 function countDone(state: NzbDownloadState): number {
   return state.blocks.filter((block) => block.status === 'completed').length
 }
+
+// Repairing and unpacking, with the tools installed where the tests run: each test skips itself
+// without the ones it needs (GitHub's Linux runners have 7-Zip, not par2).
+
+const installed = (tool: string): boolean =>
+  spawnSync(tool, ['--help'], { stdio: 'ignore' }).error === undefined
+const SEVEN_ZIP = ['7zz', '7z'].find(installed)
+const PAR2 = installed('par2')
+
+const CONTENT = [
+  { path: 'movie.mkv', data: seededBytes(150 * KB + 3, 51) },
+  { path: 'info.txt', data: seededBytes(2 * KB, 52) }
+]
+
+/** What a poster uploads: CONTENT, packed (and given .par2 files) by `make` in a folder of its
+ * own, every file there. */
+async function posted(
+  make: (run: (tool: string, args: string[]) => void) => void
+): Promise<NewsFile[]> {
+  const dir = join(folder, 'posted')
+  await mkdir(dir)
+  for (const file of CONTENT) await writeFile(join(dir, file.path), file.data)
+  make((tool, args) => execFileSync(tool, args, { cwd: dir, stdio: 'ignore' }))
+  for (const file of CONTENT) await rm(join(dir, file.path))
+  const names = await readdir(dir)
+  return Promise.all(names.map(async (name) => ({ name, data: await readFile(join(dir, name)) })))
+}
+
+/** A zip of `entries` as they are, stored: `link` makes one a symbolic link to `data`, which no
+ * zip tool on every runner can be asked to keep as it is. */
+function zipOf(entries: { name: string; data: string; link?: boolean }[]): Buffer {
+  const locals: Buffer[] = []
+  const centrals: Buffer[] = []
+  let offset = 0
+  for (const entry of entries) {
+    const name = Buffer.from(entry.name)
+    const data = Buffer.from(entry.data)
+    const local = Buffer.alloc(30)
+    local.writeUInt32LE(0x04034b50, 0)
+    local.writeUInt16LE(10, 4) // version needed
+    local.writeUInt16LE(0x21, 12) // 1980-01-01
+    local.writeUInt32LE(crc32(data), 14)
+    local.writeUInt32LE(data.length, 18)
+    local.writeUInt32LE(data.length, 22)
+    local.writeUInt16LE(name.length, 26)
+    const central = Buffer.alloc(46)
+    central.writeUInt32LE(0x02014b50, 0)
+    central.writeUInt16LE(0x0314, 4) // made on Unix: the mode below counts
+    local.copy(central, 6, 4, 30)
+    central.writeUInt32LE(((entry.link ? 0o120777 : 0o100644) << 16) >>> 0, 38)
+    central.writeUInt32LE(offset, 42)
+    locals.push(local, name, data)
+    centrals.push(central, name)
+    offset += local.length + name.length + data.length
+  }
+  const directory = Buffer.concat(centrals)
+  const end = Buffer.alloc(22)
+  end.writeUInt32LE(0x06054b50, 0)
+  end.writeUInt16LE(entries.length, 8)
+  end.writeUInt16LE(entries.length, 10)
+  end.writeUInt32LE(directory.length, 12)
+  end.writeUInt32LE(offset, 16)
+  return Buffer.concat([...locals, directory, end])
+}
+
+const twoGaps = (article: { file: number; number: number }): boolean =>
+  article.file === 0 && (article.number === 2 || article.number === 5)
+
+test.describe('NZB repair and unpacking', () => {
+  test('gaps are repaired with the .par2 files, then the archive is unpacked and tidied away', async ({
+    plexo
+  }) => {
+    test.skip(!PAR2 || !SEVEN_ZIP, 'needs par2 and 7-Zip')
+    const files = await posted((run) => {
+      run(SEVEN_ZIP!, ['a', '-mx0', 'Test.Release.7z', 'movie.mkv', 'info.txt'])
+      run('par2', ['c', '-s16384', '-r40', '-n2', 'Test.Release.par2', 'Test.Release.7z'])
+    })
+    // The archive first, so the gaps are in it.
+    files.sort((a, b) => Number(a.name.endsWith('.par2')) - Number(b.name.endsWith('.par2')))
+    const server = await newsServer({ files, missing: twoGaps })
+    await useServer(plexo, server)
+
+    await plexo.start(await nzbOnDisk(server), treeSha(CONTENT))
+    const done = await plexo.waitForNzbStatus('completed', 30_000)
+    expect(done.nzbFiles[0].missing).toBe(2)
+    expect(done.postProcess).toMatchObject({ repaired: true, unpacked: true })
+    expect(done.postProcess?.unpackedFiles?.sort()).toEqual(['info.txt', 'movie.mkv'])
+
+    await plexo.page.getByText('Test.Release', { exact: true }).first().click()
+    await expect(
+      plexo.page.getByText('2 missing articles repaired with the .par2 files, then unpacked.')
+    ).toBeVisible()
+  })
+
+  test('more gaps than the .par2 files can repair fail the download, saying so', async ({
+    plexo
+  }) => {
+    test.skip(!PAR2, 'needs par2')
+    const files = [
+      { name: 'Test.Release.mkv', data: CONTENT[0].data },
+      ...(await posted((run) =>
+        run('par2', ['c', '-s16384', '-c1', '-n1', 'Test.Release.par2', 'movie.mkv'])
+      ))
+    ]
+    const server = await newsServer({ files, missing: twoGaps })
+    await useServer(plexo, server)
+
+    await plexo.start(await nzbOnDisk(server), server.expectedSha())
+    const failed = await plexo.waitForNzbStatus('error', 30_000)
+    expect(failed.error).toBe(
+      '2 articles weren’t on the news server, more than the download’s .par2 files can repair.'
+    )
+  })
+
+  test('a 7-Zip archive in volumes is unpacked, its volumes tidied away', async ({ plexo }) => {
+    test.skip(!SEVEN_ZIP, 'needs 7-Zip')
+    const files = await posted((run) =>
+      run(SEVEN_ZIP!, ['a', '-mx0', '-v60k', 'Test.Release.7z', 'movie.mkv', 'info.txt'])
+    )
+    expect(files.map((file) => file.name).sort()).toEqual([
+      'Test.Release.7z.001',
+      'Test.Release.7z.002',
+      'Test.Release.7z.003'
+    ])
+    const server = await newsServer({ files })
+    await useServer(plexo, server)
+
+    await plexo.start(await nzbOnDisk(server), treeSha(CONTENT))
+    const done = await plexo.waitForNzbStatus('completed', 30_000)
+    expect(done.postProcess).toMatchObject({ unpacked: true })
+  })
+
+  test('what an archive holds goes in beside what was posted, overwriting none of it', async ({
+    plexo
+  }) => {
+    test.skip(!SEVEN_ZIP, 'needs 7-Zip')
+    const posts = [{ path: 'info.txt', data: seededBytes(KB, 53) }]
+    const files = [
+      ...(await posted((run) =>
+        run(SEVEN_ZIP!, ['a', '-mx0', 'Test.Release.7z', 'movie.mkv', 'info.txt'])
+      )),
+      { name: 'info.txt', data: posts[0].data }
+    ]
+    const server = await newsServer({ files })
+    await useServer(plexo, server)
+
+    const unpacked = [CONTENT[0], { path: 'info (2).txt', data: CONTENT[1].data }]
+    await plexo.start(await nzbOnDisk(server), treeSha([...posts, ...unpacked]))
+    const done = await plexo.waitForNzbStatus('completed', 30_000)
+    expect(done.postProcess?.unpackedFiles?.sort()).toEqual(['info (2).txt', 'movie.mkv'])
+  })
+
+  test('a password-protected archive is left as posted, saying so', async ({ plexo }) => {
+    test.skip(!SEVEN_ZIP, 'needs 7-Zip')
+    const files = await posted((run) =>
+      run(SEVEN_ZIP!, ['a', '-psecret', 'Test.Release.7z', 'movie.mkv', 'info.txt'])
+    )
+    const server = await newsServer({ files })
+    await useServer(plexo, server)
+
+    // 7-Zip writes what it can before it finds the password wrong: that goes again.
+    await plexo.start(await nzbOnDisk(server), server.expectedSha())
+    const done = await plexo.waitForNzbStatus('completed', 30_000)
+    expect(done.postProcess?.unpacked).toBeUndefined()
+    expect(done.postProcess?.note).toMatch(/Test\.Release\.7z is password-protected/)
+  })
+
+  test('an archive can’t write through a link another one left: neither is unpacked', async ({
+    plexo
+  }) => {
+    test.skip(!SEVEN_ZIP, 'needs 7-Zip')
+    test.skip(process.platform === 'win32', 'links need more rights on Windows')
+    // Outside the download, a folder of the user's.
+    const outside = join(folder, 'outside')
+    await mkdir(outside)
+    await writeFile(join(outside, 'notes.txt'), 'mine')
+    // The first archive leaves a link to it, the second writes through that link.
+    const files = [
+      { name: 'A.zip', data: zipOf([{ name: 'Sample', data: outside, link: true }]) },
+      {
+        name: 'B.zip',
+        data: zipOf([
+          { name: 'Sample/notes.txt', data: 'overwritten' },
+          { name: 'Sample/new.txt', data: 'added' }
+        ])
+      }
+    ]
+    const server = await newsServer({ files })
+    await useServer(plexo, server)
+
+    await plexo.start(await nzbOnDisk(server), server.expectedSha())
+    const done = await plexo.waitForNzbStatus('completed', 30_000)
+    expect(done.postProcess?.unpacked).toBeUndefined()
+    expect(done.postProcess?.note).toMatch(/Plexo couldn’t unpack A\.zip/)
+    expect(await readdir(outside)).toEqual(['notes.txt'])
+    expect(await readFile(join(outside, 'notes.txt'), 'utf8')).toBe('mine')
+  })
+})
+
+// RAR archives, made with RAR itself, which no runner has: see e2e/archives/README.md.
+const RAR_CONTENT = [
+  { path: 'movie.mkv', data: seededBytes(30 * KB + 5, 81) },
+  { path: 'info.txt', data: seededBytes(KB, 82) }
+]
+// 7-Zip opens RAR where its build has the codec (the official one and Debian's do).
+const OPENS_RAR = !!SEVEN_ZIP || installed('unrar')
+
+async function archives(...names: string[]): Promise<NewsFile[]> {
+  const dir = join(PROJECT_ROOT, 'e2e', 'archives')
+  return Promise.all(names.map(async (name) => ({ name, data: await readFile(join(dir, name)) })))
+}
+
+/** .par2 files for `files`, as a poster makes them: small blocks, 30% to repair with. */
+async function parityFor(files: NewsFile[]): Promise<NewsFile[]> {
+  const dir = join(folder, 'parity')
+  await mkdir(dir)
+  for (const file of files) await writeFile(join(dir, file.name), file.data)
+  const names = files.map((file) => file.name)
+  execFileSync('par2', ['c', '-s4096', '-r30', '-n1', 'Release.par2', ...names], {
+    cwd: dir,
+    stdio: 'ignore'
+  })
+  const made = (await readdir(dir)).filter((name) => name.endsWith('.par2'))
+  return Promise.all(made.map(async (name) => ({ name, data: await readFile(join(dir, name)) })))
+}
+
+test.describe('NZB repair and unpacking, RAR', () => {
+  test('a RAR archive in volumes is unpacked from its first, its volumes tidied away', async ({
+    plexo
+  }) => {
+    test.skip(!OPENS_RAR, 'needs 7-Zip or unrar')
+    const files = await archives(
+      'Multi.Release.part1.rar',
+      'Multi.Release.part2.rar',
+      'Multi.Release.part3.rar'
+    )
+    const server = await newsServer({ files })
+    await useServer(plexo, server)
+
+    await plexo.start(await nzbOnDisk(server), treeSha(RAR_CONTENT))
+    const done = await plexo.waitForNzbStatus('completed', 30_000)
+    expect(done.postProcess).toMatchObject({ unpacked: true })
+    expect(done.postProcess?.unpackedFiles?.sort()).toEqual(['info.txt', 'movie.mkv'])
+  })
+
+  test('old-style volumes (.rar, .r00, .r01) with a gap are repaired, then unpacked', async ({
+    plexo
+  }) => {
+    test.skip(!PAR2 || !OPENS_RAR, 'needs par2, and 7-Zip or unrar')
+    const volumes = await archives('Old.Release.rar', 'Old.Release.r00', 'Old.Release.r01')
+    const server = await newsServer({
+      files: [...volumes, ...(await parityFor(volumes))],
+      articleBytes: 4 * KB,
+      // In the middle volume.
+      missing: (article) => article.file === 1 && article.number === 2
+    })
+    await useServer(plexo, server)
+
+    await plexo.start(await nzbOnDisk(server), treeSha(RAR_CONTENT))
+    const done = await plexo.waitForNzbStatus('completed', 30_000)
+    expect(done.nzbFiles.find((file) => file.name === 'Old.Release.r00')?.missing).toBe(1)
+    expect(done.postProcess).toMatchObject({ repaired: true, unpacked: true })
+
+    await plexo.page.getByText('Test.Release', { exact: true }).first().click()
+    await expect(
+      plexo.page.getByText('1 missing article repaired with the .par2 files, then unpacked.')
+    ).toBeVisible()
+  })
+
+  for (const [name, what] of [
+    ['Locked.rar', 'its files'],
+    ['Hidden.rar', 'its file names too']
+  ]) {
+    test(`a RAR archive with a password on ${what} is left as posted, saying so`, async ({
+      plexo
+    }) => {
+      test.skip(!OPENS_RAR, 'needs 7-Zip or unrar')
+      const server = await newsServer({ files: await archives(name) })
+      await useServer(plexo, server)
+
+      await plexo.start(await nzbOnDisk(server), server.expectedSha())
+      const done = await plexo.waitForNzbStatus('completed', 30_000)
+      expect(done.postProcess?.unpacked).toBeUndefined()
+      expect(done.postProcess?.note).toBe(
+        `${name} is password-protected, which Plexo can’t unpack yet.`
+      )
+      expect((await readdir(done.destinationPath)).sort()).toEqual([name])
+
+      await plexo.page.getByText('Test.Release', { exact: true }).first().click()
+      await expect(plexo.page.getByText(/is password-protected, which Plexo can’t/)).toBeVisible()
+    })
+  }
+})
+
+test.describe('NZB repair and unpacking without the tools', () => {
+  // Nowhere to find them: they may be installed outside PATH elsewhere (see findTool).
+  test.use({ appEnv: { PATH: join(tmpdir(), 'plexo-no-tools') } })
+
+  test('completes, saying which tool to install', async ({ plexo }) => {
+    test.skip(process.platform !== 'linux', 'looks outside PATH on Windows and macOS')
+    const server = await newsServer({
+      files: [
+        { name: 'Test.Release.7z', data: seededBytes(40 * KB, 61) },
+        { name: 'Test.Release.par2', data: seededBytes(KB, 62) }
+      ],
+      missing: (article) => article.file === 0 && article.number === 1
+    })
+    await useServer(plexo, server)
+
+    await plexo.start(await nzbOnDisk(server), server.expectedSha())
+    const done = await plexo.waitForNzbStatus('completed', 30_000)
+    expect(done.postProcess?.note).toMatch(/Install par2/)
+    await plexo.page.getByText('Test.Release', { exact: true }).first().click()
+    await expect(
+      plexo.page.getByText(/Install par2 \(par2cmdline\) and Plexo repairs downloads like this/)
+    ).toBeVisible()
+  })
+})
+
+/** Whether process `pid` is still running. */
+function alive(pid: number): boolean {
+  try {
+    process.kill(pid, 0)
+    return true
+  } catch {
+    return false
+  }
+}
+
+test.describe('NZB unpacking, cancelled', () => {
+  // A 7-Zip that prints how far it got, then waits to be killed (e2e/tools/slow/7z).
+  const pidFile = join(tmpdir(), `plexo-slow-7z-${process.pid}.pid`)
+  test.use({
+    appEnv: { PATH: join(PROJECT_ROOT, 'e2e', 'tools', 'slow'), PLEXO_E2E_SLOW_TOOL_PID: pidFile }
+  })
+
+  test('shows the stage, and cancelling kills the tool', async ({ plexo }) => {
+    test.skip(process.platform === 'win32', 'the stand-in is a shell script')
+    const server = await newsServer({
+      files: [{ name: 'Test.Release.7z', data: seededBytes(40 * KB, 71) }]
+    })
+    await useServer(plexo, server)
+
+    const id = await plexo.start(await nzbOnDisk(server), server.expectedSha())
+    await plexo.waitUntil(
+      (state) => state.kind === 'nzb' && state.postProcess?.percent === 12,
+      30_000
+    )
+    await plexo.page.getByText('Test.Release', { exact: true }).first().click()
+    await expect(plexo.page.getByText('Unpacking… 12%')).toBeVisible()
+    const pid = Number(await readFile(pidFile, 'utf8'))
+    expect(alive(pid)).toBe(true)
+
+    await plexo.api.cancelDownload(id)
+    await plexo.waitForNzbStatus('cancelled', 10_000)
+    await expect.poll(() => alive(pid)).toBe(false)
+    await rm(pidFile, { force: true })
+  })
+})
+
+test.describe('NZB unpacking, stopped by a quit', () => {
+  const pidFile = join(tmpdir(), `plexo-slow-7z-quit-${process.pid}.pid`)
+  test.use({
+    appEnv: { PATH: join(PROJECT_ROOT, 'e2e', 'tools', 'slow'), PLEXO_E2E_SLOW_TOOL_PID: pidFile }
+  })
+
+  test('the tool goes with Plexo, and the download unpacks on Resume', async ({ plexo }) => {
+    test.skip(process.platform === 'win32' || !SEVEN_ZIP, 'needs 7-Zip and a shell')
+    const files = await posted((run) =>
+      run(SEVEN_ZIP!, ['a', '-mx0', 'Test.Release.7z', 'movie.mkv', 'info.txt'])
+    )
+    const server = await newsServer({ files })
+    await useServer(plexo, server)
+
+    const id = await plexo.start(await nzbOnDisk(server), treeSha(CONTENT))
+    await plexo.waitUntil(
+      (state) => state.kind === 'nzb' && state.postProcess?.percent === 12,
+      30_000
+    )
+    const pid = Number(await readFile(pidFile, 'utf8'))
+    await plexo.quit()
+    expect(alive(pid)).toBe(false)
+    await rm(pidFile, { force: true })
+
+    // Not done, so not completed: it waits for Resume, with the real 7-Zip this time.
+    await plexo.relaunch({ PATH: process.env.PATH ?? '' })
+    const paused = await plexo.waitForNzbStatus('paused')
+    expect(paused.postProcess?.stage).toBe('unpacking')
+    await plexo.api.resumeDownload(id)
+    const done = await plexo.waitForNzbStatus('completed', 30_000)
+    expect(done.postProcess).toMatchObject({ unpacked: true })
+  })
+
+  test('stopped once unpacked, it only deletes the archives on Resume', async ({ plexo }) => {
+    test.skip(process.platform === 'win32', 'the stand-in is a shell script')
+    const server = await newsServer({
+      files: [{ name: 'Test.Release.7z', data: seededBytes(40 * KB, 72) }]
+    })
+    await useServer(plexo, server)
+
+    const id = await plexo.start(await nzbOnDisk(server), treeSha([CONTENT[0]]))
+    const unpacking = await plexo.waitUntil(
+      (state) => state.kind === 'nzb' && state.postProcess?.percent === 12,
+      30_000
+    )
+    await plexo.quit()
+    await rm(pidFile, { force: true })
+    // As a quit right after the last move leaves it: unpacked and saved, the archive still there.
+    const folder = unpacking.destinationPath
+    for (const name of await readdir(folder)) {
+      if (name.startsWith('.plexo-unpack-')) await rm(join(folder, name), { recursive: true })
+    }
+    await writeFile(join(folder, 'movie.mkv'), CONTENT[0].data)
+    const manifestPath = join(plexo.dirs.userData, 'downloads', id, 'manifest.json')
+    const manifest = JSON.parse(await readFile(manifestPath, 'utf-8'))
+    Object.assign(manifest.state.postProcess, { unpacked: true, unpackedNames: ['movie.mkv'] })
+    await writeFile(manifestPath, JSON.stringify(manifest))
+
+    await plexo.relaunch()
+    await plexo.waitForNzbStatus('paused')
+    await plexo.api.resumeDownload(id)
+    const done = await plexo.waitForNzbStatus('completed', 30_000)
+    expect(done.postProcess?.unpacked).toBe(true)
+    expect(await readdir(folder)).toEqual(['movie.mkv'])
+  })
+
+  test('an unpack cut short by a quit isn’t resumed while Usenet is off', async ({ plexo }) => {
+    test.skip(process.platform === 'win32' || !SEVEN_ZIP, 'needs 7-Zip and a shell')
+    const files = await posted((run) =>
+      run(SEVEN_ZIP!, ['a', '-mx0', 'Test.Release.7z', 'movie.mkv', 'info.txt'])
+    )
+    const server = await newsServer({ files })
+    await useServer(plexo, server)
+
+    const id = await plexo.start(await nzbOnDisk(server), treeSha(CONTENT))
+    await plexo.waitUntil(
+      (state) => state.kind === 'nzb' && state.postProcess?.percent === 12,
+      30_000
+    )
+    await plexo.quit()
+    await rm(pidFile, { force: true })
+    await plexo.relaunch({ PATH: process.env.PATH ?? '' })
+    await plexo.waitForNzbStatus('paused')
+    await useServer(plexo, server, { enabled: false })
+
+    await plexo.api.resumeDownload(id)
+    const failed = await plexo.waitForNzbStatus('error', 10_000)
+    expect(failed.error).toMatch(/Usenet downloads are off/)
+    expect(failed.resumable).toBe(true)
+    expect(failed.postProcess).toMatchObject({ stage: 'unpacking' })
+    expect(failed.postProcess?.unpacked).toBeFalsy()
+
+    // Back on, it unpacks.
+    await useServer(plexo, server, { enabled: true })
+    await plexo.api.resumeDownload(id)
+    const done = await plexo.waitForNzbStatus('completed', 30_000)
+    expect(done.postProcess).toMatchObject({ unpacked: true })
+  })
+
+  /** Leaves `id` as a crash in the middle of unpacking would: its stage saved, a staging folder
+   * with half a file in it, and one file already moved into the download's folder. */
+  async function crashedWhileUnpacking(plexo: PlexoApp, id: string, folder: string): Promise<void> {
+    await mkdir(join(folder, '.plexo-unpack-crash'))
+    await writeFile(join(folder, '.plexo-unpack-crash', 'info.txt'), 'half')
+    await writeFile(join(folder, 'movie.mkv'), 'moved before the crash')
+    const manifestPath = join(plexo.dirs.userData, 'downloads', id, 'manifest.json')
+    const manifest = JSON.parse(await readFile(manifestPath, 'utf-8'))
+    expect(manifest.state.postProcess.stage).toBe('unpacking')
+    manifest.state.postProcess.unpackedNames = ['movie.mkv']
+    await writeFile(manifestPath, JSON.stringify(manifest))
+  }
+
+  test('after a crash mid-unpack, Resume clears what it left and unpacks again', async ({
+    plexo
+  }) => {
+    test.skip(process.platform === 'win32' || !SEVEN_ZIP, 'needs 7-Zip and a shell')
+    const files = await posted((run) =>
+      run(SEVEN_ZIP!, ['a', '-mx0', 'Test.Release.7z', 'movie.mkv', 'info.txt'])
+    )
+    const server = await newsServer({ files })
+    await useServer(plexo, server)
+
+    const id = await plexo.start(await nzbOnDisk(server), treeSha(CONTENT))
+    const unpacking = await plexo.waitUntil(
+      (state) => state.kind === 'nzb' && state.postProcess?.percent === 12,
+      30_000
+    )
+    await plexo.quit()
+    await rm(pidFile, { force: true })
+    await crashedWhileUnpacking(plexo, id, unpacking.destinationPath)
+
+    await plexo.relaunch({ PATH: process.env.PATH ?? '' })
+    await plexo.waitForNzbStatus('paused')
+    await plexo.api.resumeDownload(id)
+    const done = await plexo.waitForNzbStatus('completed', 30_000)
+    expect(done.postProcess?.unpackedFiles?.sort()).toEqual(['info.txt', 'movie.mkv'])
+    // The tree check: no staging folder, no "movie (2).mkv", the real movie.mkv.
+  })
+
+  test('cancelled after a crash mid-unpack, nothing of the download is left', async ({ plexo }) => {
+    test.skip(process.platform === 'win32', 'the stand-in is a shell script')
+    const server = await newsServer({
+      files: [{ name: 'Test.Release.7z', data: seededBytes(40 * KB, 73) }]
+    })
+    await useServer(plexo, server)
+
+    const id = await plexo.start(await nzbOnDisk(server), server.expectedSha())
+    const unpacking = await plexo.waitUntil(
+      (state) => state.kind === 'nzb' && state.postProcess?.percent === 12,
+      30_000
+    )
+    await plexo.quit()
+    await rm(pidFile, { force: true })
+    await crashedWhileUnpacking(plexo, id, unpacking.destinationPath)
+
+    await plexo.relaunch()
+    await plexo.waitForNzbStatus('paused')
+    await plexo.api.cancelDownload(id)
+    await plexo.waitForNzbStatus('cancelled', 10_000)
+    await expect(readdir(unpacking.destinationPath)).rejects.toThrow(/ENOENT/)
+  })
+})

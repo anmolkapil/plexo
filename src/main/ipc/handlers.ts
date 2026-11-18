@@ -26,6 +26,7 @@ import { TelegramService, type TelegramServiceApi } from '../telegram/service'
 import { testUsenetServer } from '../download/nzb/nntp'
 import {
   loadUsenetServer,
+  saveUsenetBackup,
   saveUsenetServer,
   serverFromInput,
   viewOf
@@ -35,7 +36,7 @@ import { testKnobs } from '../testKnobs'
 import { deviceBindingSupported } from '../network/deviceBinding'
 import { pendingLink, pendingLinks, releaseLink } from '../openLinks'
 import { NetworkMonitor } from '../network/interfaces'
-import { loadSettings, saveSettings } from '../settings'
+import { carryOverNetworkPreferences, loadSettings, saveSettings } from '../settings'
 import { showUpdateMenu, updateState } from '../updater'
 
 async function openNetworkSettings(): Promise<void> {
@@ -82,7 +83,13 @@ async function freeSpace(dir: string): Promise<number | null> {
 
 export function registerIpcHandlers(getWindow: () => BrowserWindow | null): DownloadManager {
   // The main process keeps the network list, for downloads and the window alike.
-  const networks = new NetworkMonitor((list) => {
+  const networks = new NetworkMonitor(async (list) => {
+    // First, so no connection opens without a proxy saved under the network's old id.
+    try {
+      if (await carryOverNetworkPreferences(list)) await manager.applySettings(await loadSettings())
+    } catch (error) {
+      console.error('[plexo] carrying network settings over failed', error)
+    }
     manager.networksChanged()
     const window = getWindow()
     if (window && !window.isDestroyed()) window.webContents.send(IpcChannels.networksChanged, list)
@@ -134,13 +141,14 @@ export function registerIpcHandlers(getWindow: () => BrowserWindow | null): Down
   ipcMain.on(IpcChannels.getInitialState, async (event) => {
     try {
       const settings = await loadSettings()
-      const { destinationDir } = settings
+      const { destinationDir, defaultDestinationDir } = settings
+      const effectiveDir = defaultDestinationDir ?? destinationDir
       // Capped: a folder on a dropped network share can take many seconds to answer, and launch
       // waits on this reply — past the cap it's treated as gone and Downloads is used instead.
       const destinationExists =
-        destinationDir !== undefined &&
+        effectiveDir !== undefined &&
         (await Promise.race([
-          stat(destinationDir).then(
+          stat(effectiveDir).then(
             (stats) => stats.isDirectory(),
             () => false
           ),
@@ -157,7 +165,8 @@ export function registerIpcHandlers(getWindow: () => BrowserWindow | null): Down
         slowMode: settings.slowMode ?? false,
         slowModeSpeed: settings.slowModeSpeed ?? DEFAULT_SLOW_MODE_SPEED,
         speedUnit: settings.speedUnit ?? 'bytes',
-        destinationDir: destinationExists ? destinationDir : undefined
+        destinationDir: destinationExists ? effectiveDir : undefined,
+        defaultDestinationDir: settings.defaultDestinationDir
       } satisfies InitialState
     } catch (error) {
       console.error('[plexo] failed to read initial state', error)
@@ -292,8 +301,9 @@ export function registerIpcHandlers(getWindow: () => BrowserWindow | null): Down
     manager.usenetSwitched(server.enabled)
     return server
   })
-  handle('testUsenetServer', async (_event, input) =>
-    testUsenetServer(await serverFromInput(input))
+  handle('saveUsenetBackup', async (_event, input) => saveUsenetBackup(input))
+  handle('testUsenetServer', async (_event, input, backup) =>
+    testUsenetServer(await serverFromInput(input, backup === true))
   )
 
   handle('updateState', () => updateState())

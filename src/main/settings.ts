@@ -12,6 +12,7 @@ import {
 } from '../shared/types'
 import { readJson, updateJson } from './jsonFile'
 import { DEFAULT_DOWNLOAD_SCHEDULE, validSchedule } from '../shared/downloadSchedule'
+import { carryOverDevicePreferences } from '../shared/networkPreferences'
 
 function settingsPath(): string {
   return join(app.getPath('userData'), 'app-settings.json')
@@ -110,6 +111,12 @@ function sanitizeSettings(parsed: unknown): AppSettings {
   if (typeof destinationDir === 'string' && isAbsolute(destinationDir)) {
     settings.destinationDir = destinationDir
   }
+  if (
+    typeof parsed.defaultDestinationDir === 'string' &&
+    isAbsolute(parsed.defaultDestinationDir)
+  ) {
+    settings.defaultDestinationDir = parsed.defaultDestinationDir
+  }
   // Clamped rather than dropped: a count saved under an older, higher limit keeps the most allowed.
   if (Number.isInteger(downloadsAtOnce) && (downloadsAtOnce as number) >= DOWNLOADS_AT_ONCE.min) {
     settings.downloadsAtOnce = Math.min(downloadsAtOnce as number, DOWNLOADS_AT_ONCE.max)
@@ -147,9 +154,29 @@ export function saveSettings(patch: unknown): Promise<void> {
   ) {
     return Promise.reject(new Error('Choose different start and stop times and at least one day.'))
   }
-  return updateJson(settingsPath(), (current) =>
-    sanitizeSettings({ ...sanitizeSettings(current), ...(isRecord(patch) ? patch : {}) })
-  )
+  return updateJson(settingsPath(), (current) => {
+    const merged = { ...sanitizeSettings(current), ...(isRecord(patch) ? patch : {}) }
+    if (isRecord(patch) && 'defaultDestinationDir' in patch && !patch.defaultDestinationDir) {
+      delete (merged as Record<string, unknown>).defaultDestinationDir
+    }
+    return sanitizeSettings(merged)
+  })
+}
+
+/** Saves carryOverDevicePreferences for these networks, and says whether anything moved. */
+export async function carryOverNetworkPreferences(
+  networks: { id: string; device: string }[]
+): Promise<boolean> {
+  const saved = (await loadSettings()).networkPreferences ?? {}
+  if (carryOverDevicePreferences(saved, networks) === saved) return false
+  await updateJson(settingsPath(), (current) => {
+    const settings = sanitizeSettings(current)
+    return {
+      ...settings,
+      networkPreferences: carryOverDevicePreferences(settings.networkPreferences ?? {}, networks)
+    }
+  })
+  return true
 }
 
 export async function loadThemeSource(): Promise<ThemeSource> {

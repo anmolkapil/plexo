@@ -273,7 +273,12 @@ export class PlexoApp {
           }
         : probe.kind === 'nzb'
           ? { ...common, kind: 'nzb', nzbHash: probe.nzb.hash }
-          : { ...common, kind: 'http', streamsPerNetwork: options.streamsPerNetwork }
+          : {
+              ...common,
+              kind: 'http',
+              requestedUrl: probe.requestedUrl,
+              streamsPerNetwork: options.streamsPerNetwork
+            }
     )
     this.tracked.set(id, { expectedSha, destBefore, destinationDir })
     return id

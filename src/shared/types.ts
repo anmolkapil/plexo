@@ -12,7 +12,8 @@ export interface NetworkAddress {
 export type ThemeSource = 'light' | 'dark'
 
 export interface NetworkInterfaceInfo {
-  /** Stable identifier for this interface (currently the OS device name, e.g. "en0"). */
+  /** Stable identifier for this interface: the OS device name (e.g. "en0"), or "usb:<serial>" for
+   * a phone tethered over USB on Linux, whose device name changes each time it is plugged in. */
   id: string
   device: string
   displayName: string
@@ -350,6 +351,8 @@ interface DownloadStateBase {
 
 export interface HttpDownloadState extends DownloadStateBase {
   kind: 'http'
+  /** The link it was given (see StartHttpDownloadRequest.requestedUrl). */
+  requestedUrl?: string
   networks: HttpDownloadNetwork[]
   streams: HttpStreamState[]
   peakStreams: number
@@ -417,8 +420,36 @@ export interface NzbDownloadState extends DownloadStateBase {
   nzbFiles: NzbFileState[]
   /** Of `totalBytes`, the bytes of articles that are missing. */
   missingBytes: number
+  /** Articles the news server didn't have that came from the backup server. */
+  fromBackup?: number
+  /** Why the backup server was left out (the articles it would have sent count as missing), or
+   * that it can't be reached for now. Cleared once it answers, and on each run. */
+  backupError?: string
   /** The news server it downloads from, by host name. */
   server: string
+  /** Once its articles are in: the repair and unpacking done with the user's own tools (see
+   * main/download/nzb/postProcess.ts). Unset until then. */
+  postProcess?: NzbPostProcess
+}
+
+/** Repairing an NZB download with its .par2 files, then unpacking its archives. */
+export interface NzbPostProcess {
+  /** While it runs: what it is at, and how far along, when the tool says. Saved set, it was
+   * stopped partway (a quit, a crash): it runs again when the download is resumed. */
+  stage?: 'verifying' | 'repairing' | 'unpacking'
+  percent?: number
+  /** Its missing articles were restored from its .par2 files. */
+  repaired?: boolean
+  /** Its archives were unpacked into its folder. */
+  unpacked?: boolean
+  /** What unpacking moved into its folder so far (names there): a relaunch removes what an
+   * unpack cut short added. */
+  unpackedNames?: string[]
+  /** The files unpacking added, relative to its folder: its own, as its NZB's files are. */
+  unpackedFiles?: string[]
+  /** Why it left something undone: a tool not installed, a password-protected archive, a
+   * damaged one. */
+  note?: string
 }
 
 export type DownloadState =
@@ -539,6 +570,9 @@ export interface AppSettings {
   autoUpdate?: boolean
   /** The last destination folder picked. */
   destinationDir?: string
+  /** Pinned default destination folder. When set, new downloads start here rather than
+   * remembering one-off folder changes. */
+  defaultDestinationDir?: string
   /** User customizations (name/color) per network interface id. */
   networkPreferences?: NetworkPreferences
   /** How many downloads run at once; the rest wait in the queue. */
@@ -577,6 +611,7 @@ export interface InitialState {
   speedUnit: SpeedUnit
   /** The last folder picked, if it still exists — otherwise the renderer uses downloadsDir. */
   destinationDir?: string
+  defaultDestinationDir?: string
 }
 
 interface StartDownloadRequestBase {
@@ -594,6 +629,10 @@ interface StartDownloadRequestBase {
 
 export interface StartHttpDownloadRequest extends StartDownloadRequestBase {
   kind: 'http'
+  /** The link as it was given, when `url` is where it redirected to. A signed link it redirects
+   * to (a CDN's, an S3 presigned one) can run out mid-download; this one is asked for a fresh
+   * one then. Unset in downloads saved before it was kept. */
+  requestedUrl?: string
   /** Streams per network the user picked; left out, the count is decided automatically. */
   streamsPerNetwork?: number
   browser?: BrowserContext
@@ -673,10 +712,15 @@ export interface UsenetServer {
   /** Its password is kept only until Plexo quits: this computer offers no keychain to seal it
    * with (see main/download/nzb/usenetServer.ts). */
   passwordInMemory?: boolean
+  /** Its password is saved, but sealed by a keychain this session can't open (a profile from
+   * another computer, say): kept, but it has to be entered again to sign in. */
+  passwordUnread?: boolean
+  /** A second server, for the articles this one doesn't have; unset when there's none. */
+  backup?: Omit<UsenetServer, 'enabled' | 'backup'>
 }
 
-/** What the window sends to set the news server, or to test one. `password` or `enabled` left out
- * keeps the one already saved. */
+/** What the window sends to set the news server or its backup, or to test one. `password` or
+ * `enabled` left out keeps the one already saved; the backup has no switch of its own. */
 export interface UsenetServerInput {
   enabled?: boolean
   host: string

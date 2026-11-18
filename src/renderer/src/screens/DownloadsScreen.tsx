@@ -8,7 +8,6 @@ import { ACTION_META, toolbarLabel } from '../components/downloadActionMeta'
 import { MoreActionsMenu } from '../components/MoreActionsMenu'
 import { DownloadFilterMenu } from '../components/DownloadFilterMenu'
 import { CombineDiagram } from '../components/CombineDiagram'
-import { LimitsDialog } from '../components/LimitsDialog'
 import { ScheduleIndicator } from '../components/ScheduleIndicator'
 import { networkStatusText } from '../components/NetworkRow'
 import { scheduleMessage, scheduleWindow } from '@shared/downloadSchedule'
@@ -101,12 +100,10 @@ export function DownloadsScreen(): React.JSX.Element {
   const openTelegram = useAppStore((store) => store.openTelegram)
   const filter = useAppStore((store) => store.downloadFilter)
   const setFilter = useAppStore((store) => store.setDownloadFilter)
+  const openSettings = useAppStore((store) => store.openSettings)
   const [selected, setSelected] = useState<Set<string>>(new Set())
   const { perform, askClearFinished } = useDownloadActions()
   const { busy } = useDownloadActionsState()
-  const [limitsOpen, setLimitsOpen] = useState(false)
-  const [showSchedule, setShowSchedule] = useState(false)
-  const [limitsPage, setLimitsPage] = useState<string | null>(null)
   const [searchQuery, setSearchQuery] = useState('')
   const searchInputRef = useRef<HTMLInputElement>(null)
   const isMac = window.plexo.platform === 'darwin'
@@ -161,6 +158,10 @@ export function DownloadsScreen(): React.JSX.Element {
   const openRow = useCallback((id: string) => setView({ name: 'download', id }), [setView])
   // Keys for the selection: Esc clears it, Select all, and Delete takes
   // the selected off the list (with Cmd/Ctrl, moves their files to the Trash), each asking first.
+  // An open dialog or menu keeps its keys to itself. One that is closing doesn't: Base UI keeps a
+  // closed popup in the page, marked data-closed, until its exit animation has run, and that
+  // waits on an animation frame. Counting it as open made Cmd/Ctrl+A do nothing right after
+  // picking a filter whenever frames were slow to come, as in a hidden window.
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent): void => {
       const command = isMac ? event.metaKey : event.ctrlKey
@@ -169,7 +170,9 @@ export function DownloadsScreen(): React.JSX.Element {
         event.defaultPrevented ||
         (target instanceof HTMLElement &&
           (target.isContentEditable || ['INPUT', 'TEXTAREA'].includes(target.tagName))) ||
-        document.querySelector('[role="dialog"], [role="alertdialog"], [role="menu"]')
+        document.querySelector(
+          ':is([role="dialog"], [role="alertdialog"], [role="menu"]):not([data-closed])'
+        )
       )
         return
 
@@ -209,9 +212,7 @@ export function DownloadsScreen(): React.JSX.Element {
   const { buttons: toolbarButtons, more: moreActions } = splitToolbar(availableActions(chosen))
 
   const openSchedule = (): void => {
-    setLimitsPage(null)
-    setShowSchedule(true)
-    setLimitsOpen(true)
+    openSettings(null, true)
   }
 
   return (
@@ -280,9 +281,7 @@ export function DownloadsScreen(): React.JSX.Element {
           <ScheduleIndicator onClick={openSchedule} />
           <NetworksMenu
             onOpenLimits={(page) => {
-              setShowSchedule(false)
-              setLimitsPage(page)
-              setLimitsOpen(true)
+              openSettings(page, false)
             }}
           />
           <Tooltip>
@@ -443,14 +442,6 @@ export function DownloadsScreen(): React.JSX.Element {
           )
         })}
       </div>
-
-      <LimitsDialog
-        open={limitsOpen}
-        showSchedule={showSchedule}
-        onOpenChange={setLimitsOpen}
-        page={limitsPage}
-        onPageChange={setLimitsPage}
-      />
     </div>
   )
 }
