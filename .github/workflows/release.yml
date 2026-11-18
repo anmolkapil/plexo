@@ -50,6 +50,16 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Set up .NET for Windows route helper
+        if: runner.os == 'Windows'
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Publish Windows route helper
+        if: runner.os == 'Windows'
+        run: npm run build:helper:win
+
       # Without the certificate secrets the Mac build is unsigned, and can't update itself; without
       # the API key ones it's signed but not notarized. electron-builder's own CSC_LINK import, as
       # documented; it needs 26.16.1+, before which it unlocked its keychain with the wrong password

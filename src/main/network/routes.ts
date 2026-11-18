@@ -11,7 +11,7 @@ import { isIP, type Socket } from 'node:net'
 import { connect as tlsConnect } from 'node:tls'
 import type { Duplex } from 'node:stream'
 import type { IpFamily, NetworkInterfaceInfo, ProxyConfig } from '../../shared/types'
-import { connectRoute } from './deviceBinding'
+import { connectRoute, connectRouteAsync } from './deviceBinding'
 import { createProxyConnection } from './proxyTunnel'
 
 export interface NetworkRoute {
@@ -19,6 +19,7 @@ export interface NetworkRoute {
   localAddress: string
   remoteAddress: string
   family: IpFamily
+  interfaceIndex?: number
 }
 
 export type RemoteAddress = { address: string; family: IpFamily }
@@ -53,7 +54,8 @@ export function routesFor(
         device: iface.device,
         localAddress: local.address,
         remoteAddress: remote.address,
-        family: remote.family
+        family: remote.family,
+        interfaceIndex: iface.interfaceIndex
       }))
   )
 }
@@ -278,6 +280,7 @@ async function connectOnInterface(
 
   return new Promise<Socket>((resolve, reject) => {
     const racing = new Set<{ tcp: Socket; socket: Socket }>()
+    const pending = new Set<AbortController>()
     let next = 0
     let done = false
     let lastError: Error = new Error('Connection failed')
@@ -289,6 +292,8 @@ async function connectOnInterface(
       clearTimeout(stagger)
       clearTimeout(timer)
       signal.removeEventListener('abort', onAbort)
+      for (const controller of pending) controller.abort()
+      pending.clear()
       for (const { tcp, socket } of racing) {
         socket.destroy()
         tcp.destroy()
@@ -303,12 +308,27 @@ async function connectOnInterface(
       Math.max(1, deadline - Date.now())
     )
 
-    const launch = (): void => {
-      clearTimeout(stagger)
-      if (done || next >= routes.length) return
-      const route = routes[next++]
-      const tcp = connectRoute(route, port)
-      const socket = secure ? secure(tcp) : tcp
+    const fail = (route: NetworkRoute, error: Error): void => {
+      if (done) return
+      lastError = error
+      if (lastGoodRoute.get(memory) === routeKey(route)) lastGoodRoute.delete(memory)
+      if (next < routes.length) launch()
+      else if (racing.size === 0 && pending.size === 0) finish(lastError)
+    }
+
+    const connectedTcp = (route: NetworkRoute, tcp: Socket, alreadyConnected: boolean): void => {
+      if (done) {
+        tcp.destroy()
+        return
+      }
+      let socket: Socket
+      try {
+        socket = secure ? secure(tcp) : tcp
+      } catch (error) {
+        tcp.destroy()
+        fail(route, error instanceof Error ? error : new Error(String(error)))
+        return
+      }
       const entry = { tcp, socket }
       racing.add(entry)
       const connected = secure ? 'secureConnect' : 'connect'
@@ -321,6 +341,11 @@ async function connectOnInterface(
       }
       const onConnected = (): void => {
         detach()
+        if (done) {
+          socket.destroy()
+          tcp.destroy()
+          return
+        }
         lastGoodRoute.set(memory, routeKey(route))
         finish(null, socket)
       }
@@ -328,16 +353,43 @@ async function connectOnInterface(
         detach()
         socket.destroy()
         tcp.destroy()
-        lastError = error
-        if (lastGoodRoute.get(memory) === routeKey(route)) lastGoodRoute.delete(memory)
-        // A route that fails hands over at once rather than after its delay.
-        if (next < routes.length) launch()
-        else if (racing.size === 0) finish(lastError)
+        fail(route, error)
       }
       socket.once(connected, onConnected)
-      // A refused TCP connection is reported on the raw socket, not always on its TLS wrapper.
+      // The helper's TCP handshake is already complete when its promise resolves.
+      if (!secure && alreadyConnected) queueMicrotask(onConnected)
       socket.once('error', onError)
-      tcp.once('error', onError)
+      if (tcp !== socket) tcp.once('error', onError)
+    }
+
+    const launch = (): void => {
+      clearTimeout(stagger)
+      if (done || next >= routes.length) return
+      const route = routes[next++]
+      // The native helper looks up the interface index from the source IPv4 address.
+      // Do not fall back just because PowerShell did not provide an InterfaceIndex.
+      const windowsHelper =
+        process.platform === 'win32' &&
+        route.family === 4 &&
+        !route.remoteAddress.startsWith('127.')
+
+      if (!windowsHelper) {
+        // Keep main's synchronous behavior off Windows and for loopback destinations.
+        connectedTcp(route, connectRoute(route, port), false)
+      } else {
+        const controller = new AbortController()
+        pending.add(controller)
+        void connectRouteAsync(route, port, controller.signal).then(
+          (tcp) => {
+            pending.delete(controller)
+            connectedTcp(route, tcp, true)
+          },
+          (error: Error) => {
+            pending.delete(controller)
+            fail(route, error)
+          }
+        )
+      }
       if (next < routes.length) stagger = setTimeout(launch, ATTEMPT_DELAY_MS)
     }
 

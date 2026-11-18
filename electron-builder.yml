@@ -8,6 +8,7 @@ directories:
 files:
   - '!**/.vscode/*'
   - '!src/*'
+  - '!PlexoWinRoute/**'
   - '!electron.vite.config.{js,ts,mjs,cjs}'
   - '!{.eslintcache,eslint.config.mjs,.prettierignore,.prettierrc.yaml,dev-app-update.yml,CHANGELOG.md,README.md}'
   - '!{.env,.env.*,.npmrc,pnpm-lock.yaml}'
@@ -23,6 +24,9 @@ files:
 asarUnpack:
   - resources/**
 win:
+  extraResources:
+    - from: PlexoWinRoute/publish/win-${arch}/PlexoWinRoute.exe
+      to: PlexoWinRoute/PlexoWinRoute.exe
   # No protocols or fileAssociations: the NSIS installer would register Plexo as *the* handler for
   # magnet links and .torrent files, taking them from a torrent client the user already has.
   # A .torrent can still be opened with Plexo through "Open with".

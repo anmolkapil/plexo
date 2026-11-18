@@ -21,6 +21,7 @@ import {
   sealProxyPasswords
 } from './settings'
 import { startUpdater } from './updater'
+import { stopWindowsRouteHelper } from './network/windowsRouteHelper'
 import { testKnobs } from './testKnobs'
 import type { DownloadManager } from './download/downloadManager'
 
@@ -261,6 +262,8 @@ app.whenReady().then(async () => {
     }
   })
 })
+
+app.on('will-quit', stopWindowsRouteHelper)
 
 app.on('before-quit', (event) => {
   isQuitting = true

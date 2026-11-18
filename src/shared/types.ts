@@ -20,6 +20,8 @@ export interface NetworkInterfaceInfo {
   addresses: NetworkAddress[]
   kind: NetworkInterfaceKind
   mac?: string
+  /** Windows adapter index used by IP_UNICAST_IF. */
+  interfaceIndex?: number
 }
 
 interface ProbeResultBase {

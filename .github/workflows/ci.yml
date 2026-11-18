@@ -4,7 +4,8 @@ on:
   pull_request:
     branches: [main]
   push:
-    branches: [main]
+    # Run CI on the PR author fork while upstream approval is pending.
+    branches: [main, fix/windows-ip-unicast-if]
 
 # A second push to a PR makes the first run's answer irrelevant, so don't
 # spend a runner finishing it.
@@ -101,3 +102,41 @@ jobs:
         run: npx playwright test e2e/sparseFile.spec.ts
         env:
           PLEXO_E2E_SKIP_BUILD: '1'
+
+      - name: Set up .NET for route helper integration tests
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Publish Windows route helper
+        run: npm run build:helper:win-x64
+
+      - name: Test helper protocol and missing-index fallback
+        run: npx playwright test e2e/windowsRoute.spec.ts
+        env:
+          PLEXO_E2E_SKIP_BUILD: '1'
+
+  windows-route-e2e:
+    name: Windows HTTP and NNTP routing
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Set up .NET for Windows route helper
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Publish Windows route helper
+        run: npm run build:helper:win-x64
+
+      - name: Test hedged downloads and NZB reconnects on Windows
+        run: npx playwright test e2e/hedge.spec.ts e2e/nzb.spec.ts

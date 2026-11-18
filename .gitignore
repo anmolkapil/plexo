@@ -7,3 +7,8 @@ out
 test-results
 playwright-report
 *.tsbuildinfo
+
+# Self-contained Windows Winsock helper builds
+PlexoWinRoute/bin/
+PlexoWinRoute/obj/
+PlexoWinRoute/publish/

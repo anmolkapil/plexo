@@ -6,7 +6,7 @@ import type { NetworkRoute } from './routes'
 // interface's IP (Node's `localAddress`) still sends the packets out the default route, where the
 // network that doesn't own that IP drops them. SO_BINDTODEVICE pins the socket to the interface
 // itself. Node has no setsockopt, so the socket is made through libc and handed to Node as an fd.
-// Unprivileged since Linux 5.7. macOS and Windows already route by source address.
+// Unprivileged since Linux 5.7. macOS routes by source address; Windows requires IP_UNICAST_IF.
 
 const AF_INET = 2
 const AF_INET6 = 10
@@ -89,6 +89,189 @@ export function connectRoute(route: NetworkRoute, port: number): Socket {
     localAddress,
     family
   })
+}
+
+/** Warn once per process; a missing helper must never block an otherwise ordinary download. */
+let warnedWindowsFallback = false
+export function warnWindowsRoutingFallback(reason: string): void {
+  if (warnedWindowsFallback) return
+  warnedWindowsFallback = true
+  console.warn(
+    `Windows per-interface routing unavailable (${reason}); falling back to localAddress`
+  )
+}
+
+const abortError = (): DOMException => new DOMException('Aborted', 'AbortError')
+
+/** Wait for the TCP handshake without leaving an untracked socket behind on abort. */
+async function waitForTcpConnect(socket: Socket, signal?: AbortSignal): Promise<Socket> {
+  try {
+    await new Promise<void>((resolve, reject) => {
+      let settled = false
+      const finish = (error?: Error): void => {
+        if (settled) return
+        settled = true
+        socket.off('connect', onConnect)
+        socket.off('error', onError)
+        socket.off('close', onClose)
+        signal?.removeEventListener('abort', onAbort)
+        if (error) reject(error)
+        else resolve()
+      }
+      const onConnect = (): void => finish()
+      const onError = (error: Error): void => finish(error)
+      const onClose = (): void => finish(new Error('TCP connection closed'))
+      const onAbort = (): void => {
+        socket.destroy()
+        finish(abortError())
+      }
+      if (signal?.aborted) return onAbort()
+      socket.once('connect', onConnect)
+      socket.once('error', onError)
+      socket.once('close', onClose)
+      signal?.addEventListener('abort', onAbort, { once: true })
+      if (!socket.connecting && socket.readyState === 'open') onConnect()
+    })
+    return socket
+  } catch (error) {
+    socket.destroy()
+    throw error
+  }
+}
+
+function helperSocketError(code: string): NodeJS.ErrnoException {
+  const messages: Record<string, string> = {
+    ECONNREFUSED: 'Connection refused',
+    ETIMEDOUT: 'Connection timed out',
+    EHOSTUNREACH: 'Host unreachable',
+    ENETUNREACH: 'Network unreachable',
+    EADDRNOTAVAIL: 'Address not available',
+    EACCES: 'Permission denied',
+    ECONNRESET: 'Connection reset',
+    ENODEV: 'Selected network adapter not found'
+  }
+  const error = new Error(
+    messages[code] ?? `Windows route helper: ${code}`
+  ) as NodeJS.ErrnoException
+  error.code = code
+  return error
+}
+
+/** Log the confirmed Windows adapter binding once per local address, not once per chunk. */
+const loggedWindowsBindings = new Set<string>()
+function logWindowsRouting(route: NetworkRoute, index: number): void {
+  const key = `${route.localAddress}/${index}`
+  if (loggedWindowsBindings.has(key)) return
+  loggedWindowsBindings.add(key)
+  console.info(
+    `Windows route: ${route.device} (${route.localAddress}) using IP_UNICAST_IF ${index}`
+  )
+}
+
+/** Open a Windows IPv4 socket through IP_UNICAST_IF, with safe fallback if unavailable. */
+export async function connectRouteAsync(
+  route: NetworkRoute,
+  port: number,
+  signal?: AbortSignal
+): Promise<Socket> {
+  const plain = (): Promise<Socket> => waitForTcpConnect(connectRoute(route, port), signal)
+  if (signal?.aborted) throw abortError()
+  if (
+    process.platform !== 'win32' ||
+    route.family !== 4 ||
+    route.remoteAddress.startsWith('127.') ||
+    route.remoteAddress === '::1'
+  ) {
+    return plain()
+  }
+  // No cached InterfaceIndex is needed: the helper derives it from localAddress.
+
+  let helper: { port: number; token: string }
+  try {
+    const { startWindowsRouteHelper } = await import('./windowsRouteHelper')
+    helper = await startWindowsRouteHelper()
+  } catch (error) {
+    if (signal?.aborted) throw abortError()
+    warnWindowsRoutingFallback(error instanceof Error ? error.message : String(error))
+    return plain()
+  }
+  if (signal?.aborted) throw abortError()
+
+  const socket = connect({ host: '127.0.0.1', port: helper.port })
+  try {
+    await waitForTcpConnect(socket, signal)
+    if (signal?.aborted) throw abortError()
+    const header = JSON.stringify({
+      token: helper.token,
+      remoteAddress: route.remoteAddress,
+      remotePort: port,
+      // The helper resolves the current interface index from this source IP.
+      localAddress: route.localAddress
+    })
+
+    await new Promise<void>((resolve, reject) => {
+      let settled = false
+      let response = Buffer.alloc(0)
+      const finish = (error?: Error): void => {
+        if (settled) return
+        settled = true
+        clearTimeout(timer)
+        socket.off('data', onData)
+        socket.off('error', onError)
+        socket.off('close', onClose)
+        signal?.removeEventListener('abort', onAbort)
+        if (error) reject(error)
+        else resolve()
+      }
+      const onError = (error: Error): void => finish(error)
+      const onClose = (): void => finish(new Error('Windows route helper disconnected'))
+      const onAbort = (): void => {
+        socket.destroy()
+        finish(abortError())
+      }
+      const onData = (chunk: Buffer): void => {
+        response = Buffer.concat([response, chunk])
+        if (response.length > 4096) return finish(new Error('Invalid helper response'))
+        const eol = response.indexOf(10)
+        if (eol < 0) return
+        const status = response.subarray(0, eol).toString('ascii').trim()
+        const success = /^OK (\d+)$/.exec(status)
+        if (!success) {
+          const match = /^ERR (E[A-Z0-9_]+)$/.exec(status)
+          return finish(
+            match
+              ? helperSocketError(match[1])
+              : new Error('Windows route helper refused connection')
+          )
+        }
+        const interfaceIndex = Number(success[1])
+        logWindowsRouting(route, interfaceIndex)
+        const leftover = response.subarray(eol + 1)
+        if (leftover.length) socket.unshift(leftover)
+        finish()
+      }
+      const timer = setTimeout(() => finish(helperSocketError('ETIMEDOUT')), 10000)
+      if (signal?.aborted) return onAbort()
+      socket.on('data', onData)
+      socket.once('error', onError)
+      socket.once('close', onClose)
+      signal?.addEventListener('abort', onAbort, { once: true })
+      socket.write(header + '\n')
+    })
+    return socket
+  } catch (error) {
+    socket.destroy()
+    // An adapter/IP that has disappeared is not a reason to break all Windows downloads.
+    if ((error as NodeJS.ErrnoException).code === 'ENODEV') {
+      if (signal?.aborted) throw abortError()
+      warnWindowsRoutingFallback('source IP is no longer assigned to an adapter')
+      return plain()
+    }
+    if (process.env.PLEXO_ROUTE_DEBUG === '1') {
+      console.warn('Windows route helper connection failed:', route.device, error)
+    }
+    throw error
+  }
 }
 
 function deviceFor(localAddress: string, host: string): string | undefined {
