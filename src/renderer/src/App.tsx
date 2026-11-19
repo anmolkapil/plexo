@@ -1,5 +1,6 @@
 import type { DownloadState, FinishedDownload } from '@shared/types'
 import { DownloadActionsProvider } from './components/DownloadActionsProvider'
+import { WelcomeDialog } from './components/ReportingPreference'
 import { LimitsDialog } from './components/LimitsDialog'
 import { NetworkBindingDialog } from './components/NetworkBindingDialog'
 import { NewDownloadDialog } from './components/NewDownloadDialog'
@@ -76,12 +77,24 @@ function SettingsModal(): React.JSX.Element {
   )
 }
 
-function App(): React.JSX.Element {
-  useDownloadEvents()
+function AppDialogs(): React.JSX.Element {
   useOpenedLinks()
   useNewDownloadShortcuts()
   useSettingsShortcuts()
+  return (
+    <>
+      <NewDownloadDialog />
+      <TelegramDialog />
+      <NetworkBindingDialog />
+      <SettingsModal />
+    </>
+  )
+}
+
+function App(): React.JSX.Element {
+  useDownloadEvents()
   useNetworkEvents()
+  const needsWelcome = useAppStore((store) => store.v1ErrorReporting === undefined)
 
   return (
     <TooltipProvider>
@@ -92,10 +105,7 @@ function App(): React.JSX.Element {
             <CurrentScreen />
           </div>
           <StatusBar />
-          <NewDownloadDialog />
-          <TelegramDialog />
-          <NetworkBindingDialog />
-          <SettingsModal />
+          {needsWelcome ? <WelcomeDialog /> : <AppDialogs />}
         </div>
       </DownloadActionsProvider>
     </TooltipProvider>

@@ -25,6 +25,7 @@ type LoadStatus = 'idle' | 'loading' | 'ready' | 'error'
 export type View = { name: 'list' } | { name: 'download'; id: string }
 
 interface AppStore {
+  v1ErrorReporting?: boolean
   interfaces: NetworkInterfaceInfo[]
   interfacesStatus: LoadStatus
   interfacesError: string | null
@@ -137,6 +138,7 @@ function withoutPassword({ password, ...proxy }: ProxyConfig, had: boolean): Pro
 const letGo = new Set<string>()
 
 export const useAppStore = create<AppStore>((set, get) => ({
+  v1ErrorReporting: initial.v1ErrorReporting,
   interfaces: [],
   interfacesStatus: 'idle',
   interfacesError: null,

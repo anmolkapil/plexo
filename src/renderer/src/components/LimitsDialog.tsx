@@ -1,4 +1,5 @@
 import { DEFAULT_DOWNLOAD_SCHEDULE, scheduleTime, validSchedule } from '@shared/downloadSchedule'
+import { PrivacyPage } from './ReportingPreference'
 import { ScheduleFields } from './ScheduleFields'
 import { DATA_LIMIT_PERIODS, dataUsageLabel, nextDataReset } from '@shared/dataLimits'
 import {
@@ -981,7 +982,7 @@ function LimitsEditor({
   return (
     <>
       <div className="flex items-center border-b-[0.5px] border-border px-4 py-3">
-        <DialogTitle className="text-[16px] font-semibold">Speed &amp; data limits</DialogTitle>
+        <DialogTitle className="text-[16px] font-semibold">Settings</DialogTitle>
       </div>
       <div className="flex min-h-0 flex-1">
         <nav className="flex w-[190px] shrink-0 flex-col gap-0.5 overflow-y-auto border-r-[0.5px] border-border p-2">
@@ -1007,6 +1008,7 @@ function LimitsEditor({
               ? []
               : [usenet === null ? 'No server' : shownUsenetEnabled ? 'On' : 'Off']
           )}
+          {navItem('privacy', 'var(--text-secondary)', 'Privacy', [])}
           <div className={navLabelClass}>Networks</div>
           {interfaces.map((iface) => {
             const visual = networkVisual(iface.id, iface.kind, iface.displayName)
@@ -1025,7 +1027,9 @@ function LimitsEditor({
           })}
         </nav>
         <fieldset disabled={saving} className="min-h-0 min-w-0 flex-1 overflow-y-auto px-4 py-3">
-          {page === USENET_PAGE ? (
+          {page === 'privacy' ? (
+            <PrivacyPage />
+          ) : page === USENET_PAGE ? (
             <UsenetPage
               server={usenet}
               enabled={shownUsenetEnabled}

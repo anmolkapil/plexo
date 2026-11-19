@@ -238,6 +238,8 @@ function sanitizeSettings(parsed: unknown): AppSettings {
   }
   // 'system' was once an option — dropping it falls back to the OS appearance (loadThemeSource).
   if (themeSource === 'light' || themeSource === 'dark') settings.themeSource = themeSource
+  if (typeof parsed.v1ErrorReporting === 'boolean')
+    settings.v1ErrorReporting = parsed.v1ErrorReporting
   if (parsed.autoUpdate === false) settings.autoUpdate = false
   if (typeof destinationDir === 'string' && isAbsolute(destinationDir)) {
     settings.destinationDir = destinationDir

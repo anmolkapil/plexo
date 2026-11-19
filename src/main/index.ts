@@ -24,6 +24,8 @@ import { startUpdater } from './updater'
 import { testKnobs } from './testKnobs'
 import type { DownloadManager } from './download/downloadManager'
 
+import { observeExit, reportFailure, setReporting } from './reporting'
+
 // In dev mode the app runs as the raw `electron` binary, which otherwise shows "Electron" in
 // the Dock tooltip/menu bar — must be set before the app is ready. Packaged builds already get
 // this from electron-builder's productName, but setting it here keeps dev and packaged in sync.
@@ -138,6 +140,10 @@ function createWindow(): void {
     }
   })
 
+  mainWindow.webContents.on('preload-error', (_event, _path, error) =>
+    reportFailure('preload', error)
+  )
+
   mainWindow.on('ready-to-show', () => {
     if (!testKnobs.hideWindow) mainWindow?.show()
   })
@@ -208,12 +214,15 @@ function createWindow(): void {
 }
 
 app.whenReady().then(async () => {
+  observeExit()
+  await setReporting((await loadSettings()).v1ErrorReporting === true)
   electronApp.setAppUserModelId('com.plexo.app')
 
   // A failed move keeps the old file, to retry next launch — it must never stop the window opening.
-  await migrateLegacyNetworkPreferences().catch((error) =>
+  await migrateLegacyNetworkPreferences().catch((error) => {
+    reportFailure('preferences', error)
     console.error('[plexo] failed to migrate network-preferences.json', error)
-  )
+  })
   // Proxy passwords an older version saved in the clear. Failing, they stay as they were, to be
   // sealed by the next save or launch.
   await sealProxyPasswords().catch((error) =>
@@ -237,7 +246,10 @@ app.whenReady().then(async () => {
   void startBridge({
     manager: downloadManager,
     offer: (link) => offerLink(link, ensureWindow())
-  }).catch((error) => console.error('[plexo] browser bridge failed to start', error))
+  }).catch((error) => {
+    reportFailure('bridge', error)
+    console.error('[plexo] browser bridge failed to start', error)
+  })
   // Unlike magnet:, plexo:// is Plexo's own, so registering it takes nothing from another app. A
   // development build has no fixed path to register.
   if (app.isPackaged) app.setAsDefaultProtocolClient('plexo')

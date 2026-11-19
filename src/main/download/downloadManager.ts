@@ -1,3 +1,4 @@
+import { reportFailure } from '../reporting'
 import { trashDownload } from './trashDownload'
 import { describeError } from '../../shared/errors'
 import { randomUUID } from 'node:crypto'
@@ -106,6 +107,7 @@ import {
 interface RuntimeFields {
   publicationPath?: string
   publicationIdentity?: { dev: number; ino: number }
+  checkpointFailed?: boolean
   runPromise?: Promise<void>
   cancelPromise?: Promise<void>
   scheduleStopping?: boolean
@@ -706,8 +708,9 @@ export class DownloadManager {
       limits: this.limits,
       downloadsOn: (networkId) => this.httpDownloadsOn(networkId),
       reconcile: () => this.reconcile(runtime),
-      failDownload: (message, discard) => this.failDownload(runtime, message, discard),
-      failNetwork: (network, message) => this.failNetwork(runtime, network, message),
+      failDownload: (message, discard, cause) =>
+        this.failDownload(runtime, message, discard, cause),
+      failNetwork: (network, cause) => this.failNetwork(runtime, network, cause),
       scheduleUpdate: () => this.scheduleUpdate(runtime),
       getProxyForInterface: (networkId) => this.networkPreferences[networkId]?.proxy,
       refreshLink: () => this.refreshLink(runtime)
@@ -743,8 +746,9 @@ export class DownloadManager {
       limits: this.limits,
       downloadsOn: (networkId) => this.httpDownloadsOn(networkId),
       reconcile: () => this.reconcile(runtime),
-      failDownload: (message, discard) => this.failDownload(runtime, message, discard),
-      failNetwork: (network, message) => this.failNetwork(runtime, network, message),
+      failDownload: (message, discard, cause) =>
+        this.failDownload(runtime, message, discard, cause),
+      failNetwork: (network, cause) => this.failNetwork(runtime, network, cause),
       scheduleUpdate: () => this.scheduleUpdate(runtime)
     }
     const runtime: TorrentDownloadRuntime = Object.assign(target, this.runtimeFields(), {
@@ -773,8 +777,9 @@ export class DownloadManager {
       limits: this.limits,
       downloadsOn: (networkId) => this.httpDownloadsOn(networkId),
       reconcile: () => this.reconcile(runtime),
-      failDownload: (message, discard) => this.failDownload(runtime, message, discard),
-      failNetwork: (network, message) => this.failNetwork(runtime, network, message),
+      failDownload: (message, discard, cause) =>
+        this.failDownload(runtime, message, discard, cause),
+      failNetwork: (network, cause) => this.failNetwork(runtime, network, cause),
       scheduleUpdate: () => this.scheduleUpdate(runtime),
       getProxyForInterface: (networkId) => this.networkPreferences[networkId]?.proxy
     }
@@ -808,8 +813,9 @@ export class DownloadManager {
       limits: this.limits,
       downloadsOn: (networkId) => this.httpDownloadsOn(networkId),
       reconcile: () => this.reconcile(runtime),
-      failDownload: (message, discard) => this.failDownload(runtime, message, discard),
-      failNetwork: (network, message) => this.failNetwork(runtime, network, message),
+      failDownload: (message, discard, cause) =>
+        this.failDownload(runtime, message, discard, cause),
+      failNetwork: (network, cause) => this.failNetwork(runtime, network, cause),
       scheduleUpdate: () => this.scheduleUpdate(runtime),
       getProxyForInterface: (networkId) => this.networkPreferences[networkId]?.proxy
     }
@@ -836,6 +842,7 @@ export class DownloadManager {
         try {
           persisted = JSON.parse(await readFile(this.manifestPath(id), 'utf-8'))
         } catch (error) {
+          if (!isNotFound(error)) reportFailure('restore', error)
           // No manifest, or a garbled one: nothing can bring it back. Any other read error (a
           // drive not mounted, a permission) may pass, and is left for the next launch.
           if (error instanceof SyntaxError || isNotFound(error)) {
@@ -850,7 +857,8 @@ export class DownloadManager {
           const runtime = await this.restoreOne(id, persisted)
           if (runtime) restored.push(runtime)
           else await this.discardUnrestorable(id, persisted)
-        } catch {
+        } catch (error) {
+          reportFailure('restore', error)
           // As above: left for a launch where it can be read.
         }
       })
@@ -929,7 +937,8 @@ export class DownloadManager {
     }
     try {
       await addToHistory(structuredClone(entry))
-    } catch {
+    } catch (error) {
+      reportFailure('publish', error)
       // Kept as it is, to be moved on the next launch.
       return
     }
@@ -1077,7 +1086,11 @@ export class DownloadManager {
 
     const file = runtime.file
     if (state.status === 'paused') {
-      const size = await file.size().catch(() => -1)
+      let sizeError: unknown
+      const size = await file.size().catch((error) => {
+        sizeError = error
+        return -1
+      })
       const publishedPath = persisted.publicationPath ?? state.destinationPath
       const published = await stat(publishedPath).catch(() => null)
       // A torrent's folder of files: its identity below is what tells it's this download's.
@@ -1104,6 +1117,7 @@ export class DownloadManager {
         state.status = 'error'
         state.error = 'The partial download file is missing. Remove this download and start again.'
         state.resumable = false
+        reportFailure('restore', sizeError ?? state.error)
       } else {
         for (const unit of units) {
           const length = unit.rangeEnd === null ? 0 : unit.rangeEnd - unit.rangeStart + 1
@@ -1674,7 +1688,12 @@ export class DownloadManager {
     // Just after launch the networks may not have been looked at yet.
     await this.networks.refresh()
 
-    if ((await runtime.file.size().catch(() => -1)) < 0) {
+    if (
+      (await runtime.file.size().catch((error) => {
+        reportFailure('transfer', error)
+        return -1
+      })) < 0
+    ) {
       runtime.state.error =
         'The partial download file is unavailable. Reconnect the destination drive and try again.'
       this.pushUpdate(runtime)
@@ -2277,6 +2296,7 @@ export class DownloadManager {
     }
 
     runtime.publishing = true
+    let postProcessing = false
     try {
       if (unitsOf(runtime).some((unit) => !isDone(unit))) {
         throw new Error('Download is incomplete — refusing to publish the file')
@@ -2294,7 +2314,11 @@ export class DownloadManager {
       )
       runtime.state.destinationPath = publishedPath
       runtime.state.fileName = basename(publishedPath)
-      if (runtime.kind === 'nzb') await this.postProcess(runtime)
+      if (runtime.kind === 'nzb') {
+        postProcessing = true
+        await this.postProcess(runtime)
+        postProcessing = false
+      }
       runtime.state.status = 'completed'
       runtime.state.completedAt = Date.now()
       // Done before it downloaded for PEAK_SECONDS: its speed start to finish, pauses left out (the
@@ -2319,6 +2343,7 @@ export class DownloadManager {
       // Stopped by a quit: it runs again after the relaunch (see suspendAll). Failed while it
       // did: failDownload has said why.
       if ((runtime.state.status as DownloadStatus) === 'downloading' && !this.suspending) {
+        if (!postProcessing) reportFailure('publish', error)
         runtime.state.status = 'error'
         runtime.state.error = error instanceof Error ? error.message : String(error)
         this.notify(
@@ -2372,7 +2397,12 @@ export class DownloadManager {
 
   /** Ends the download in an error. What it has downloaded stays for a resume, unless
    * `discard`: bytes that are no use any more. */
-  private failDownload(runtime: DownloadRuntime, message: string, discard = false): void {
+  private failDownload(
+    runtime: DownloadRuntime,
+    message: string,
+    discard = false,
+    cause: unknown = message
+  ): void {
     if (runtime.state.status !== 'downloading') return
     this.pausedInSession.delete(runtime.state.id)
     runtime.state.status = 'error'
@@ -2380,6 +2410,7 @@ export class DownloadManager {
     runtime.state.resumable = !discard
     // Switched off by the user, who needs no telling; the download's error still says so.
     if (message !== USENET_OFF) {
+      reportFailure('transfer', cause)
       this.notify('Download failed', `${runtime.state.fileName}: ${describeError(message)}`)
     }
     this.stopRun(runtime)
@@ -2387,10 +2418,14 @@ export class DownloadManager {
 
   /** The server keeps refusing requests over this network: it stops being used until the user
    * switches it off and on, it reconnects, or the download is resumed. */
-  private failNetwork(runtime: DownloadRuntime, network: DownloadNetwork, message: string): void {
+  private failNetwork(runtime: DownloadRuntime, network: DownloadNetwork, cause: unknown): void {
+    const newlyFailed = network.status !== 'failed'
     network.status = 'failed'
-    network.error = message
-    this.reconcile(runtime)
+    network.error = cause instanceof Error ? cause.message : String(cause)
+    // If this was the last usable network, reconcile reports the download's terminal outcome.
+    if (newlyFailed && runtime.state.networks.some((n) => n.enabled && n.status !== 'failed'))
+      reportFailure('network', cause)
+    this.reconcile(runtime, cause)
   }
 
   /**
@@ -2404,7 +2439,7 @@ export class DownloadManager {
    *
    * Streams, while the download runs, are the transfer's (see HttpTransfer.reconcile).
    */
-  private reconcile(runtime: DownloadRuntime): void {
+  private reconcile(runtime: DownloadRuntime, lastNetworkFailure?: unknown): void {
     const { state } = runtime
     const present = this.networks.current
     // Until the monitor has looked, nothing is known to be gone.
@@ -2463,6 +2498,9 @@ export class DownloadManager {
               ? 'on'
               : network.status
       if (status !== network.status) {
+        if (status === 'offline' && network.status === 'on' && state.status === 'downloading') {
+          reportFailure('network', 'Network unreachable')
+        }
         network.status = status
         network.error = undefined
       }
@@ -2477,7 +2515,12 @@ export class DownloadManager {
 
     const enabled = state.networks.filter((network) => network.enabled)
     if (enabled.length > 0 && enabled.every((network) => network.status === 'failed')) {
-      this.failDownload(runtime, enabled[0].error ?? 'No network could reach the server')
+      this.failDownload(
+        runtime,
+        enabled[0].error ?? 'No network could reach the server',
+        false,
+        lastNetworkFailure
+      )
       return
     }
 
@@ -2684,9 +2727,17 @@ export class DownloadManager {
         await writeFile(temporaryPath, JSON.stringify(persisted), 'utf-8')
         await rename(temporaryPath, path)
       })
-    runtime.persistenceChain = operation.catch(() => {
-      // Routine progress checkpoints are best-effort. Publication intent is required.
-    })
+    runtime.persistenceChain = operation.then(
+      () => {
+        runtime.checkpointFailed = false
+      },
+      (error) => {
+        // Best-effort checkpoints can keep failing every tick. Report the first until a write
+        // succeeds. A required write rejects to the publication owner, which reports it there.
+        if (!required && !runtime.checkpointFailed) reportFailure('checkpoint', error)
+        runtime.checkpointFailed = true
+      }
+    )
     return required ? operation : runtime.persistenceChain
   }
 

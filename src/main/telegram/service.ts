@@ -1,3 +1,4 @@
+import { reportFailure } from '../reporting'
 import { Api, TelegramClient } from 'telegram'
 import { LAYER } from 'telegram/tl/AllTLObjects'
 import { StringSession } from 'telegram/sessions'
@@ -251,7 +252,8 @@ function asFileError(error: unknown): TelegramFileError {
     return new TelegramFileError(
       'rate',
       `Telegram rate limit: wait ${error.seconds}s`,
-      error.seconds
+      error.seconds,
+      error
     )
   }
   const message = describeError(error)
@@ -261,17 +263,27 @@ function asFileError(error: unknown): TelegramFileError {
       code
     )
   ) {
-    return new TelegramFileError('auth', 'This Telegram session signed out. Sign in again.')
+    return new TelegramFileError(
+      'auth',
+      'This Telegram session signed out. Sign in again.',
+      undefined,
+      error
+    )
   }
   if (/LOCATION_INVALID|FILE_ID_INVALID|FILE_INVALID|ENTITY_EMPTY|MESSAGE_ID_INVALID/.test(code)) {
-    return new TelegramFileError('missing', "That message's media is gone from Saved Messages.")
+    return new TelegramFileError(
+      'missing',
+      "That message's media is gone from Saved Messages.",
+      undefined,
+      error
+    )
   }
   if (
     /TIMEOUT|TIMEOUT_NOT_ENOUGHT| disconnect|ECONNRESET|ECONNREFUSED|ETIMEDOUT|EPIPE/.test(code)
   ) {
-    return new TelegramFileError('network', 'The connection to Telegram dropped.')
+    return new TelegramFileError('network', 'The connection to Telegram dropped.', undefined, error)
   }
-  return new TelegramFileError('other', message)
+  return new TelegramFileError('other', message, undefined, error)
 }
 
 /** Telegram rejected the login itself — a revoked, expired or killed session. Sign-in is
@@ -491,6 +503,7 @@ export class TelegramService implements TelegramServiceApi {
             await pushQr(token)
           },
           onError: (error) => {
+            reportFailure('telegram', error)
             this.auth = { ...this.auth, error: describeError(error) }
             this.onChange?.(this.authState())
           }
@@ -516,6 +529,7 @@ export class TelegramService implements TelegramServiceApi {
         this.onChange?.(this.authState())
         return
       }
+      reportFailure('telegram', error)
       this.auth = { ...this.auth, awaitingQr: false, error: describeError(error) }
       this.onChange?.(this.authState())
     }
@@ -544,6 +558,7 @@ export class TelegramService implements TelegramServiceApi {
         this.onChange?.(this.authState())
         return
       }
+      reportFailure('telegram', error)
       this.auth = { ...this.auth, error: describeError(error) }
       this.onChange?.(this.authState())
       return
@@ -560,6 +575,7 @@ export class TelegramService implements TelegramServiceApi {
       await client.invoke(new Api.auth.CheckPassword({ password: srp }))
       await this.completeSignIn(client)
     } catch (error) {
+      reportFailure('telegram', error)
       this.auth = { ...this.auth, error: describeError(error) }
       this.onChange?.(this.authState())
     }
@@ -658,7 +674,12 @@ export class TelegramService implements TelegramServiceApi {
     } catch (error) {
       if (isAuthLossError(error)) {
         await this.authLoss()
-        throw new TelegramFileError('auth', 'This Telegram session signed out. Sign in again.')
+        throw new TelegramFileError(
+          'auth',
+          'This Telegram session signed out. Sign in again.',
+          undefined,
+          error
+        )
       }
       throw error
     }
@@ -768,7 +789,7 @@ export class TelegramService implements TelegramServiceApi {
       try {
         return await this.locate(messageId)
       } catch (error) {
-        throw new TelegramFileError('missing', describeError(error))
+        throw new TelegramFileError('missing', describeError(error), undefined, error)
       }
     }
 
@@ -874,7 +895,12 @@ export class TelegramService implements TelegramServiceApi {
             // session is dead server-side either way, so it's cleared rather than reconnected
             // (and failing) at every launch.
             await authLoss()
-            throw new TelegramFileError('auth', 'This Telegram session signed out. Sign in again.')
+            throw new TelegramFileError(
+              'auth',
+              'This Telegram session signed out. Sign in again.',
+              undefined,
+              error
+            )
           }
           if (error instanceof FileMigrateError) {
             // The connections target the wrong DC now: drop them and follow the file.
@@ -1018,7 +1044,7 @@ export class TelegramService implements TelegramServiceApi {
       try {
         return { sender: await internals.getSender(dcId), owned: false }
       } catch (cause) {
-        throw new TelegramFileError('network', describeError(cause))
+        throw new TelegramFileError('network', describeError(cause), undefined, cause)
       }
     }
   }

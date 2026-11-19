@@ -1,3 +1,4 @@
+import { reportFailure } from '../reporting'
 import type {
   BrowserContext,
   HttpBlockState,
@@ -599,9 +600,14 @@ export class HttpTransfer implements Transfer {
 
   /** Marks a network in use that has received nothing for SILENT_AFTER_MS as unable to reach the
    * server. Whether it did. */
-  private markUnreachable(network: DownloadNetwork, now: number): boolean {
+  private markUnreachable(
+    network: DownloadNetwork,
+    now: number,
+    cause: unknown = 'Network unreachable'
+  ): boolean {
     if (network.status !== 'on') return false
     if (now - this.trafficOf(network.id).aliveAt < SILENT_AFTER_MS) return false
+    reportFailure('network', cause)
     network.status = 'unreachable'
     return true
   }
@@ -1099,7 +1105,7 @@ export class HttpTransfer implements Transfer {
       if (verdict === 'different') {
         // Every other worker would hit the same new version, so stop them all now rather than
         // let each burn through its retries first. What's on disk is of the old version: no use.
-        this.host.failDownload(message, true)
+        this.host.failDownload(message, true, error)
         return this.finishStopped(chunk, self, attempt)
       }
       // 'unknown' — nothing to compare yet, or the check itself failed: retry like any other
@@ -1110,7 +1116,7 @@ export class HttpTransfer implements Transfer {
       // A redirect can move this worker to a host its network cannot reach, and no retry over
       // it will change that. Its block goes back to the queue for another network.
       this.letGo(chunk, self, attempt, deliveredNothing)
-      this.host.failNetwork(network, message)
+      this.host.failNetwork(network, error)
       return 'stop'
     }
 
@@ -1133,7 +1139,7 @@ export class HttpTransfer implements Transfer {
     // What the server's answer says about the network: a connection failing while the whole
     // network has gone quiet means the network can't reach the server — dropped, or connected
     // with no way through. It stops being used, bar one stream that keeps trying (see reconcile).
-    if (error instanceof ConnectionError && this.markUnreachable(network, Date.now())) {
+    if (error instanceof ConnectionError && this.markUnreachable(network, Date.now(), error)) {
       this.host.reconcile()
     }
 
@@ -1172,7 +1178,7 @@ export class HttpTransfer implements Transfer {
     if (!(error instanceof ConnectionError) && ++self.strikes > MAX_CHUNK_RETRIES && !waitingOut) {
       self.retiring = true
       if (this.liveStreams(network.id).length === 0) {
-        this.host.failNetwork(network, message)
+        this.host.failNetwork(network, error)
       }
       return 'stop'
     }

@@ -105,8 +105,8 @@ export interface TransferHost {
   downloadsOn(networkId: string): number
   /** The manager's reconcile: networks first, then the transfer's own. */
   reconcile(): void
-  failDownload(message: string, discard?: boolean): void
-  failNetwork(network: DownloadNetwork, message: string): void
+  failDownload(message: string, discard?: boolean, cause?: unknown): void
+  failNetwork(network: DownloadNetwork, cause: unknown): void
   scheduleUpdate(): void
   getProxyForInterface?(networkId: string): ProxyConfig | undefined
   /** The server turned the download's link away (401, 403, 410): asks the link it was given for

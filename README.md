@@ -197,6 +197,12 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for setup, required checks and pull reque
 
 Special thanks to [Dhananjay Bhosale](https://github.com/DhananjayBhosale) for code signing and notarizing the macOS app.
 
+## Desktop app privacy
+
+Plexo 1.0 asks about error reporting the first time you open it, including after an upgrade. The switch starts on. Continue saves your choice. You can turn reporting off immediately in **Settings → Privacy**, or start Plexo with `DO_NOT_TRACK=1`.
+
+Configured releases send error reports to Sentry. A report includes the app version, OS and architecture, the affected operation and process, a failure category, and the event time. For unexpected bugs it can include positions in Plexo’s own code. Sentry receives the network connection and Plexo disables IP address inference. Download links, filenames, local paths, cookies, sign-in details and download contents stay out of reports. Plexo also excludes usage statistics, sessions, screenshots and native crash dumps. Failed sends are discarded. An empty local file lets Plexo recognize an interrupted run on the next launch when reporting is still enabled.
+
 ## License
 
 [MIT](LICENSE), copyright 2026 Anmol Kapil.
