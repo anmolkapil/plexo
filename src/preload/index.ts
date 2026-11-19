@@ -57,6 +57,7 @@ const plexoApi = {
   pauseDownload: (downloadId: string) => invoke('pauseDownload', downloadId),
   resumeDownload: (downloadId: string) => invoke('resumeDownload', downloadId),
   startNext: (downloadId: string) => invoke('startNext', downloadId),
+  moveInQueue: (downloadId: string, by: -1 | 1) => invoke('moveInQueue', downloadId, by),
   relinkDownload: (downloadId: string, url: string) => invoke('relinkDownload', downloadId, url),
   setDownloadNetwork: (downloadId: string, networkId: string, enabled: boolean) =>
     invoke('setDownloadNetwork', downloadId, networkId, enabled),

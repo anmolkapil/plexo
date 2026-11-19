@@ -25,6 +25,7 @@ export const IpcChannels = {
   pauseDownload: 'download:pause',
   resumeDownload: 'download:resume',
   startNext: 'download:start-next',
+  moveInQueue: 'download:move-in-queue',
   relinkDownload: 'download:relink',
   setDownloadNetwork: 'download:set-network',
   cancelDownload: 'download:cancel',

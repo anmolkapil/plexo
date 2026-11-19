@@ -60,6 +60,14 @@ export function DownloadActionsProvider({
           } catch (cause) {
             return fail(cause)
           }
+        case 'earlier':
+        case 'later':
+          try {
+            await window.plexo.moveInQueue(targets[0].id, id === 'earlier' ? -1 : 1)
+            return true
+          } catch (cause) {
+            return fail(cause)
+          }
         case 'fix':
           setFixing(targets[0] as DownloadState)
           return true

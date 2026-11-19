@@ -121,18 +121,19 @@ test('the cutoff stops torrent peers and uploads; reopening finishes the same fi
   }
 })
 
-/** Three downloads waiting for the schedule, one at a time, with the last moved up by Start next;
- * each origin stops just past its start, so the one started first is the one that gets there. */
-async function startNextWhileClosed(
+/** Three downloads waiting for the schedule, one at a time, reordered by `reorder`; each origin
+ * stops just past its start, so the one started first is the one that gets there. */
+async function queueWhileClosed(
   plexo: PlexoApp,
-  serve: (options: { size: number }) => Promise<Origin>
+  serve: (options: { size: number }) => Promise<Origin>,
+  reorder: (ids: string[]) => Promise<void>
 ): Promise<{ origins: Origin[]; ids: string[]; firstToStart: () => Promise<number> }> {
   await plexo.api.updateSettings({ downloadsAtOnce: 1 })
   const origins = await Promise.all([0, 1, 2].map(() => serve({ size: 16 * BLOCK })))
   const ids: string[] = []
   for (const origin of origins) ids.push(await plexo.start(origin.url(), origin.sha256))
   for (const id of ids) expect((await plexo.byId(id))?.status).toBe('queued')
-  await plexo.api.startNext(ids[2])
+  await reorder(ids)
   const firstToStart = (): Promise<number> =>
     Promise.race(origins.map((origin, index) => origin.hold(4 * BLOCK).then(() => index)))
   return { origins, ids, firstToStart }
@@ -144,7 +145,9 @@ test('Start next while the schedule is closed starts that download first when it
 }) => {
   await clock(plexo, at(1, 8))
   await plexo.api.updateSettings({ downloadSchedule: schedule })
-  const { origins, ids, firstToStart } = await startNextWhileClosed(plexo, serve)
+  const { origins, ids, firstToStart } = await queueWhileClosed(plexo, serve, (ids) =>
+    plexo.api.startNext(ids[2])
+  )
   const started = firstToStart()
   await clock(plexo, at(2, 0))
   expect(await started).toBe(2)
@@ -159,7 +162,9 @@ test('the order Start next gives a scheduled queue survives a crash and restart'
 }) => {
   await clock(plexo, at(1, 8))
   await plexo.api.updateSettings({ downloadSchedule: { ...schedule, endDate: '2000-01-02' } })
-  const { origins, ids, firstToStart } = await startNextWhileClosed(plexo, serve)
+  const { origins, ids, firstToStart } = await queueWhileClosed(plexo, serve, (ids) =>
+    plexo.api.startNext(ids[2])
+  )
   // Killed, not quit: the new order is saved when it's given, not only when Plexo quits.
   await plexo.kill()
   await plexo.launch()
@@ -167,6 +172,27 @@ test('the order Start next gives a scheduled queue survives a crash and restart'
   const started = firstToStart()
   await plexo.api.updateSettings({ downloadSchedule: { ...schedule, enabled: false } })
   expect(await started).toBe(2)
+  for (const origin of origins) origin.release()
+  for (const id of ids)
+    await expect.poll(async () => (await plexo.byId(id))?.status).toBe('completed')
+})
+
+test('the order Move down gives a scheduled queue survives a crash and restart', async ({
+  plexo,
+  serve
+}) => {
+  await clock(plexo, at(1, 8))
+  await plexo.api.updateSettings({ downloadSchedule: { ...schedule, endDate: '2000-01-02' } })
+  // The first moves down a place, so the second starts first.
+  const { origins, ids, firstToStart } = await queueWhileClosed(plexo, serve, (ids) =>
+    plexo.api.moveInQueue(ids[0], 1)
+  )
+  await plexo.kill()
+  await plexo.launch()
+  for (const id of ids) expect((await plexo.byId(id))?.status).toBe('queued')
+  const started = firstToStart()
+  await plexo.api.updateSettings({ downloadSchedule: { ...schedule, enabled: false } })
+  expect(await started).toBe(1)
   for (const origin of origins) origin.release()
   for (const id of ids)
     await expect.poll(async () => (await plexo.byId(id))?.status).toBe('completed')

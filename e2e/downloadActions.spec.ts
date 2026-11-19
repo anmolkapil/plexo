@@ -47,10 +47,12 @@ test.describe('what each state offers', () => {
     ])
   })
 
-  test('queued: it can also go first in line', () => {
+  test('queued: it can also go first in line, or move up or down it', () => {
     expect(ids([download({ status: 'queued' })])).toEqual([
       'pause',
       'next',
+      'earlier',
+      'later',
       'reveal',
       'copy',
       'cancel'
@@ -66,6 +68,23 @@ test.describe('what each state offers', () => {
       finished()
     ]
     for (const item of others) expect(ids([item])).not.toContain('next')
+  })
+
+  test('only a queued download can move in the queue, and one at a time', () => {
+    const others = [
+      download({ status: 'downloading' }),
+      download({ status: 'paused' }),
+      download({ status: 'error', error: 'reset' }),
+      download({ status: 'completed' }),
+      finished()
+    ]
+    for (const item of others) {
+      expect(ids([item])).not.toContain('earlier')
+      expect(ids([item])).not.toContain('later')
+    }
+    const two = [download({ status: 'queued' }), download({ status: 'queued' })]
+    expect(ids(two)).not.toContain('earlier')
+    expect(ids(two)).not.toContain('later')
   })
 
   test('paused', () => {
@@ -219,10 +238,10 @@ test.describe('the selection toolbar', () => {
       buttons: ['pause', 'cancel'],
       more: ['reveal', 'copy']
     })
-    // Start next goes under More: Pause and Cancel stay the buttons.
+    // Start next, Move up and Move down go under More: Pause and Cancel stay the buttons.
     expect(shown([download({ status: 'queued' })])).toEqual({
       buttons: ['pause', 'cancel'],
-      more: ['next', 'reveal', 'copy']
+      more: ['next', 'earlier', 'later', 'reveal', 'copy']
     })
     expect(shown([download({ status: 'paused' })])).toEqual({
       buttons: ['resume', 'cancel'],

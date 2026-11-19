@@ -1,4 +1,6 @@
 import {
+  ChevronDown,
+  ChevronUp,
   ChevronsUp,
   Copy,
   Download,
@@ -62,6 +64,20 @@ export const ACTION_META: Record<ActionId, ActionMeta> = {
     toolbar: 'Start next',
     failure: SOMETHING_WRONG,
     icon: ChevronsUp
+  },
+  earlier: {
+    label: 'Move up',
+    toolbar: 'Move up',
+    single: true,
+    failure: SOMETHING_WRONG,
+    icon: ChevronUp
+  },
+  later: {
+    label: 'Move down',
+    toolbar: 'Move down',
+    single: true,
+    failure: SOMETHING_WRONG,
+    icon: ChevronDown
   },
   retry: {
     label: 'Retry',
