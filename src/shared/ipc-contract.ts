@@ -63,6 +63,8 @@ export interface IpcContract {
   resumeDownload: { args: [id: string]; result: void }
   /** Moves a queued download to the front of the queue, to start when a place is free. */
   startNext: { args: [id: string]; result: void }
+  /** Moves a queued download one place earlier (-1) or later (1) in the queue. */
+  moveInQueue: { args: [id: string, by: -1 | 1]; result: void }
   /** A fresh link to the same file, for a download whose link stopped working; it resumes. */
   relinkDownload: { args: [id: string, url: string]; result: void }
   setDownloadNetwork: { args: [id: string, networkId: string, enabled: boolean]; result: void }

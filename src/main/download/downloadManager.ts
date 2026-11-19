@@ -1662,6 +1662,26 @@ export class DownloadManager {
     await this.persistNow(runtime)
   }
 
+  /** Moves a queued download one place earlier (`-1`) or later (`1`) in the queue, by swapping
+   * its place with its neighbour's. Like Start next, it only reorders the waiting: nothing
+   * running is touched. At either end of the queue there's nowhere to go. */
+  async moveInQueue(id: string, by: -1 | 1): Promise<void> {
+    const runtime = this.runtimes.get(id)
+    if (!runtime || runtime.cancelPromise || runtime.state.status !== 'queued') return
+    const queue = [...this.runtimes.values()]
+      .filter((other) => other.state.status === 'queued')
+      .sort((a, b) => (a.state.queuedAt ?? 0) - (b.state.queuedAt ?? 0))
+    const neighbour = queue[queue.indexOf(runtime) + by]
+    if (!neighbour) return
+    ;[runtime.state.queuedAt, neighbour.state.queuedAt] = [
+      neighbour.state.queuedAt,
+      runtime.state.queuedAt
+    ]
+    this.pushUpdate(runtime)
+    this.pushUpdate(neighbour)
+    await Promise.all([this.persistNow(runtime), this.persistNow(neighbour)])
+  }
+
   // A file that changed on the server while this download was paused is caught by the first
   // chunk request after resuming: its response is checked against the version the download
   // started on (see runWorker), which can tell a real change from a relabelled server. Whether a
