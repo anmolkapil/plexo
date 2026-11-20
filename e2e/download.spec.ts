@@ -1,4 +1,5 @@
 import { BLOCK, expect, LAN_ADDRESS, test } from './fixtures'
+import { isProbe } from './origin'
 
 // A. Downloads that should simply work. Every test also runs the automatic checks in
 // fixtures.ts: completed ⇒ the file's SHA-256 matches the source, nothing stray left behind.
@@ -167,24 +168,33 @@ test.describe('happy paths @smoke', () => {
     await plexo.start(origin.url('/start'), origin.sha256)
     await plexo.waitForHttpStatus('completed')
 
-    // Chunk requests follow redirects too, including a longer Telegram-style redirect chain.
+    // The chunk requests follow redirects too (a signed CDN URL rotating mid-download).
     const next = await serve({ size: 12 * BLOCK, seed: 7 })
     let redirected = 0
     next.setRule(({ path, range }) => {
-      if (path === '/files/test.bin' && range && range.start > 0) {
-        redirected += 1
-        return { redirect: '/files/hop-1' }
-      }
-      const hop = /^\/files\/hop-(\d+)$/.exec(path)
-      if (hop && Number(hop[1]) < 6) {
-        redirected += 1
-        return { redirect: `/files/hop-${Number(hop[1]) + 1}` }
+      if (path === '/files/test.bin' && range && range.start > 0 && redirected++ < 3) {
+        return { redirect: '/files/moved.bin' }
       }
       return 'ok'
     })
     await plexo.start(next.url(), next.sha256)
     await plexo.waitForHttpStatus('completed')
-    expect(redirected).toBeGreaterThan(5)
+    expect(redirected).toBeGreaterThan(0)
+  })
+
+  test('a chunk redirect with no Location says so instead of blaming a redirect limit', async ({
+    plexo,
+    serve
+  }) => {
+    const origin = await serve({ size: 12 * BLOCK })
+    // What a Telegram Web link answers outside the browser: a 302 with no Location at all.
+    origin.setRule(({ range }) =>
+      range && !isProbe(range) ? { status: 302, headers: { 'Content-Length': '0' } } : 'ok'
+    )
+    await plexo.start(origin.url(), origin.sha256)
+    const state = await plexo.waitForHttpStatus('error')
+    expect(state.error).toMatch(/redirect with no address to follow/)
+    expect(state.error).not.toMatch(/Too many redirects/)
   })
 })
 

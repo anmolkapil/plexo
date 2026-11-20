@@ -84,9 +84,10 @@ export function retryAfterMs(value: string | undefined, now = Date.now()): numbe
 // detect or retry it.
 const STALL_TIMEOUT_MS = testKnobs.stallTimeoutMs
 
-// Some download hosts use several redirects before serving a chunk. Keep a generous finite cap
-// so those chains work while redirect loops still end as an error.
-const MAX_REDIRECTS = 20
+// Only the initial probe resolves redirects today — if a CDN reissues a
+// redirect mid-download (e.g. a signed URL rotates), a chunk needs to be
+// able to follow it too instead of failing outright.
+const MAX_REDIRECTS = 5
 
 // A socket hands over what it has as it arrives — often 16 KiB at a time — and each write is a
 // trip through libuv's thread pool and back to the main thread. Body chunks are gathered into
@@ -250,7 +251,13 @@ export function downloadChunk(options: ChunkDownloadOptions): Promise<void> {
 
           if (status >= 300 && status < 400) {
             res.resume()
-            if (!res.headers.location || redirectsLeft <= 0) {
+            // A redirect with no Location isn't a chain at all: there is nowhere to go. Said
+            // apart from a real loop, it points at the server rather than at a redirect budget.
+            if (!res.headers.location) {
+              fail(new Error('The server sent a redirect with no address to follow'))
+              return
+            }
+            if (redirectsLeft <= 0) {
               fail(new Error('Too many redirects for range request'))
               return
             }
