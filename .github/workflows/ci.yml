@@ -40,6 +40,8 @@ jobs:
 
       - name: Check formatting
         run: npm run format:check
+        # Run before e2e so a formatting failure surfaces early and does not waste a runner
+        # finishing a built app that will be thrown away on a subsequent push anyway.
 
   e2e:
     name: E2E (smoke)

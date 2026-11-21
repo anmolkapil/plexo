@@ -335,7 +335,12 @@ export class HttpTransfer implements Transfer {
    * received something, or came into use. */
   private traffic = new Map<string, { received: number; aliveAt: number }>()
   /** By network id: until when the server asked (Retry-After) not to be sent new requests over
-   * it. */
+   * it. Set from HttpStatusError.retryAfterMs on the connection's network; each stream waits its
+   * own turn when it returns from backOff, reads the next hold point the instant another stream
+   * set one, and starts only after that wall-clock time has passed. Probes are not subject to this
+   * hold — they run outside the transfer retry loop and hit their own timeout instead (see probe
+   * in src/main/download/probe.ts). The effective ceiling is RETRY_AFTER_MAX_MS; values above it
+   * are clamped at the call site in finishAttempt. */
   private holdUntil = new Map<string, number>()
   /** Decides how many streams each network runs; kept for the whole download, so a pause and
    * resume doesn't forget what it has found out. */

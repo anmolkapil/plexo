@@ -4,6 +4,8 @@
 
 Please don't open a public issue for a security problem. Report it privately through GitHub instead: open the [Security tab](https://github.com/anmolkapil/plexo/security) and click **Report a vulnerability**. Only the maintainer can see the report.
 
+If you landed on this page from the repo's main view and the Security tab link feels hidden, go directly to `https://github.com/anmolkapil/plexo/security/advisories/new`.
+
 A useful report includes:
 
 - what an attacker can do, and what they need first (a crafted link or file, a malicious website, code already running on the computer)
