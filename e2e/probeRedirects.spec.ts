@@ -49,6 +49,10 @@ test.describe('probe redirect limits @smoke', () => {
     })
   }
 
+  test('a data: URL is rejected by probeUrl before any stream opens', async ({ plexo }) => {
+    await expect(plexo.api.probeUrl('data:text/plain;base64,aGVsbG8=')).rejects.toThrow()
+  })
+
   test('a redirect without a Location is refused, not offered as the file', async ({
     plexo,
     serve
