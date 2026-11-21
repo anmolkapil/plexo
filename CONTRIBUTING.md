@@ -44,6 +44,7 @@ npm run lint
 npm run typecheck
 npm run format
 npm run test:e2e:smoke
+npm run build:unpack  # verify packaging options still parse on your platform
 ```
 
 CI runs these checks on every pull request, with formatting checked rather than applied — if it flags something, `npm run format` fixes it.

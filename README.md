@@ -139,6 +139,10 @@ Leave **Streams** on **Auto** in **New download**. Auto lowers the streams when 
 
 </details>
 
+### Windows taskbar progress
+
+Plexo shows download progress in the Windows taskbar once download 1.0.0-rc.15 lands. The bar is green while downloading and yellow when paused. If you don't see it, ensure Plexo is running in the background (not minimized to nothing — keep it in the system tray).
+
 ### Use an Android phone over USB on macOS
 
 macOS has no driver for RNDIS, the protocol Android's USB tethering uses, so the phone charges but no network adapter appears. [TetherKit](https://github.com/XiaoMiku01/TetherKit) is an open-source app that adds one without a kernel extension.
