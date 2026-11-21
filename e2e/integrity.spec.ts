@@ -127,16 +127,20 @@ test.describe('a busy server @smoke', () => {
   }) => {
     const origin = await serve({ size: SIZE })
     let busy = 0
+    // Leave metadata probes alone: Retry-After here is testing the transfer, not link probing.
     // More busy answers than both streams' retries together: a wrong answer this many times
     // would end the download.
     origin.setRule(({ range }) =>
-      range && range.start > 0 && busy++ < 14
+      range && !isProbe(range) && range.start > 0 && busy++ < 14
         ? { status: 503, headers: { 'Retry-After': '1' } }
         : 'ok'
     )
     await plexo.start(origin.url(), origin.sha256, { connections: 2 })
     await plexo.waitForStatus('completed')
     expect(busy).toBeGreaterThan(14)
+    // Probes must not receive the injected 503; if they did, the first transfer requests would be
+    // misread as early retries of a probe rather than real chunks.
+    expect(origin.log.filter((entry) => isProbe(entry.range) && entry.status === 503)).toEqual([])
 
     // It asked the network to wait, so no stream asked again within the second, save a request
     // already on its way.
