@@ -189,7 +189,8 @@ export function formatWhen(time: number, now: number): string {
 export function acceptedLink(text: string): string | null {
   const link = text.trim()
   if (/^(https?:\/\/|magnet:\?)/i.test(link)) return link
-  if (/^(\/|[a-z]:\\).*\.(torrent|nzb)$/i.test(link)) return link
+  const file = link.startsWith('"') && link.endsWith('"') ? link.slice(1, -1) : link
+  if (/^(\/(?![\\/])|[a-z]:[\\/]).*\.(torrent|nzb)$/i.test(file)) return file
   return null
 }
 
