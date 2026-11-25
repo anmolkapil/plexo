@@ -33,6 +33,11 @@ export interface ChunkDownloadOptions {
   onResponse?: (info: { ttfbMs: number; reusedSocket: boolean }) => void
   /** Told of every body byte received; answers how many ms to stop reading for (see Limits). */
   throttle?: (bytes: number) => number
+  /** How many bytes of the range are still wanted, from rangeStart: it can drop while the
+   * request runs, when another stream takes over the rest of the range (see scheduler.ts). Once
+   * that many are in, the rest of the body is left unread and the request ends as if the range
+   * had ended there. */
+  wanted?: () => number
 }
 
 /** A response whose version doesn't match the download's. Nothing from it was written; the
@@ -152,7 +157,8 @@ export function downloadChunk(options: ChunkDownloadOptions): Promise<void> {
     acceptedVersions,
     onResponse,
     throttle,
-    onWriteWait
+    onWriteWait,
+    wanted
   } = options
 
   return new Promise((resolve, reject) => {
@@ -234,8 +240,12 @@ export function downloadChunk(options: ChunkDownloadOptions): Promise<void> {
             return
           }
           currentReq = req
-          // The connection dropping mid-answer; one the server answered wrongly fails below.
-          const dropped = (error: Error): void => fail(asConnectionError(error))
+          // The connection dropping mid-answer; one the server answered wrongly fails below. Once
+          // the body has ended — or been cut short on purpose — only the writer can still fail.
+          let bodyEnded = false
+          const dropped = (error: Error): void => {
+            if (!bodyEnded) fail(asConnectionError(error))
+          }
           req.on('error', dropped)
           const status = res.statusCode ?? 0
 
@@ -289,7 +299,15 @@ export function downloadChunk(options: ChunkDownloadOptions): Promise<void> {
               res.resume()
               return
             }
-            if (rangeEnd !== null && served.end > rangeEnd) {
+            // Some hosts name the end of the file in Content-Range while sending Content-Length
+            // bytes for the range. The header alone would look like an overrun; the length says
+            // the body is exactly what we asked for, so take it rather than fail every block.
+            const declared = Number(header(res, 'content-length') ?? NaN)
+            if (
+              rangeEnd !== null &&
+              served.end > rangeEnd &&
+              !(Number.isFinite(declared) && declared === expectedBytes)
+            ) {
               fail(
                 new Error(
                   `Server returned more than the requested range: through byte ${served.end}, asked through ${rangeEnd}`
@@ -316,7 +334,6 @@ export function downloadChunk(options: ChunkDownloadOptions): Promise<void> {
           // once neither holds it. Neither says anything about the network: the watchdog stops
           // until then.
           let holds = 0
-          let bodyEnded = false
           const hold = (): void => {
             if (holds++ === 0) {
               clearWatchdog()
@@ -348,16 +365,30 @@ export function downloadChunk(options: ChunkDownloadOptions): Promise<void> {
             else coalesceTimer = setTimeout(() => flushWrites(), WRITE_COALESCE_MS)
           }
 
+          const endBody = (): void => {
+            bodyEnded = true
+            clearWatchdog()
+            flushWrites()
+            // Held until its last bytes are written; closing the file isn't the disk falling
+            // behind.
+            onWriteWait?.(true)
+            fileStream.once('finish', () => onWriteWait?.(false))
+            // Windows cannot reliably reopen/remove a file until its handle closes.
+            fileStream.once('close', () => finish(resolve))
+            fileStream.end()
+          }
+
           // Written by hand rather than piped so an overlong body can be cut off
           // at the range boundary: an overlong response could overwrite the next block.
           res.on('data', (chunk: Buffer) => {
-            if (settled) return
+            if (settled || bodyEnded) return
             resetWatchdog()
 
             const remaining =
               expectedBytes === null ? chunk.length : expectedBytes - bytesDownloaded
-            const usable =
-              chunk.length <= remaining ? chunk : chunk.subarray(0, Math.max(remaining, 0))
+            // Bytes past what is still wanted aren't an overlong body: they are left unread.
+            const keep = Math.min(remaining, (wanted?.() ?? Infinity) - bytesDownloaded)
+            const usable = chunk.length <= keep ? chunk : chunk.subarray(0, Math.max(keep, 0))
 
             if (usable.length > 0) {
               bytesDownloaded += usable.length
@@ -389,13 +420,20 @@ export function downloadChunk(options: ChunkDownloadOptions): Promise<void> {
               }
             }
 
-            if (usable.length < chunk.length) {
+            const rangeLeft = expectedBytes === null ? Infinity : expectedBytes - bytesDownloaded
+            if (wanted && rangeLeft > 0 && bytesDownloaded >= wanted()) {
+              // The rest of the range is another stream's now. The socket still has it coming,
+              // so it can't carry another request: it goes, and the writer finishes as at the
+              // end of a body.
+              endBody()
+              currentReq?.destroy()
+            } else if (usable.length < chunk.length) {
               fail(new Error('Server sent more data than the requested range'))
             }
           })
 
           res.on('end', () => {
-            if (settled) return
+            if (settled || bodyEnded) return
             clearWatchdog()
             if (expectedBytes !== null && bytesDownloaded !== expectedBytes) {
               fail(
@@ -405,15 +443,7 @@ export function downloadChunk(options: ChunkDownloadOptions): Promise<void> {
               )
               return
             }
-            bodyEnded = true
-            flushWrites()
-            // Held until its last bytes are written; closing the file isn't the disk falling
-            // behind.
-            onWriteWait?.(true)
-            fileStream.once('finish', () => onWriteWait?.(false))
-            // Windows cannot reliably reopen/remove a file until its handle closes.
-            fileStream.once('close', () => finish(resolve))
-            fileStream.end()
+            endBody()
           })
         })
         .catch(fail)

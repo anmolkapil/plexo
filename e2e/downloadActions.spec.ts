@@ -38,9 +38,34 @@ const ids = (items: DownloadItem[]): ActionId[] =>
   availableActions(items).flatMap((group) => group.map((action) => action.id))
 
 test.describe('what each state offers', () => {
-  test('downloading and queued', () => {
-    for (const status of ['downloading', 'queued'] as const)
-      expect(ids([download({ status })])).toEqual(['pause', 'reveal', 'copy', 'cancel'])
+  test('downloading', () => {
+    expect(ids([download({ status: 'downloading' })])).toEqual([
+      'pause',
+      'reveal',
+      'copy',
+      'cancel'
+    ])
+  })
+
+  test('queued: it can also go first in line', () => {
+    expect(ids([download({ status: 'queued' })])).toEqual([
+      'pause',
+      'next',
+      'reveal',
+      'copy',
+      'cancel'
+    ])
+  })
+
+  test('only a queued download can start next', () => {
+    const others = [
+      download({ status: 'downloading' }),
+      download({ status: 'paused' }),
+      download({ status: 'error', error: 'reset' }),
+      download({ status: 'completed' }),
+      finished()
+    ]
+    for (const item of others) expect(ids([item])).not.toContain('next')
   })
 
   test('paused', () => {
@@ -103,7 +128,7 @@ test.describe('what each state offers', () => {
 
   test('a torrent from a .torrent file has no link to copy', () => {
     const torrent = download({ status: 'paused', kind: 'torrent', url: '/tmp/a.torrent' })
-    expect(ids([torrent])).toEqual(['resume', 'reveal', 'cancel'])
+    expect(ids([torrent])).toEqual(['resume', 'reveal', 'trackers', 'cancel'])
   })
 })
 
@@ -122,6 +147,7 @@ test.describe('several selected', () => {
     )
     expect(found.pause).toEqual(['a', 'c'])
     expect(found.resume).toEqual(['b'])
+    expect(found.next).toEqual(['c'])
     expect(found.cancel).toEqual(['a', 'b', 'c'])
     expect(found.remove).toEqual(['d'])
   })
@@ -149,6 +175,7 @@ test.describe('the places that show them agree', () => {
   test('a row button, a screen header and the menu start from the same list', () => {
     const states = [
       download({ status: 'downloading' }),
+      download({ status: 'queued' }),
       download({ status: 'paused' }),
       download({ status: 'error', error: 'reset' }),
       download({ status: 'error', error: 'Server answered with status 403 for range request' }),
@@ -191,6 +218,11 @@ test.describe('the selection toolbar', () => {
     expect(shown([download({ status: 'downloading' })])).toEqual({
       buttons: ['pause', 'cancel'],
       more: ['reveal', 'copy']
+    })
+    // Start next goes under More: Pause and Cancel stay the buttons.
+    expect(shown([download({ status: 'queued' })])).toEqual({
+      buttons: ['pause', 'cancel'],
+      more: ['next', 'reveal', 'copy']
     })
     expect(shown([download({ status: 'paused' })])).toEqual({
       buttons: ['resume', 'cancel'],

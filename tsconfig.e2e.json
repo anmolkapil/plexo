@@ -8,7 +8,7 @@
   ],
   "compilerOptions": {
     "noEmit": true,
-    "lib": ["ESNext", "DOM"],
+    "lib": ["ESNext", "DOM", "DOM.AsyncIterable"],
     "baseUrl": ".",
     "paths": {
       "@shared/*": ["src/shared/*"]

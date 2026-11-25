@@ -8,6 +8,7 @@ import { ACTION_META } from './downloadActionMeta'
 import { ActionsContext, StateContext } from './downloadActionsContext'
 import { FixLinkDialog } from './FixLinkDialog'
 import { RemoveDialog, type RemoveMode } from './RemoveDialog'
+import { TrackersDialog } from './TrackersDialog'
 
 /** What can be done to a download, done: from its row, its menu, the selection toolbar and its
  * own screen alike. It owns the two questions an action can lead to (fix the link, confirm a
@@ -25,6 +26,7 @@ export function DownloadActionsProvider({
     clearAll: boolean
   } | null>(null)
   const [fixing, setFixing] = useState<DownloadState | null>(null)
+  const [managingTrackers, setManagingTrackers] = useState<DownloadState | null>(null)
   const [busy, setBusy] = useState(false)
   const [failure, setFailure] = useState<{ title: string; message: string } | null>(null)
   const [dialogError, setDialogError] = useState<string | null>(null)
@@ -50,8 +52,19 @@ export function DownloadActionsProvider({
           const failed = results.find((result) => result.status === 'rejected')
           return failed ? fail(failed.reason) : true
         }
+        case 'next':
+          // Each goes to the front in turn, so the last sent is first: they keep the list's order.
+          try {
+            for (const item of [...targets].reverse()) await window.plexo.startNext(item.id)
+            return true
+          } catch (cause) {
+            return fail(cause)
+          }
         case 'fix':
           setFixing(targets[0] as DownloadState)
+          return true
+        case 'trackers':
+          setManagingTrackers(targets[0] as DownloadState)
           return true
         case 'again': {
           // Nothing of it can be kept: it goes, and its link waits in New download to start over.
@@ -163,6 +176,7 @@ export function DownloadActionsProvider({
           onConfirm={() => void confirmRemoval()}
         />
         <FixLinkDialog download={fixing} onClose={() => setFixing(null)} />
+        <TrackersDialog download={managingTrackers} onClose={() => setManagingTrackers(null)} />
         <ActionErrorDialog failure={failure} onClose={() => setFailure(null)} />
       </StateContext.Provider>
     </ActionsContext.Provider>

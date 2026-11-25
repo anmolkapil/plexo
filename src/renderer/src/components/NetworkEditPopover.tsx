@@ -1,10 +1,13 @@
-import type { NetworkInterfaceKind } from '@shared/types'
+import { sameProxyEndpoint } from '@shared/proxy'
+import type { NetworkInterfaceKind, ProxyConfig, ProxyType } from '@shared/types'
+import { cn } from 'cn'
 import { Pencil } from 'lucide-react'
 import { useState } from 'react'
 import { useNetworkVisuals } from '../hooks/useNetworkVisuals'
 import { useAppStore } from '../store/useAppStore'
 import { NETWORK_COLOR_SWATCHES, type NetworkColorId } from '../theme'
 import { Button } from './ui/button'
+import { Checkbox } from './ui/checkbox'
 import { Popover, PopoverContent, PopoverTrigger } from './ui/popover'
 import { Tooltip, TooltipContent, TooltipTrigger } from './ui/tooltip'
 
@@ -12,6 +15,10 @@ interface NetworkEditPopoverProps {
   interfaceId: string
   interfaceKind: NetworkInterfaceKind
   osName: string
+  trigger?: React.ReactElement
+  tooltip?: string
+  defaultFocusProxy?: boolean
+  className?: string
 }
 
 const fieldLabelClass =
@@ -19,28 +26,78 @@ const fieldLabelClass =
 
 const MAX_NETWORK_NAME_LENGTH = 40
 
-/** Rename/recolor one network. Edits are a draft that's saved when the popover closes — Done,
- * Enter or clicking away — and thrown away on Escape, like renaming a file in Finder. */
+const PROXY_TYPES: { id: ProxyType; label: string }[] = [
+  { id: 'http', label: 'HTTP' },
+  { id: 'https', label: 'HTTPS' },
+  { id: 'socks5', label: 'SOCKS5' },
+  { id: 'socks4', label: 'SOCKS4' }
+]
+
+/** Rename/recolor one network and configure per-interface proxy settings. Edits are a draft
+ * that's saved when the popover closes — Done, Enter or clicking away — and thrown away on Escape. */
 export function NetworkEditPopover({
   interfaceId,
   interfaceKind,
-  osName
+  osName,
+  trigger,
+  tooltip,
+  defaultFocusProxy,
+  className
 }: NetworkEditPopoverProps): React.JSX.Element {
   const [open, setOpen] = useState(false)
   const preference = useAppStore((store) => store.networkPreferences[interfaceId])
   const setNetworkPreference = useAppStore((store) => store.setNetworkPreference)
+  const noKeychain = useAppStore((store) => store.noKeychain)
   const visual = useNetworkVisuals()(interfaceId, interfaceKind, osName)
 
   const [draftName, setDraftName] = useState('')
   const [draftColorId, setDraftColorId] = useState<NetworkColorId>(visual.colorId)
+
+  // Proxy draft state
+  const [proxyEnabled, setProxyEnabled] = useState(false)
+  const [proxyType, setProxyType] = useState<ProxyType>('http')
+  const [proxyHost, setProxyHost] = useState('')
+  const [proxyPort, setProxyPort] = useState('')
+  const [proxyUsername, setProxyUsername] = useState('')
+  // The saved password never comes to the window: left empty, the field keeps it, but only for
+  // the proxy and username it was saved for. Clear removes it.
+  const [proxyPassword, setProxyPassword] = useState('')
+  const [clearPassword, setClearPassword] = useState(false)
+
+  const hostTrimmed = proxyHost.trim()
+  const parsedPort = parseInt(proxyPort.trim(), 10)
+  const defaultPort = proxyType.startsWith('socks') ? 1080 : 8080
+  const port =
+    !isNaN(parsedPort) && parsedPort >= 1 && parsedPort <= 65535 ? parsedPort : defaultPort
+  const username = proxyUsername.trim() || undefined
+  const hasSavedPassword = preference?.proxy?.hasPassword === true && !clearPassword
+  const savedPassword =
+    hasSavedPassword &&
+    sameProxyEndpoint(preference!.proxy!, { type: proxyType, host: hostTrimmed, port, username })
 
   function save(): void {
     const trimmed = draftName.trim().slice(0, MAX_NETWORK_NAME_LENGTH)
     const customName = trimmed && trimmed !== osName ? trimmed : undefined
     // Re-picking the color it already had keeps it automatic instead of pinning it.
     const colorId = draftColorId === visual.colorId ? preference?.colorId : draftColorId
-    if (customName !== preference?.customName || colorId !== preference?.colorId) {
-      setNetworkPreference(interfaceId, { customName, colorId })
+
+    const hasProxyConfig = proxyEnabled || hostTrimmed.length > 0 || preference?.proxy != null
+    const proxy: ProxyConfig | undefined = hasProxyConfig
+      ? {
+          enabled: proxyEnabled,
+          type: proxyType,
+          host: hostTrimmed,
+          port,
+          username,
+          password: proxyPassword !== '' ? proxyPassword : clearPassword ? '' : undefined
+        }
+      : undefined
+
+    // As the draft has it: whether there's a saved password isn't a field of it.
+    const saved = preference?.proxy ? { ...preference.proxy, hasPassword: undefined } : null
+    const proxyChanged = JSON.stringify(saved) !== JSON.stringify(proxy ?? null)
+    if (customName !== preference?.customName || colorId !== preference?.colorId || proxyChanged) {
+      setNetworkPreference(interfaceId, { customName, colorId, proxy })
     }
   }
 
@@ -56,6 +113,14 @@ export function NetworkEditPopover({
         if (next) {
           setDraftName(visual.name)
           setDraftColorId(visual.colorId)
+          const p = preference?.proxy
+          setProxyEnabled(Boolean(p?.enabled))
+          setProxyType(p?.type ?? 'http')
+          setProxyHost(p?.host ?? '')
+          setProxyPort(p?.port ? String(p.port) : '')
+          setProxyUsername(p?.username ?? '')
+          setProxyPassword('')
+          setClearPassword(false)
         } else if (details.reason !== 'escape-key') {
           save()
         }
@@ -67,22 +132,29 @@ export function NetworkEditPopover({
           render={
             <PopoverTrigger
               render={
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="icon-xs"
-                  aria-label="Edit network"
-                  className="shrink-0 text-muted-foreground"
-                >
-                  <Pencil className="size-3" />
-                </Button>
+                trigger ?? (
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon-xs"
+                    aria-label={`Edit ${visual.name}`}
+                    className={cn('shrink-0 text-muted-foreground', className)}
+                  >
+                    <Pencil className="size-3" />
+                  </Button>
+                )
               }
             />
           }
         />
-        <TooltipContent>Edit network</TooltipContent>
+        <TooltipContent>
+          {tooltip ??
+            (preference?.proxy?.enabled && preference?.proxy?.host
+              ? `Proxy active (${preference!.proxy!.type.toUpperCase()}) — click to configure`
+              : `Configure proxy or edit ${visual.name}`)}
+        </TooltipContent>
       </Tooltip>
-      <PopoverContent aria-label={`Edit ${visual.name}`} className="gap-3 p-3">
+      <PopoverContent aria-label={`Edit ${visual.name}`} className="w-[320px] gap-3 p-3">
         <div className="flex flex-col gap-[6px]">
           <label htmlFor={`network-name-${interfaceId}`} className={fieldLabelClass}>
             Name
@@ -98,7 +170,7 @@ export function NetworkEditPopover({
             }}
             placeholder={osName}
             maxLength={MAX_NETWORK_NAME_LENGTH}
-            autoFocus
+            autoFocus={!defaultFocusProxy}
             className="rounded-[6px] border border-input bg-background px-[9px] py-1.5 font-sans text-[12px] leading-[1.3] font-medium text-foreground outline-none focus-visible:border-ring"
           />
         </div>
@@ -112,8 +184,6 @@ export function NetworkEditPopover({
                 <Tooltip key={swatch.id}>
                   <TooltipTrigger
                     render={
-                      // The 24px button is the WCAG 2.5.8 hit target; the visible 20px dot lives
-                      // in the padding-shrunk inner span so the swatch itself doesn't grow.
                       <button
                         type="button"
                         onClick={() => setDraftColorId(swatch.id)}
@@ -125,7 +195,6 @@ export function NetworkEditPopover({
                           className="block size-full rounded-full"
                           style={{
                             background: swatch.solid,
-                            // Popover-colored gap, then a ring in the swatch's own hue — reads in both themes.
                             boxShadow: isSelected
                               ? `0 0 0 2px var(--color-popover), 0 0 0 4px ${swatch.solid}`
                               : undefined
@@ -141,7 +210,163 @@ export function NetworkEditPopover({
           </div>
         </div>
 
-        <div className="flex justify-end">
+        <div className="h-px bg-border/60" />
+
+        {/* Proxy configuration section */}
+        <div className="flex flex-col gap-2.5">
+          <div className="flex items-center justify-between">
+            <span className={fieldLabelClass}>Proxy</span>
+            <label className="group flex cursor-pointer items-center gap-1.5 select-none">
+              <Checkbox
+                checked={proxyEnabled}
+                onCheckedChange={(checked) => setProxyEnabled(Boolean(checked))}
+              />
+              <span className="font-sans text-[11px] font-medium text-muted-foreground group-hover:text-foreground">
+                Enable proxy
+              </span>
+            </label>
+          </div>
+
+          {proxyEnabled && (
+            <div className="flex flex-col gap-2.5 pt-0.5">
+              {/* Proxy Type Segmented Control */}
+              <div className="flex flex-col gap-1">
+                <span className={fieldLabelClass}>Protocol</span>
+                <div className="grid grid-cols-4 gap-1 rounded-md bg-muted/50 p-0.5">
+                  {PROXY_TYPES.map((t) => (
+                    <button
+                      key={t.id}
+                      type="button"
+                      onClick={() => setProxyType(t.id)}
+                      className={cn(
+                        'rounded-[4px] py-1 text-center font-mono text-[10px] font-semibold transition-all',
+                        proxyType === t.id
+                          ? 'bg-background text-foreground shadow-xs'
+                          : 'text-muted-foreground hover:text-foreground'
+                      )}
+                    >
+                      {t.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Host and Port */}
+              <div className="grid grid-cols-[1fr_80px] gap-2">
+                <div className="flex flex-col gap-1">
+                  <label htmlFor={`proxy-host-${interfaceId}`} className={fieldLabelClass}>
+                    Host / IP
+                  </label>
+                  <input
+                    id={`proxy-host-${interfaceId}`}
+                    type="text"
+                    value={proxyHost}
+                    onChange={(event) => setProxyHost(event.target.value)}
+                    onKeyDown={(event) => {
+                      if (event.key === 'Enter') close()
+                    }}
+                    placeholder="127.0.0.1"
+                    className="rounded-[6px] border border-input bg-background px-[9px] py-1.5 font-mono text-[11px] leading-[1.3] text-foreground outline-none focus-visible:border-ring placeholder:text-muted-foreground/50"
+                  />
+                </div>
+                <div className="flex flex-col gap-1">
+                  <label htmlFor={`proxy-port-${interfaceId}`} className={fieldLabelClass}>
+                    Port
+                  </label>
+                  <input
+                    id={`proxy-port-${interfaceId}`}
+                    type="text"
+                    inputMode="numeric"
+                    value={proxyPort}
+                    onChange={(event) => setProxyPort(event.target.value)}
+                    onKeyDown={(event) => {
+                      if (event.key === 'Enter') close()
+                    }}
+                    placeholder={proxyType.startsWith('socks') ? '1080' : '8080'}
+                    className="rounded-[6px] border border-input bg-background px-[9px] py-1.5 font-mono text-[11px] leading-[1.3] text-foreground outline-none focus-visible:border-ring placeholder:text-muted-foreground/50"
+                  />
+                </div>
+              </div>
+
+              {/* Authentication */}
+              <div className="grid grid-cols-2 gap-2">
+                <div className="flex flex-col gap-1">
+                  <label htmlFor={`proxy-user-${interfaceId}`} className={fieldLabelClass}>
+                    User <span className="text-[8px] font-normal lowercase opacity-70">(opt)</span>
+                  </label>
+                  <input
+                    id={`proxy-user-${interfaceId}`}
+                    type="text"
+                    value={proxyUsername}
+                    onChange={(event) => setProxyUsername(event.target.value)}
+                    onKeyDown={(event) => {
+                      if (event.key === 'Enter') close()
+                    }}
+                    placeholder="username"
+                    autoComplete="off"
+                    className="rounded-[6px] border border-input bg-background px-[9px] py-1.5 font-sans text-[11px] leading-[1.3] text-foreground outline-none focus-visible:border-ring placeholder:text-muted-foreground/50"
+                  />
+                </div>
+                <div className="flex flex-col gap-1">
+                  <div className="flex items-center justify-between">
+                    <label htmlFor={`proxy-pass-${interfaceId}`} className={fieldLabelClass}>
+                      Password{' '}
+                      <span className="text-[8px] font-normal lowercase opacity-70">(opt)</span>
+                    </label>
+                    {savedPassword && proxyType !== 'socks4' && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setClearPassword(true)
+                          setProxyPassword('')
+                        }}
+                        aria-label="Clear saved password"
+                        className="rounded-[3px] font-sans text-[10px] leading-none text-muted-foreground outline-none hover:text-foreground focus-visible:text-foreground focus-visible:underline"
+                      >
+                        Clear
+                      </button>
+                    )}
+                  </div>
+                  <input
+                    id={`proxy-pass-${interfaceId}`}
+                    type="password"
+                    value={proxyPassword}
+                    onChange={(event) => setProxyPassword(event.target.value)}
+                    onKeyDown={(event) => {
+                      if (event.key === 'Enter') close()
+                    }}
+                    placeholder={
+                      proxyType === 'socks4' ? 'N/A' : savedPassword ? 'Saved' : '••••••••'
+                    }
+                    autoComplete="off"
+                    disabled={proxyType === 'socks4'}
+                    className={cn(
+                      'rounded-[6px] border border-input bg-background px-[9px] py-1.5 font-sans text-[11px] leading-[1.3] text-foreground outline-none focus-visible:border-ring placeholder:text-muted-foreground/50',
+                      proxyType === 'socks4' && 'cursor-not-allowed bg-muted/40 opacity-50'
+                    )}
+                  />
+                </div>
+              </div>
+              {hasSavedPassword &&
+                !savedPassword &&
+                proxyType !== 'socks4' &&
+                proxyPassword === '' && (
+                  <p className="font-sans text-[10.5px] leading-snug text-muted-foreground">
+                    Enter the password again: the saved one only goes to the proxy and username it
+                    was saved for.
+                  </p>
+                )}
+              {noKeychain && proxyType !== 'socks4' && (proxyPassword !== '' || savedPassword) && (
+                <p className="font-sans text-[10.5px] leading-snug text-muted-foreground">
+                  This computer has no keychain Plexo can use, so the password is kept only until
+                  Plexo quits.
+                </p>
+              )}
+            </div>
+          )}
+        </div>
+
+        <div className="flex justify-end pt-1">
           <Button type="button" size="xs" onClick={close}>
             Done
           </Button>

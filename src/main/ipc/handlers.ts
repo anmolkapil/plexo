@@ -21,11 +21,28 @@ import { DownloadManager } from '../download/downloadManager'
 import { getDefaultDownloadsDir, getHomeDir } from '../download/paths'
 import { listHistory } from '../download/history'
 import { probeUrl } from '../download/probe'
+import { FakeTelegramService } from '../telegram/fake'
+import { TelegramService, type TelegramServiceApi } from '../telegram/service'
+import { testUsenetServer } from '../download/nzb/nntp'
+import {
+  loadUsenetServer,
+  saveUsenetBackup,
+  saveUsenetServer,
+  serverFromInput,
+  viewOf
+} from '../download/nzb/usenetServer'
 import { onMagnetCheckStatus } from '../download/torrent/metadata'
+import { testKnobs } from '../testKnobs'
 import { deviceBindingSupported } from '../network/deviceBinding'
 import { pendingLink, pendingLinks, releaseLink } from '../openLinks'
 import { NetworkMonitor } from '../network/interfaces'
-import { loadSettings, saveSettings } from '../settings'
+import {
+  canSealPasswords,
+  carryOverNetworkPreferences,
+  loadSettings,
+  networkPreferencesForWindow,
+  saveSettings
+} from '../settings'
 import { showUpdateMenu, updateState } from '../updater'
 
 async function openNetworkSettings(): Promise<void> {
@@ -72,12 +89,30 @@ async function freeSpace(dir: string): Promise<number | null> {
 
 export function registerIpcHandlers(getWindow: () => BrowserWindow | null): DownloadManager {
   // The main process keeps the network list, for downloads and the window alike.
-  const networks = new NetworkMonitor((list) => {
+  const networks = new NetworkMonitor(async (list) => {
+    // First, so no connection opens without a proxy saved under the network's old id.
+    try {
+      if (await carryOverNetworkPreferences(list)) await manager.applySettings(await loadSettings())
+    } catch (error) {
+      console.error('[plexo] carrying network settings over failed', error)
+    }
     manager.networksChanged()
     const window = getWindow()
     if (window && !window.isDestroyed()) window.webContents.send(IpcChannels.networksChanged, list)
   })
-  const manager = new DownloadManager(getWindow, networks)
+  // Telegram (Saved Messages): its sign-in state changes push to the window, and a stored
+  // session reconnects in the background at startup.
+  const telegram: TelegramServiceApi = testKnobs.telegramFake
+    ? new FakeTelegramService()
+    : new TelegramService()
+  telegram.onChange = (state) => {
+    const window = getWindow()
+    if (window && !window.isDestroyed()) {
+      window.webContents.send(IpcChannels.telegramAuthChanged, state)
+    }
+  }
+  void telegram.restore().catch((error) => console.error('[plexo] telegram restore', error))
+  const manager = new DownloadManager(getWindow, networks, telegram)
   // Waking from sleep, the networks may have changed without a poll in between to see it.
   powerMonitor.on('resume', () => {
     manager.systemResumed()
@@ -112,13 +147,14 @@ export function registerIpcHandlers(getWindow: () => BrowserWindow | null): Down
   ipcMain.on(IpcChannels.getInitialState, async (event) => {
     try {
       const settings = await loadSettings()
-      const { destinationDir } = settings
+      const { destinationDir, defaultDestinationDir } = settings
+      const effectiveDir = defaultDestinationDir ?? destinationDir
       // Capped: a folder on a dropped network share can take many seconds to answer, and launch
       // waits on this reply — past the cap it's treated as gone and Downloads is used instead.
       const destinationExists =
-        destinationDir !== undefined &&
+        effectiveDir !== undefined &&
         (await Promise.race([
-          stat(destinationDir).then(
+          stat(effectiveDir).then(
             (stats) => stats.isDirectory(),
             () => false
           ),
@@ -129,13 +165,16 @@ export function registerIpcHandlers(getWindow: () => BrowserWindow | null): Down
         homeDir: getHomeDir(),
         downloadsDir: getDefaultDownloadsDir(),
         themeSource: currentThemeSource(),
-        networkPreferences: settings.networkPreferences ?? {},
+        // Proxy passwords stay in the main process: the window only learns there is one.
+        networkPreferences: networkPreferencesForWindow(settings.networkPreferences ?? {}),
         downloadsAtOnce: settings.downloadsAtOnce ?? DOWNLOADS_AT_ONCE.default,
         speedLimit: settings.speedLimit,
         slowMode: settings.slowMode ?? false,
         slowModeSpeed: settings.slowModeSpeed ?? DEFAULT_SLOW_MODE_SPEED,
         speedUnit: settings.speedUnit ?? 'bytes',
-        destinationDir: destinationExists ? destinationDir : undefined
+        destinationDir: destinationExists ? effectiveDir : undefined,
+        defaultDestinationDir: settings.defaultDestinationDir,
+        ...(!canSealPasswords() && { noKeychain: true })
       } satisfies InitialState
     } catch (error) {
       console.error('[plexo] failed to read initial state', error)
@@ -175,12 +214,16 @@ export function registerIpcHandlers(getWindow: () => BrowserWindow | null): Down
     return result.filePaths[0]
   })
 
-  handle('chooseTorrentFile', async () => {
+  handle('chooseDownloadFile', async () => {
     const window = getWindow()
     if (!window) return null
     const result = await dialog.showOpenDialog(window, {
       properties: ['openFile'],
-      filters: [{ name: 'Torrent', extensions: ['torrent'] }]
+      filters: [
+        { name: 'Torrent or NZB', extensions: ['torrent', 'nzb'] },
+        { name: 'Torrent', extensions: ['torrent'] },
+        { name: 'NZB', extensions: ['nzb'] }
+      ]
     })
     if (result.canceled || result.filePaths.length === 0) return null
     return result.filePaths[0]
@@ -229,6 +272,13 @@ export function registerIpcHandlers(getWindow: () => BrowserWindow | null): Down
   handle('chooseTorrentFiles', async (_event, id, selected) =>
     manager.chooseTorrentFiles(id, selected)
   )
+  handle('torrentTrackers', async (_event, id) => manager.torrentTrackers(id))
+  handle('addTorrentTrackers', async (_event, id, trackers) => {
+    if (!Array.isArray(trackers) || trackers.some((t) => typeof t !== 'string')) {
+      throw new Error("That doesn't look like a tracker link")
+    }
+    return manager.addTorrentTrackers(id, trackers)
+  })
 
   handle('pauseDownload', async (_event, id) => {
     await manager.pause(id)
@@ -237,6 +287,8 @@ export function registerIpcHandlers(getWindow: () => BrowserWindow | null): Down
   handle('resumeDownload', async (_event, id) => {
     manager.resume(id)
   })
+
+  handle('startNext', async (_event, id) => manager.startNext(id))
 
   handle('relinkDownload', async (_event, id, url) => manager.relink(id, url))
 
@@ -250,8 +302,45 @@ export function registerIpcHandlers(getWindow: () => BrowserWindow | null): Down
     manager.remove(id, options?.trashFile === true)
   )
 
+  handle('usenetServer', async () => {
+    const server = await loadUsenetServer()
+    return server && viewOf(server)
+  })
+  handle('saveUsenetServer', async (_event, input) => {
+    const server = await saveUsenetServer(input)
+    manager.usenetSwitched(server.enabled)
+    return server
+  })
+  handle('saveUsenetBackup', async (_event, input) => saveUsenetBackup(input))
+  // Over a network a download would use, with its proxy (see testUsenetServer).
+  handle('testUsenetServer', async (_event, input, backup) => {
+    const server = await serverFromInput(input, backup === true)
+    const preferences = (await loadSettings()).networkPreferences ?? {}
+    return testUsenetServer(server, await networks.refresh(), preferences)
+  })
+
   handle('updateState', () => updateState())
   handle('showUpdateMenu', () => showUpdateMenu())
+
+  handle('telegramState', () => telegram.authState())
+  handle('telegramStartLogin', async (_event, credentials) => {
+    await telegram.startLogin(credentials)
+  })
+  handle('telegramStartQrLogin', async () => {
+    await telegram.startQrLogin()
+  })
+  handle('telegramSubmitCode', async (_event, code) => {
+    await telegram.submitCode(code)
+  })
+  handle('telegramSubmitPassword', async (_event, password) => {
+    await telegram.submitPassword(password)
+  })
+  handle('telegramLogout', async () => {
+    await telegram.logout()
+  })
+  handle('telegramListMedia', async (_event, offsetId, limit) => {
+    return telegram.listMediaPage(offsetId, limit)
+  })
 
   return manager
 }

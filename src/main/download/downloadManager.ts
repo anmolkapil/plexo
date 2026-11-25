@@ -7,6 +7,7 @@ import type { BrowserWindow } from 'electron'
 import { app, Notification, powerSaveBlocker, safeStorage, shell } from 'electron'
 import { scheduleWindow } from '../../shared/downloadSchedule'
 import { IpcChannels } from '../../shared/ipc-channels'
+import { taskbarProgress, type TaskbarDownload } from '../../shared/taskbarProgress'
 import {
   DOWNLOADS_AT_ONCE,
   SPEED_HISTORY_SECONDS,
@@ -23,19 +24,29 @@ import {
   type HttpDownloadNetwork,
   type HttpDownloadState,
   type NetworkInterfaceInfo,
+  type NetworkPreferences,
   type NetworkStatus,
   type HttpProbeResult,
+  type NzbDownloadState,
+  type NzbSegmentState,
   type StartDownloadRequest,
   type StartHttpDownloadRequest,
+  type StartNzbDownloadRequest,
+  type StartTelegramDownloadRequest,
   type StartTorrentDownloadRequest,
+  type TelegramDownloadNetwork,
+  type TelegramDownloadState,
   type TorrentDownloadNetwork,
   type TorrentDownloadState,
   type TorrentFileEntry,
   type TorrentInfo,
-  type TorrentPieceState
+  type TorrentPieceState,
+  type TorrentTrackersResult
 } from '../../shared/types'
+import { mergeTrackers, normalizeTrackerUrl } from '../../shared/torrentTrackers'
 import { Limits } from '../network/limits'
 import { loadSettings } from '../settings'
+import type { TelegramServiceApi } from '../telegram/service'
 import { addToHistory, findInHistory, removeFromHistory } from './history'
 import { testKnobs } from '../testKnobs'
 import { DownloadFile } from './downloadFile'
@@ -43,23 +54,44 @@ import { compareSamples, HttpTransfer, pickedStreams, splittable } from './httpT
 import { normalizeEtag } from './fileVersion'
 import { ensureDirectory, pathExists, reserveDestinationPath } from './paths'
 import { planBlocks, planDownload, planPieces } from './plan'
-import { restoreBlocks, restorePieces, saveBlocks, type SavedBlocks } from './savedProgress'
+import {
+  restoreBlocks,
+  restorePieces,
+  restoreSegments,
+  saveBlocks,
+  type SavedBlocks
+} from './savedProgress'
 import { chosenFiles, finishedFiles, wantedPieces } from './torrent/files'
 import { probeUrl } from './probe'
 import { browserContextFrom } from './browserContext'
 import { describeTorrent, probedTorrentFile } from './torrent/metadata'
 import { TorrentDestination } from './torrent/torrentDestination'
 import { TorrentTransfer } from './torrent/torrentTransfer'
+import { TelegramTransfer } from './telegramTransfer'
+import { NzbDestination } from './nzb/nzbDestination'
+import {
+  parseNzb,
+  planSegments,
+  probedNzbFile,
+  segmentArticles,
+  type ParsedNzb
+} from './nzb/nzbFile'
+import { NzbTransfer } from './nzb/nzbTransfer'
+import { formatGigabytes, postProcess, removeUnpacked } from './nzb/postProcess'
+import { loadUsenetServer, USENET_OFF, usenetEnabled } from './nzb/usenetServer'
 import {
   clearSpeeds,
   delay,
   Meters,
   recomputeAggregates,
+  unwantedBytes,
   updateSpeeds,
   updateTimeLeft,
   type Transfer,
   type TransferHost,
   type HttpTransferTarget,
+  type NzbTransferTarget,
+  type TelegramTransferTarget,
   type TorrentTransferTarget
 } from './transfer'
 import type { NetworkMonitor } from '../network/interfaces'
@@ -115,7 +147,20 @@ interface TorrentDownloadRuntime extends RuntimeFields, TorrentTransferTarget {
   transfer: TorrentTransfer
 }
 
-type DownloadRuntime = HttpDownloadRuntime | TorrentDownloadRuntime
+interface TelegramDownloadRuntime extends RuntimeFields, TelegramTransferTarget {
+  kind: 'telegram'
+  transfer: TelegramTransfer
+}
+
+interface NzbDownloadRuntime extends RuntimeFields, NzbTransferTarget {
+  kind: 'nzb'
+  transfer: NzbTransfer
+  /** While it repairs and unpacks: what stops the tool at work (see postProcess). */
+  postProcessing?: AbortController
+}
+
+type DownloadRuntime =
+  HttpDownloadRuntime | TorrentDownloadRuntime | TelegramDownloadRuntime | NzbDownloadRuntime
 
 interface PersistedDownloadBase {
   savedAt: number
@@ -125,14 +170,20 @@ interface PersistedDownloadBase {
   requestPayload: StartDownloadRequest
   /** Kept apart from requestPayload, sealed (see sealBrowser). */
   browser?: string
+  customTrackers?: string[]
 }
 
 type PersistedState =
-  Omit<HttpDownloadState, 'blocks' | 'streams'> | Omit<TorrentDownloadState, 'pieces' | 'peers'>
+  | Omit<HttpDownloadState, 'blocks' | 'streams'>
+  | Omit<TorrentDownloadState, 'pieces' | 'peers'>
+  | Omit<TelegramDownloadState, 'blocks' | 'readers'>
+  | Omit<NzbDownloadState, 'blocks' | 'streams'>
 
 type PersistedDownload = PersistedDownloadBase & {
   version: 7
   state: PersistedState
+  /** An NZB download's articles the server didn't have, by index (see NzbSegmentStatus). */
+  missing?: number[]
 } & SavedBlocks
 
 /** Cookies are never written in the clear. Without a keychain (Linux falls back to a fixed key)
@@ -248,12 +299,39 @@ function newTorrentNetwork(iface: NetworkInterfaceInfo, enabled: boolean): Torre
   }
 }
 
-/** A block that needs nothing more: in, or skipped (see BlockStatus). */
+function newTelegramNetwork(
+  iface: NetworkInterfaceInfo,
+  enabled: boolean
+): TelegramDownloadNetwork {
+  return {
+    ...newHttpNetwork(iface, enabled),
+    transfer: 'telegram'
+  }
+}
+
+/** A block that needs nothing more: in, skipped, or missing from the news server (see
+ * TorrentPieceStatus, NzbSegmentStatus). */
 const isDone = (unit: DownloadUnitState): boolean =>
-  unit.status === 'completed' || unit.status === 'skipped'
+  unit.status === 'completed' || unit.status === 'skipped' || unit.status === 'missing'
 
 const unitsOf = (runtime: DownloadRuntime): DownloadUnitState[] =>
-  runtime.kind === 'http' ? runtime.blocks : runtime.pieces
+  runtime.kind === 'torrent' ? runtime.pieces : runtime.blocks
+
+/** An NZB download's own files in its folder: its NZB's, and what unpacking added. */
+function nzbOwnedFiles(state: Pick<NzbDownloadState, 'nzbFiles' | 'postProcess'>): string[] {
+  return [...state.nzbFiles.map((file) => file.name), ...(state.postProcess?.unpackedFiles ?? [])]
+}
+
+/** An NZB download's missing articles, counted into its state: per file, and their bytes. */
+function countMissing(state: NzbDownloadState, articles: { file: number }[]): void {
+  state.missingBytes = 0
+  for (const file of state.nzbFiles) file.missing = 0
+  for (const block of state.blocks) {
+    if (block.status !== 'missing') continue
+    state.missingBytes += block.rangeEnd! - block.rangeStart + 1
+    state.nzbFiles[articles[block.index].file].missing += 1
+  }
+}
 
 /** A torrent download's files as its state shows them, given those `chosen` (null: every one). */
 function choiceOf(chosen: Set<number> | null, total: number): TorrentDownloadState['files'] {
@@ -333,8 +411,14 @@ async function partialLeftovers(persisted: unknown): Promise<string[]> {
   return leftovers
 }
 
-function formatGigabytes(bytes: number): string {
-  return `${(bytes / 1024 ** 3).toFixed(2)} GB`
+/** `value` when it's a web link, the only kind a download's link is refreshed from. */
+function webLink(value: unknown): string | undefined {
+  if (typeof value !== 'string') return undefined
+  try {
+    return /^https?:$/.test(new URL(value).protocol) ? value : undefined
+  } catch {
+    return undefined
+  }
 }
 
 /** The staging file is on the destination volume and becomes the final file by rename. */
@@ -353,6 +437,8 @@ export class DownloadManager {
   private runtimes = new Map<string, DownloadRuntime>()
   /** Downloads whose new link is being checked: two at once could both pass and both resume. */
   private relinking = new Set<string>()
+  /** Downloads that were paused during this session (not restored as paused on startup). */
+  private pausedInSession = new Set<string>()
   private readonly initialization: Promise<void>
   private suspending = false
   private scheduleLoaded = false
@@ -360,23 +446,29 @@ export class DownloadManager {
   private scheduleTimer?: NodeJS.Timeout
   /** Each network's addresses as last seen, by id: what tells a network that has changed. */
   private seenAddresses = new Map<string, string[]>()
+  private networkPreferences: NetworkPreferences = {}
   /** The powerSaveBlocker keeping the computer awake while a download runs (see keepAwake). */
   private awakeBlocker: number | null = null
   /** How many downloads may run at once; the rest wait, queued (see pump). */
   private downloadsAtOnce = DOWNLOADS_AT_ONCE.default
+  /** The Usenet switch, as last saved: while it's off, queued NZBs wait rather than start. */
+  private usenetOn = true
   /** Speed and data limits, for every download together. */
   readonly limits = new Limits(() => this.limitsChanged())
 
   constructor(
     private getWindow: () => BrowserWindow | null,
-    private networks: NetworkMonitor
+    private networks: NetworkMonitor,
+    private readonly telegram: TelegramServiceApi
   ) {
-    this.initialization = Promise.all([this.restorePersistedDownloads(), this.limits.loaded]).then(
-      async () => {
-        // Read after recovery, including any settings saved while the manifests were loading.
-        await this.configureSettings(await loadSettings())
-      }
-    )
+    this.initialization = Promise.all([
+      this.restorePersistedDownloads(),
+      this.limits.loaded,
+      usenetEnabled().then((on) => (this.usenetOn = on))
+    ]).then(async () => {
+      // Read after recovery, including any settings saved while the manifests were loading.
+      await this.configureSettings(await loadSettings())
+    })
   }
 
   /** Takes up what the user set: how many run at once, and the limits. One running past a
@@ -386,7 +478,20 @@ export class DownloadManager {
     await this.configureSettings(settings)
   }
 
+  /** How many downloads are currently downloading or queued. */
+  activeDownloadCount(): number {
+    let count = 0
+    for (const runtime of this.runtimes.values()) {
+      if (runtime.state.status === 'downloading' || runtime.state.status === 'queued') {
+        count++
+      }
+    }
+    return count
+  }
+
   private async configureSettings(settings: AppSettings): Promise<void> {
+    const previousPreferences = this.networkPreferences
+    this.networkPreferences = settings.networkPreferences ?? {}
     this.downloadSchedule = settings.downloadSchedule
     this.scheduleLoaded = true
     const enrollmentChanged: DownloadRuntime[] = []
@@ -407,6 +512,31 @@ export class DownloadManager {
     this.limitsChanged()
     await Promise.all(enrollmentChanged.map((runtime) => this.persistNow(runtime)))
     this.armScheduleTimer()
+
+    // If proxy settings changed, wake and reconnect the affected streams
+    const changedProxies = new Set<string>()
+    for (const [id, pref] of Object.entries(this.networkPreferences)) {
+      const prev = previousPreferences[id]?.proxy
+      const curr = pref.proxy
+      if (JSON.stringify(prev) !== JSON.stringify(curr)) {
+        changedProxies.add(id)
+      }
+    }
+    for (const [id, pref] of Object.entries(previousPreferences)) {
+      if (!this.networkPreferences[id] && pref.proxy) {
+        changedProxies.add(id)
+      }
+    }
+    if (changedProxies.size > 0) {
+      for (const runtime of this.runtimes.values()) {
+        if (runtime.state.status === 'downloading') {
+          runtime.transfer.wake(
+            (id) => changedProxies.has(id),
+            (id) => changedProxies.has(id)
+          )
+        }
+      }
+    }
   }
 
   /** A network ran out of data, or a limit changed: each download's networks are looked at
@@ -501,6 +631,8 @@ export class DownloadManager {
       .sort((a, b) => (a.state.queuedAt ?? 0) - (b.state.queuedAt ?? 0))
     for (const runtime of queued) {
       if (this.runningCount() >= this.downloadsAtOnce) return
+      // Each would only fail on the switch, making room for the next to fail too.
+      if (runtime.kind === 'nzb' && !this.usenetOn) continue
       this.begin(runtime)
     }
   }
@@ -534,6 +666,11 @@ export class DownloadManager {
   /** Where a torrent download keeps its .torrent, beside its manifest. */
   private torrentFilePath(id: string): string {
     return join(this.downloadDir(id), 'metadata.torrent')
+  }
+
+  /** Where an NZB download keeps its NZB, beside its manifest. */
+  private nzbFilePath(id: string): string {
+    return join(this.downloadDir(id), 'metadata.nzb')
   }
 
   private runtimeFields(): RuntimeFields {
@@ -571,7 +708,9 @@ export class DownloadManager {
       reconcile: () => this.reconcile(runtime),
       failDownload: (message, discard) => this.failDownload(runtime, message, discard),
       failNetwork: (network, message) => this.failNetwork(runtime, network, message),
-      scheduleUpdate: () => this.scheduleUpdate(runtime)
+      scheduleUpdate: () => this.scheduleUpdate(runtime),
+      getProxyForInterface: (networkId) => this.networkPreferences[networkId]?.proxy,
+      refreshLink: () => this.refreshLink(runtime)
     }
     const runtime: HttpDownloadRuntime = Object.assign(target, this.runtimeFields(), {
       kind: 'http' as const,
@@ -585,7 +724,9 @@ export class DownloadManager {
     requestPayload: StartTorrentDownloadRequest,
     file: TorrentDestination,
     pieces: TorrentDownloadState['pieces'],
-    torrentFile: Uint8Array
+    torrentFile: Uint8Array,
+    paths: readonly string[],
+    customTrackers: string[] = []
   ): TorrentDownloadRuntime {
     const target: TorrentTransferTarget = {
       state,
@@ -594,7 +735,8 @@ export class DownloadManager {
       file,
       pieces,
       meters: new Meters(),
-      uploadMeters: new Meters()
+      uploadMeters: new Meters(),
+      customTrackers
     }
     const host: TransferHost = {
       networks: this.networks,
@@ -607,7 +749,73 @@ export class DownloadManager {
     }
     const runtime: TorrentDownloadRuntime = Object.assign(target, this.runtimeFields(), {
       kind: 'torrent' as const,
-      transfer: new TorrentTransfer(target, host, torrentFile, file.path)
+      transfer: new TorrentTransfer(target, host, torrentFile, file.path, paths)
+    })
+    return runtime
+  }
+
+  private newTelegramRuntime(
+    state: TelegramDownloadState,
+    requestPayload: StartTelegramDownloadRequest,
+    file: DownloadFile,
+    blocks: HttpBlockState[]
+  ): TelegramDownloadRuntime {
+    const target: TelegramTransferTarget = {
+      state,
+      requestPayload,
+      stop: new AbortController(),
+      file,
+      blocks,
+      meters: new Meters()
+    }
+    const host: TransferHost = {
+      networks: this.networks,
+      limits: this.limits,
+      downloadsOn: (networkId) => this.httpDownloadsOn(networkId),
+      reconcile: () => this.reconcile(runtime),
+      failDownload: (message, discard) => this.failDownload(runtime, message, discard),
+      failNetwork: (network, message) => this.failNetwork(runtime, network, message),
+      scheduleUpdate: () => this.scheduleUpdate(runtime),
+      getProxyForInterface: (networkId) => this.networkPreferences[networkId]?.proxy
+    }
+    const runtime: TelegramDownloadRuntime = Object.assign(target, this.runtimeFields(), {
+      kind: 'telegram' as const,
+      transfer: new TelegramTransfer(target, host, () =>
+        this.telegram.fileSource(requestPayload.messageId)
+      )
+    })
+    return runtime
+  }
+
+  private newNzbRuntime(
+    state: NzbDownloadState,
+    requestPayload: StartNzbDownloadRequest,
+    file: NzbDestination,
+    blocks: NzbSegmentState[],
+    nzb: ParsedNzb
+  ): NzbDownloadRuntime {
+    const target: NzbTransferTarget = {
+      state,
+      requestPayload,
+      stop: new AbortController(),
+      file,
+      blocks,
+      meters: new Meters()
+    }
+    file.fileSizes = () => state.nzbFiles.map((entry) => entry.size)
+    const host: TransferHost = {
+      networks: this.networks,
+      limits: this.limits,
+      downloadsOn: (networkId) => this.httpDownloadsOn(networkId),
+      reconcile: () => this.reconcile(runtime),
+      failDownload: (message, discard) => this.failDownload(runtime, message, discard),
+      failNetwork: (network, message) => this.failNetwork(runtime, network, message),
+      scheduleUpdate: () => this.scheduleUpdate(runtime),
+      getProxyForInterface: (networkId) => this.networkPreferences[networkId]?.proxy
+    }
+    const runtime: NzbDownloadRuntime = Object.assign(target, this.runtimeFields(), {
+      kind: 'nzb' as const,
+      transfer: new NzbTransfer(target, host, segmentArticles(nzb), loadUsenetServer)
     })
     return runtime
   }
@@ -691,6 +899,19 @@ export class DownloadManager {
       void omittedBlocks
       void omittedStreams
       entry = { ...state, unitsWritten: state.totalBlocks }
+    } else if (runtime.kind === 'telegram') {
+      const { blocks: omittedBlocks, readers: omittedReaders, ...state } = runtime.state
+      void omittedBlocks
+      void omittedReaders
+      entry = { ...state, unitsWritten: state.totalBlocks }
+    } else if (runtime.kind === 'nzb') {
+      const { blocks, streams: omittedStreams, ...state } = runtime.state
+      void omittedStreams
+      entry = {
+        ...state,
+        unitsWritten: blocks.filter((block) => block.status === 'completed').length,
+        downloadedFiles: nzbOwnedFiles(state)
+      }
     } else {
       const { pieces, peers: omittedPeers, ...state } = runtime.state
       void omittedPeers
@@ -713,7 +934,9 @@ export class DownloadManager {
       return
     }
     this.runtimes.delete(runtime.state.id)
+    this.pausedInSession.delete(runtime.state.id)
     await this.removePersistedDownload(runtime, false)
+    this.updateTaskbarProgress()
     this.historyChanged()
   }
 
@@ -782,7 +1005,37 @@ export class DownloadManager {
           torrent.files.map((file) => file.path)
         ),
         pieces,
-        torrentFile
+        torrentFile,
+        torrent.files.map((file) => file.path),
+        persisted.customTrackers
+      )
+    } else if (persisted.state.kind === 'nzb' && requestPayload.kind === 'nzb') {
+      const nzbFile = await readFile(this.nzbFilePath(id)).catch((error: unknown) => {
+        if (isNotFound(error)) return null
+        throw error
+      })
+      if (!nzbFile) return null
+      let nzb: ParsedNzb
+      try {
+        nzb = parseNzb(nzbFile)
+      } catch {
+        return null
+      }
+      const old = persisted.state
+      const blocks = restoreSegments(planSegments(nzb), old, saved, persisted.missing)
+      if (!blocks) return null
+      state = { ...old, streams: [], blocks, totalBlocks: blocks.length }
+      countMissing(state, segmentArticles(nzb))
+      runtime = this.newNzbRuntime(
+        state,
+        requestPayload,
+        new NzbDestination(
+          persisted.partialPath,
+          nzb.files.map((file) => file.name),
+          state.totalBytes
+        ),
+        blocks,
+        nzb
       )
     } else if (persisted.state.kind === 'http' && requestPayload.kind === 'http') {
       const old = persisted.state
@@ -790,6 +1043,17 @@ export class DownloadManager {
       if (!blocks) return null
       state = { ...old, streams: [], blocks, totalBlocks: blocks.length }
       runtime = this.newHttpRuntime(
+        state,
+        requestPayload,
+        new DownloadFile(persisted.partialPath),
+        blocks
+      )
+    } else if (persisted.state.kind === 'telegram' && requestPayload.kind === 'telegram') {
+      const old = persisted.state
+      const blocks = restoreBlocks(old, saved)
+      if (!blocks) return null
+      state = { ...old, readers: [], blocks, totalBlocks: blocks.length }
+      runtime = this.newTelegramRuntime(
         state,
         requestPayload,
         new DownloadFile(persisted.partialPath),
@@ -827,7 +1091,9 @@ export class DownloadManager {
               .catch(() => false)
           : persisted.publicationIdentity?.dev === published.dev &&
             persisted.publicationIdentity?.ino === published.ino)
-      if (units.every(isDone) && publishedSize === expected && sameFile) {
+      // Unless it was still repairing or unpacking: that runs again on Resume.
+      const postProcessing = state.kind === 'nzb' && state.postProcess?.stage !== undefined
+      if (units.every(isDone) && publishedSize === expected && sameFile && !postProcessing) {
         state.status = 'completed'
         state.destinationPath = publishedPath
         state.fileName = basename(publishedPath)
@@ -885,8 +1151,16 @@ export class DownloadManager {
     await this.initialization
     return [...this.runtimes.values()]
       .sort((a, b) => a.state.startedAt - b.state.startedAt)
-      .map((runtime) => {
+      .map((runtime): DownloadUpdate => {
         if (runtime.kind === 'http') {
+          const { blocks, ...state } = runtime.state
+          return structuredClone({ seq: runtime.sentUpdates, state, blocks })
+        }
+        if (runtime.kind === 'telegram') {
+          const { blocks, ...state } = runtime.state
+          return structuredClone({ seq: runtime.sentUpdates, state, blocks })
+        }
+        if (runtime.kind === 'nzb') {
           const { blocks, ...state } = runtime.state
           return structuredClone({ seq: runtime.sentUpdates, state, blocks })
         }
@@ -897,6 +1171,9 @@ export class DownloadManager {
 
   async start(requestPayload: StartDownloadRequest): Promise<string> {
     await this.initialization
+    if (requestPayload.kind === 'http' && requestPayload.requestedUrl !== undefined) {
+      requestPayload = { ...requestPayload, requestedUrl: webLink(requestPayload.requestedUrl) }
+    }
     if (requestPayload.kind === 'http' && requestPayload.browser !== undefined) {
       const browser = browserContextFrom(requestPayload.browser)
       if (!browser) throw new Error('The browser’s details for this download couldn’t be read.')
@@ -912,6 +1189,7 @@ export class DownloadManager {
     const id = randomUUID()
     let runtime: DownloadRuntime
     if (requestPayload.kind === 'torrent') {
+      delete (requestPayload as { trackers?: unknown }).trackers
       const torrentFile = probedTorrentFile(requestPayload.infoHash)
       if (!torrentFile) throw new Error('Add the torrent again to start downloading.')
       const torrentProbe = await describeTorrent(torrentFile, requestPayload.url)
@@ -957,7 +1235,53 @@ export class DownloadManager {
         pieceLength: torrent.pieceLength,
         startedAt: Date.now()
       }
-      runtime = this.newTorrentRuntime(state, requestPayload, file, pieces, torrentFile)
+      runtime = this.newTorrentRuntime(
+        state,
+        requestPayload,
+        file,
+        pieces,
+        torrentFile,
+        torrent.files.map((entry) => entry.path)
+      )
+    } else if (requestPayload.kind === 'telegram') {
+      // The dialog's idea of the file was a hint; Telegram's answer is the truth (a photo's
+      // size is 0: unknown until the download ends).
+      const info = await this.telegram.mediaInfo(requestPayload.messageId)
+      const totalBytes = info.totalBytes
+      const blockSizeBytes = 1024 * 1024
+      const blocks = planBlocks(totalBytes, blockSizeBytes)
+      await ensureDiskSpace(requestPayload.destinationDir, totalBytes)
+      const destinationPath = await reserveDestinationPath(
+        requestPayload.destinationDir,
+        requestPayload.suggestedFileName
+      )
+      const networks = available.map((iface) => newTelegramNetwork(iface, selected.includes(iface)))
+      const state: TelegramDownloadState = {
+        id,
+        kind: 'telegram',
+        url: requestPayload.url,
+        fileName: basename(destinationPath),
+        destinationPath,
+        totalBytes,
+        bytesDownloaded: 0,
+        speedBytesPerSec: 0,
+        status: 'downloading',
+        networks,
+        readers: [],
+        peakReaders: 0,
+        blocks,
+        totalBlocks: blocks.length,
+        blockSizeBytes,
+        startedAt: Date.now()
+      }
+      runtime = this.newTelegramRuntime(
+        state,
+        requestPayload,
+        new DownloadFile(`${destinationPath}.plexo`),
+        blocks
+      )
+    } else if (requestPayload.kind === 'nzb') {
+      runtime = await this.startNzb(id, requestPayload, available, selected)
     } else {
       const target = new URL(requestPayload.url)
       const usable = compatibleInterfaces(
@@ -986,6 +1310,7 @@ export class DownloadManager {
         id,
         kind: 'http',
         url: requestPayload.url,
+        requestedUrl: requestPayload.requestedUrl,
         fileName: basename(destinationPath),
         destinationPath,
         totalBytes: requestPayload.totalBytes,
@@ -1022,6 +1347,68 @@ export class DownloadManager {
     return id
   }
 
+  /** An NZB download, set up to start: its articles planned, its folder claimed, its NZB kept
+   * beside its manifest. */
+  private async startNzb(
+    id: string,
+    requestPayload: StartNzbDownloadRequest,
+    available: NetworkInterfaceInfo[],
+    selected: NetworkInterfaceInfo[]
+  ): Promise<NzbDownloadRuntime> {
+    const nzbFile = probedNzbFile(requestPayload.nzbHash)
+    if (!nzbFile) throw new Error('Add the NZB again to start downloading.')
+    const server = await loadUsenetServer()
+    if (!server) throw new Error('Set up a news server to download from Usenet.')
+    if (!server.enabled) throw new Error(USENET_OFF)
+    const nzb = parseNzb(nzbFile)
+    const usable = compatibleInterfaces(
+      selected,
+      await resolveTargetWithin(server.host, testKnobs.stallTimeoutMs)
+    )
+    if (usable.length === 0) throw new NoCompatibleRouteError(server.host)
+    const blocks = planSegments(nzb)
+    const totalBytes = blocks.reduce(
+      (sum, block) => sum + block.rangeEnd! - block.rangeStart + 1,
+      0
+    )
+    await ensureDiskSpace(requestPayload.destinationDir, totalBytes)
+    const names = nzb.files.map((file) => file.name)
+    const file = await NzbDestination.create(
+      requestPayload.destinationDir,
+      requestPayload.suggestedFileName,
+      names,
+      totalBytes
+    )
+    await ensureDirectory(this.downloadDir(id))
+    await writeFile(this.nzbFilePath(id), nzbFile)
+    const state: NzbDownloadState = {
+      id,
+      kind: 'nzb',
+      url: requestPayload.url,
+      fileName: basename(file.path),
+      destinationPath: file.path,
+      totalBytes,
+      bytesDownloaded: 0,
+      speedBytesPerSec: 0,
+      status: 'downloading',
+      networks: available.map((iface) => newHttpNetwork(iface, usable.includes(iface))),
+      streams: [],
+      peakStreams: 0,
+      blocks,
+      totalBlocks: blocks.length,
+      nzbFiles: nzb.files.map((entry) => ({
+        name: entry.name,
+        bytes: entry.segments.reduce((sum, segment) => sum + segment.bytes, 0),
+        segments: entry.segments.length,
+        missing: 0
+      })),
+      missingBytes: 0,
+      server: server.host,
+      startedAt: Date.now()
+    }
+    return this.newNzbRuntime(state, requestPayload, file, blocks, nzb)
+  }
+
   /** Runs the download, and once the run ends makes room for the next one queued. */
   private launch(runtime: DownloadRuntime): void {
     runtime.runPromise = this.run(runtime).finally(() => this.pump())
@@ -1038,6 +1425,7 @@ export class DownloadManager {
       runtime.state.status = 'paused'
       runtime.state.queuedAt = undefined
       runtime.state.pausedAt ??= Date.now()
+      this.pausedInSession.add(id)
       this.pushUpdate(runtime)
       await runtime.runPromise
       await this.persistNow(runtime)
@@ -1051,16 +1439,26 @@ export class DownloadManager {
     } else {
       runtime.state.status = 'paused'
       runtime.state.scheduled = undefined
+      this.pausedInSession.add(id)
     }
     runtime.state.pausedAt = Date.now()
     clearSpeeds(runtime.state)
-    if (runtime.kind === 'http') {
+    if (runtime.kind === 'http' || runtime.kind === 'nzb') {
       for (const stream of runtime.state.streams) {
         if (stream.status !== 'completed') {
           stream.status = 'paused'
         }
         stream.currentBlockIndex = undefined
         stream.hedge = undefined
+        stream.split = undefined
+      }
+    }
+    if (runtime.kind === 'telegram') {
+      for (const reader of runtime.state.readers) {
+        if (reader.status !== 'completed') {
+          reader.status = 'paused'
+        }
+        reader.currentBlockIndex = undefined
       }
     }
     for (const unit of unitsOf(runtime)) {
@@ -1118,6 +1516,46 @@ export class DownloadManager {
     replaceable: () => boolean,
     given?: { probe?: HttpProbeResult; browser?: BrowserContext }
   ): Promise<void> {
+    await this.adoptLink(runtime, url, replaceable, given)
+    this.resume(runtime.state.id)
+  }
+
+  /** The server turned a running download's link away (see TransferHost.refreshLink): the link
+   * it was given, checked as a link given to Fix is, takes its place. Undefined when there is no
+   * other link, or Fix is checking one. */
+  private refreshLink(runtime: HttpDownloadRuntime): Promise<boolean> | undefined {
+    const { id } = runtime.state
+    const { url, requestedUrl } = runtime.requestPayload
+    if (!requestedUrl || requestedUrl === url || this.relinking.has(id)) return undefined
+    const { signal } = runtime.stop
+    const running = (): boolean =>
+      this.runtimes.get(id) === runtime && !signal.aborted && runtime.state.status === 'downloading'
+    this.relinking.add(id)
+    return this.adoptLink(runtime, requestedUrl, running)
+      .then(
+        (adopted) => {
+          // The same link again: it was the link that was turned away, not one that ran out.
+          if (adopted === url) return false
+          this.scheduleUpdate(runtime)
+          return true
+        },
+        (error: unknown) => {
+          // The link turned away stays, and fails the download as it would have.
+          console.warn('[plexo] link refresh', error)
+          return false
+        }
+      )
+      .finally(() => this.relinking.delete(id))
+  }
+
+  /** Makes `url` the download's link once it's checked to serve the file downloaded so far, while
+   * `current` says the download is still as it was. The link the download now fetches. */
+  private async adoptLink(
+    runtime: HttpDownloadRuntime,
+    url: string,
+    current: () => boolean,
+    given?: { probe?: HttpProbeResult; browser?: BrowserContext }
+  ): Promise<string> {
     // A fresh link from the same site usually needs the same sign-in, so the old one carries over
     // unless the browser sent a new one.
     const browser = given?.browser ?? runtime.requestPayload.browser
@@ -1144,12 +1582,16 @@ export class DownloadManager {
     if (verdict === 'unknown') {
       throw new Error('Plexo couldn’t check that link against what’s downloaded. Try again.')
     }
-    if (!replaceable()) throw new Error('The download changed while its new link was checked.')
+    if (!current()) throw new Error('The download changed while its new link was checked.')
+    // The link given is the one asked for a fresh link next time.
+    const requestedUrl = webLink(probe.requestedUrl)
     runtime.requestPayload.url = probe.finalUrl
+    runtime.requestPayload.requestedUrl = requestedUrl
     runtime.requestPayload.browser = browser
     runtime.state.url = probe.finalUrl
+    runtime.state.requestedUrl = requestedUrl
     await this.persistNow(runtime)
-    this.resume(runtime.state.id)
+    return probe.finalUrl
   }
 
   private async compareWithDisk(
@@ -1166,7 +1608,8 @@ export class DownloadManager {
     if (!network) return 'unknown'
     const connection = new StreamConnection(() => network, {
       timeoutMs: testKnobs.stallTimeoutMs,
-      connectTimeoutMs: testKnobs.connectTimeoutMs
+      connectTimeoutMs: testKnobs.connectTimeoutMs,
+      proxy: () => this.networkPreferences[network.id]?.proxy
     })
     try {
       return await compareSamples(runtime, url, browser, connection)
@@ -1204,6 +1647,19 @@ export class DownloadManager {
     if (status !== 'paused' && !(status === 'error' && resumable !== false)) return
 
     void this.resumeAfterVerifying(runtime, false)
+  }
+
+  /** Puts a queued download first in line, so it's the one that starts when a place is free.
+   * Nothing running is paused for it, and no more run at once than downloadsAtOnce: it only
+   * moves ahead of the others waiting. Waiting for the schedule, it's the first to start when
+   * the window opens, and its place is saved with it, so a scheduled queue keeps that order
+   * through a restart. */
+  async startNext(id: string): Promise<void> {
+    const runtime = this.runtimes.get(id)
+    if (!runtime || runtime.cancelPromise || runtime.state.status !== 'queued') return
+    this.enqueue(runtime, true)
+    this.pushUpdate(runtime)
+    await this.persistNow(runtime)
   }
 
   // A file that changed on the server while this download was paused is caught by the first
@@ -1254,6 +1710,7 @@ export class DownloadManager {
       void this.persistNow(runtime)
       return
     }
+    this.pausedInSession.delete(runtime.state.id)
     runtime.state.scheduled = this.downloadSchedule?.enabled || undefined
     const { networks } = runtime.state
     runtime.state.status = 'downloading'
@@ -1290,12 +1747,19 @@ export class DownloadManager {
       }
       if (unit.kind === 'torrent') unit.provisionalBytes = 0
     }
-    if (runtime.kind === 'http') {
+    if (runtime.kind === 'http' || runtime.kind === 'nzb') {
       for (const stream of runtime.state.streams) {
         if (stream.status !== 'completed') {
           stream.status = 'pending'
         }
         stream.speedBytesPerSec = 0
+      }
+    } else if (runtime.kind === 'telegram') {
+      for (const reader of runtime.state.readers) {
+        if (reader.status !== 'completed') {
+          reader.status = 'pending'
+        }
+        reader.speedBytesPerSec = 0
       }
     } else {
       runtime.state.peers.length = 0
@@ -1372,6 +1836,24 @@ export class DownloadManager {
         (id) => moved.has(id)
       )
       this.scheduleUpdate(runtime)
+    }
+  }
+
+  /** The Usenet switch was saved. Off, the NZBs running stop rather than keep connecting and go
+   * back in the queue, as the download schedule does, to wait with the queued ones (see pump); a
+   * paused one resumed fails before it connects (see NzbTransfer.reconcile). On, the queue
+   * starts. */
+  usenetSwitched(on: boolean): void {
+    this.usenetOn = on
+    if (on) {
+      this.pump()
+      return
+    }
+    for (const runtime of this.runtimes.values()) {
+      if (runtime.kind !== 'nzb') continue
+      void this.pause(runtime.state.id, true).catch((error) =>
+        console.error('[plexo] Usenet switched off', error)
+      )
     }
   }
 
@@ -1470,12 +1952,80 @@ export class DownloadManager {
     this.pushUpdate(runtime)
   }
 
+  /** A torrent download's trackers: default trackers from the .torrent, and any custom trackers added. */
+  async torrentTrackers(id: string): Promise<TorrentTrackersResult> {
+    const runtime = this.runtimes.get(id)
+    if (runtime?.kind !== 'torrent') throw new Error('Not a torrent download')
+    const torrent = await this.torrentInfo(id)
+    if (!torrent) throw new Error('Not a torrent download')
+    const defaultTrackers = torrent.trackers ?? []
+    const customTrackers = runtime.customTrackers ?? []
+    return {
+      defaultTrackers,
+      customTrackers,
+      isPrivate: Boolean(torrent.isPrivate)
+    }
+  }
+
+  /** Adds custom trackers to a torrent download. */
+  async addTorrentTrackers(id: string, rawTrackers: unknown): Promise<TorrentTrackersResult> {
+    if (!Array.isArray(rawTrackers) || rawTrackers.some((t) => typeof t !== 'string')) {
+      throw new Error("That doesn't look like a tracker link")
+    }
+    if (rawTrackers.length === 0) {
+      throw new Error("That doesn't look like a tracker link")
+    }
+    if (rawTrackers.length > 100) {
+      throw new Error('Too many trackers (maximum 100)')
+    }
+    for (const tracker of rawTrackers) {
+      if (tracker.length > 2048) {
+        throw new Error("That doesn't look like a tracker link")
+      }
+    }
+
+    const runtime = this.runtimes.get(id)
+    if (runtime?.kind !== 'torrent') throw new Error('Not a torrent download')
+    const torrent = await this.torrentInfo(id)
+    if (!torrent) throw new Error('Not a torrent download')
+    if (torrent.isPrivate) throw new Error('Cannot add trackers to a private torrent')
+
+    const settled =
+      runtime.publishing ||
+      runtime.state.status === 'completed' ||
+      runtime.state.status === 'cancelled' ||
+      this.runtimes.get(id) !== runtime
+    if (settled) throw new Error('This download’s trackers can’t change now')
+
+    const defaultTrackers = torrent.trackers ?? []
+    const existingCustom = runtime.customTrackers ?? []
+    const merged = mergeTrackers([...defaultTrackers, ...existingCustom], rawTrackers)
+    const newCustom = merged.filter((url) => !defaultTrackers.includes(url))
+    if (newCustom.length > 100) {
+      throw new Error('Too many trackers (maximum 100)')
+    }
+
+    const validTrackers = rawTrackers.map(normalizeTrackerUrl).filter(Boolean)
+    if (validTrackers.length === 0) {
+      throw new Error("That doesn't look like a tracker link")
+    }
+
+    runtime.customTrackers = newCustom
+    runtime.transfer.trackersChanged()
+    await this.persistNow(runtime)
+    return {
+      defaultTrackers,
+      customTrackers: newCustom,
+      isPrivate: false
+    }
+  }
+
   async cancel(id: string): Promise<void> {
     const runtime = this.runtimes.get(id)
     if (runtime?.cancelPromise) return runtime.cancelPromise
     if (
       !runtime ||
-      runtime.publishing ||
+      (runtime.publishing && !(runtime.kind === 'nzb' && runtime.postProcessing)) ||
       (runtime.state.status !== 'downloading' &&
         runtime.state.status !== 'paused' &&
         runtime.state.status !== 'queued' &&
@@ -1504,11 +2054,23 @@ export class DownloadManager {
       this.stopRun(runtime)
       this.pushUpdate(runtime, false)
       await runtime.runPromise?.catch(() => {})
+      // An unpack a crash cut short left its staging folders and what it had moved: they go too.
+      if (runtime.kind === 'nzb' && runtime.state.postProcess?.stage) {
+        const { destinationPath, postProcess: done, nzbFiles } = runtime.state
+        await removeUnpacked(
+          destinationPath,
+          done.unpackedNames ?? [],
+          nzbFiles.map((file) => file.name)
+        ).catch(() => {})
+      }
       await runtime.file.discard()
       await this.removePersistedDownload(runtime, false)
       runtime.state.status = 'cancelled'
-      if (runtime.kind === 'http') {
+      if (runtime.kind === 'http' || runtime.kind === 'nzb') {
         for (const stream of runtime.state.streams) stream.status = 'cancelled'
+      }
+      if (runtime.kind === 'telegram') {
+        for (const reader of runtime.state.readers) reader.status = 'cancelled'
       }
       this.pushUpdate(runtime, false)
     } catch (error) {
@@ -1554,11 +2116,15 @@ export class DownloadManager {
             ? (await this.torrentFiles(id))
                 .filter((file) => file.chosen)
                 .map((file) => file.path.split(/[\\/]/).slice(1).join(sep))
-            : undefined
+            : runtime.kind === 'nzb'
+              ? nzbOwnedFiles(runtime.state)
+              : undefined
         await trashDownload(runtime.state, owned)
       }
       this.runtimes.delete(id)
+      this.pausedInSession.delete(id)
       await this.removePersistedDownload(runtime)
+      this.updateTaskbarProgress()
       if (runtime.state.status === 'completed') {
         await removeFromHistory([id])
         this.historyChanged()
@@ -1611,7 +2177,12 @@ export class DownloadManager {
     clearTimeout(this.scheduleTimer)
     await Promise.all(
       [...this.runtimes.values()].map(async (runtime) => {
-        if (runtime.state.status === 'downloading')
+        if (runtime.kind === 'nzb' && runtime.postProcessing) {
+          // The tool goes with Plexo; what it was doing runs again on Resume (see restore).
+          runtime.postProcessing.abort()
+          await runtime.runPromise
+          await this.persistNow(runtime)
+        } else if (runtime.state.status === 'downloading')
           await this.pause(runtime.state.id, runtime.state.scheduled === true)
         else {
           if (runtime.scheduleStopping) await runtime.runPromise
@@ -1620,6 +2191,7 @@ export class DownloadManager {
       })
     )
     await this.limits.save()
+    this.updateTaskbarProgress()
   }
 
   /**
@@ -1689,6 +2261,8 @@ export class DownloadManager {
     samplePeak(runtime, Date.now())
     runtime.stop.abort()
     await Promise.all(runtime.transfer.running())
+    // An NZB's files are open while its connections write them; they open again on a resume.
+    if (runtime.kind === 'nzb') await runtime.file.close()
     // However it ended — paused, failed, cancelled, done — nothing is moving now.
     clearSpeeds(runtime.state)
 
@@ -1720,6 +2294,7 @@ export class DownloadManager {
       )
       runtime.state.destinationPath = publishedPath
       runtime.state.fileName = basename(publishedPath)
+      if (runtime.kind === 'nzb') await this.postProcess(runtime)
       runtime.state.status = 'completed'
       runtime.state.completedAt = Date.now()
       // Done before it downloaded for PEAK_SECONDS: its speed start to finish, pauses left out (the
@@ -1731,19 +2306,26 @@ export class DownloadManager {
         runtime.state.peakSpeedBytesPerSec ??= (end!.bytes - start.bytes) / ranFor
       }
       runtime.state.bytesDownloaded =
-        runtime.state.totalBytes -
-          (runtime.state.kind === 'torrent' ? runtime.state.skippedBytes : 0) ||
-        runtime.state.bytesDownloaded
+        runtime.state.totalBytes - unwantedBytes(runtime.state) || runtime.state.bytesDownloaded
       await this.persistNow(runtime)
       await runtime.file.discardLeftover().catch(() => {})
-      this.notify('Download complete', `${runtime.state.fileName} has finished downloading.`)
-    } catch (error) {
-      runtime.state.status = 'error'
-      runtime.state.error = error instanceof Error ? error.message : String(error)
       this.notify(
-        'Download failed',
-        `${runtime.state.fileName}: ${describeError(runtime.state.error)}`
+        'Download complete',
+        `${runtime.state.fileName} has finished downloading. Click to show in folder.`,
+        runtime.state.id
       )
+    } catch (error) {
+      // Cancelled while it repaired or unpacked (see cancel): cancelRuntime takes it from here.
+      // Stopped by a quit: it runs again after the relaunch (see suspendAll). Failed while it
+      // did: failDownload has said why.
+      if ((runtime.state.status as DownloadStatus) === 'downloading' && !this.suspending) {
+        runtime.state.status = 'error'
+        runtime.state.error = error instanceof Error ? error.message : String(error)
+        this.notify(
+          'Download failed',
+          `${runtime.state.fileName}: ${describeError(runtime.state.error)}`
+        )
+      }
     }
     runtime.publishing = false
 
@@ -1755,16 +2337,51 @@ export class DownloadManager {
   private stopRun(runtime: DownloadRuntime): void {
     runtime.stop.abort()
     runtime.transfer.abort()
+    if (runtime.kind === 'nzb') runtime.postProcessing?.abort()
+  }
+
+  /** An NZB download's repair and unpacking, once its files are cut to size: the one part of
+   * publishing that can be cancelled, as it can take a while. */
+  private async postProcess(runtime: NzbDownloadRuntime): Promise<void> {
+    const { state } = runtime
+    // Switched off: a resumed download whose repair or unpack was cut short waits, as it was.
+    if (!(await usenetEnabled())) {
+      this.failDownload(runtime, USENET_OFF)
+      throw new Error(USENET_OFF)
+    }
+    runtime.postProcessing = new AbortController()
+    // Run again after a relaunch: from where it got to.
+    const { repaired, unpacked, unpackedNames, unpackedFiles } = state.postProcess ?? {}
+    state.postProcess = { repaired, unpacked, unpackedNames, unpackedFiles }
+    try {
+      await postProcess({
+        folder: state.destinationPath,
+        files: state.nzbFiles.map((file) => file.name),
+        missing: state.nzbFiles.reduce((sum, file) => sum + file.missing, 0),
+        state: state.postProcess,
+        changed: () => this.scheduleUpdate(runtime),
+        checkpoint: () => this.persistNow(runtime),
+        signal: runtime.postProcessing.signal
+      })
+      // Cancelled or quit after the last tool ran: not completed, whatever it got to.
+      runtime.postProcessing.signal.throwIfAborted()
+    } finally {
+      runtime.postProcessing = undefined
+    }
   }
 
   /** Ends the download in an error. What it has downloaded stays for a resume, unless
    * `discard`: bytes that are no use any more. */
   private failDownload(runtime: DownloadRuntime, message: string, discard = false): void {
     if (runtime.state.status !== 'downloading') return
+    this.pausedInSession.delete(runtime.state.id)
     runtime.state.status = 'error'
     runtime.state.error = message
     runtime.state.resumable = !discard
-    this.notify('Download failed', `${runtime.state.fileName}: ${describeError(message)}`)
+    // Switched off by the user, who needs no telling; the download's error still says so.
+    if (message !== USENET_OFF) {
+      this.notify('Download failed', `${runtime.state.fileName}: ${describeError(message)}`)
+    }
     this.stopRun(runtime)
   }
 
@@ -1793,13 +2410,21 @@ export class DownloadManager {
     // Until the monitor has looked, nothing is known to be gone.
     const known = present !== null
     if (known) {
-      if (state.kind === 'http') {
+      if (state.kind === 'http' || state.kind === 'nzb') {
         state.networks = state.networks.filter(
           (network) =>
             network.enabled ||
             network.bytesDownloaded > 0 ||
             present.some((iface) => iface.id === network.id) ||
             state.streams.some((stream) => stream.interfaceId === network.id)
+        )
+      } else if (state.kind === 'telegram') {
+        state.networks = state.networks.filter(
+          (network) =>
+            network.enabled ||
+            network.bytesDownloaded > 0 ||
+            present.some((iface) => iface.id === network.id) ||
+            state.readers.some((reader) => reader.interfaceId === network.id)
         )
       } else {
         state.networks = state.networks.filter(
@@ -1813,8 +2438,11 @@ export class DownloadManager {
       }
       for (const iface of present) {
         if (!state.networks.some((network) => network.id === iface.id)) {
-          if (state.kind === 'http') state.networks.push(newHttpNetwork(iface, false))
-          else state.networks.push(newTorrentNetwork(iface, false))
+          if (state.kind === 'http' || state.kind === 'nzb') {
+            state.networks.push(newHttpNetwork(iface, false))
+          } else if (state.kind === 'telegram') {
+            state.networks.push(newTelegramNetwork(iface, false))
+          } else state.networks.push(newTorrentNetwork(iface, false))
         }
       }
     }
@@ -1856,21 +2484,54 @@ export class DownloadManager {
     runtime.transfer.reconcile()
   }
 
-  private notify(title: string, body: string): void {
+  private notify(title: string, body: string, downloadId?: string): void {
     if (testKnobs.userDataDir || !Notification.isSupported()) return
     try {
       const notification = new Notification({ title, body })
       notification.on('click', () => {
-        const window = this.getWindow()
-        if (window && !window.isDestroyed()) {
-          if (window.isMinimized()) window.restore()
-          window.show()
-          window.focus()
+        const showWindow = (): void => {
+          const window = this.getWindow()
+          if (window && !window.isDestroyed()) {
+            if (window.isMinimized()) window.restore()
+            window.show()
+            window.focus()
+          }
+        }
+        if (downloadId) {
+          void this.reveal(downloadId).then((revealed) => {
+            if (!revealed) showWindow()
+          })
+        } else {
+          showWindow()
         }
       })
       notification.show()
     } catch {
       // Best-effort notification
+    }
+  }
+
+  private updateTaskbarProgress(): void {
+    if (testKnobs.userDataDir) return
+    const window = this.getWindow()
+    if (!window || window.isDestroyed()) return
+
+    const states: TaskbarDownload[] = []
+    for (const runtime of this.runtimes.values()) {
+      if (runtime.state.status === 'downloading') {
+        states.push(runtime.state)
+      } else if (runtime.state.status === 'paused' && this.pausedInSession.has(runtime.state.id)) {
+        states.push(runtime.state)
+      }
+    }
+
+    const { progress, mode } = taskbarProgress(states)
+    if (mode === 'indeterminate') {
+      window.setProgressBar(2, { mode: 'indeterminate' })
+    } else if (mode === 'none' || progress < 0) {
+      window.setProgressBar(-1, { mode: 'none' })
+    } else {
+      window.setProgressBar(progress, { mode })
     }
   }
 
@@ -1894,12 +2555,25 @@ export class DownloadManager {
     if (runtime.state.status === 'paused' || runtime.state.status === 'cancelled') {
       clearSpeeds(runtime.state)
     }
+    this.updateTaskbarProgress()
     window.webContents.send(IpcChannels.downloadUpdated, this.takeUpdate(runtime))
   }
 
   /** What the window hasn't been sent yet: the download's state, and the work units that moved. */
   private takeUpdate(runtime: DownloadRuntime): DownloadUpdate {
     if (runtime.kind === 'http') {
+      const changed = this.changedUnits(runtime, runtime.blocks)
+      const { blocks: omittedBlocks, ...state } = runtime.state
+      void omittedBlocks
+      return structuredClone({ seq: ++runtime.sentUpdates, state, blocks: changed })
+    }
+    if (runtime.kind === 'telegram') {
+      const changed = this.changedUnits(runtime, runtime.blocks)
+      const { blocks: omittedBlocks, ...state } = runtime.state
+      void omittedBlocks
+      return structuredClone({ seq: ++runtime.sentUpdates, state, blocks: changed })
+    }
+    if (runtime.kind === 'nzb') {
       const changed = this.changedUnits(runtime, runtime.blocks)
       const { blocks: omittedBlocks, ...state } = runtime.state
       void omittedBlocks
@@ -1969,11 +2643,22 @@ export class DownloadManager {
         const path = this.manifestPath(runtime.state.id)
         const temporaryPath = `${path}.tmp`
         let state: PersistedState
+        let missing: number[] | undefined
         if (runtime.kind === 'http') {
           const { blocks: omittedBlocks, streams: omittedStreams, ...rest } = runtime.state
           void omittedBlocks
           void omittedStreams
           state = rest
+        } else if (runtime.kind === 'telegram') {
+          const { blocks: omittedBlocks, readers: omittedReaders, ...rest } = runtime.state
+          void omittedBlocks
+          void omittedReaders
+          state = rest
+        } else if (runtime.kind === 'nzb') {
+          const { blocks, streams: omittedStreams, ...rest } = runtime.state
+          void omittedStreams
+          state = rest
+          missing = blocks.filter((block) => block.status === 'missing').map((block) => block.index)
         } else {
           const { pieces: omittedPieces, peers: omittedPeers, ...rest } = runtime.state
           void omittedPieces
@@ -1985,10 +2670,12 @@ export class DownloadManager {
           savedAt: Date.now(),
           state: structuredClone(state),
           ...saveBlocks(unitsOf(runtime)),
+          ...(missing?.length && { missing }),
           partialPath: runtime.file.path,
           publicationPath: runtime.publicationPath,
           publicationIdentity: runtime.publicationIdentity,
-          ...savedRequest(runtime)
+          ...savedRequest(runtime),
+          customTrackers: runtime.kind === 'torrent' ? runtime.customTrackers : undefined
         }
         if (['downloading', 'paused', 'queued'].includes(runtime.state.status)) {
           await runtime.file.sync()

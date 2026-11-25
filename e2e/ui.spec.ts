@@ -1,7 +1,7 @@
 import { readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import type { Locator, Page } from '@playwright/test'
-import { BLOCK, expect, interfacesEnv, NETWORKS, test, treeSha } from './fixtures'
+import { BLOCK, expect, expectTorrent, interfacesEnv, NETWORKS, test, treeSha } from './fixtures'
 import { seededBytes } from './origin'
 import { named, Swarm, torrentFileOnDisk } from './torrentSwarm'
 
@@ -127,6 +127,94 @@ test.describe('a torrent through the UI', () => {
       await expect(page.getByText(/^2 of 3 files · /)).toBeVisible()
       await expect(page.getByText('Peers', { exact: true })).toBeVisible()
       await expect(page.getByText(/^written in \d+ pieces · uploaded /)).toBeVisible()
+    } finally {
+      await swarm.stop()
+    }
+  })
+
+  test('choose its files from the folder tree, before it starts and as it runs', async ({
+    plexo,
+    dirs
+  }) => {
+    const swarm = await new Swarm().start()
+    try {
+      const names = ['Season 1/a.bin', 'Season 1/b.bin', 'Season 2/c.bin', 'readme.txt']
+      const files = names.map((name, index) => named(seededBytes(1024 * 1024, 91 + index), name))
+      // Slow enough that nothing is in before the running download's choice is changed.
+      const options = { folder: 'Show', pieceLength: 64 * 1024, uploadLimit: 100 * 1024 }
+      await swarm.seed(files, options)
+      const torrentPath = await torrentFileOnDisk(await swarm.seed(files, options))
+      // Main is sent indexes in the torrent's own order, which needn't be the order seeded.
+      const probe = await plexo.api.probeUrl(torrentPath)
+      if (probe.kind !== 'torrent') throw new Error('Expected torrent metadata')
+      const order = probe.torrent.files.map((file) => file.path.split(/[\\/]/).slice(1).join('/'))
+      const indexesOf = (...wanted: string[]): number[] =>
+        wanted.map((name) => order.indexOf(name)).sort((a, b) => a - b)
+      await stubNativeUi(plexo, dirs.dest)
+      const page = plexo.page
+
+      const link = await plexo.newDownload()
+      await page.getByRole('button', { name: 'Change' }).click()
+      await link.fill(torrentPath)
+      const tree = page.getByRole('group', { name: 'Files' })
+      const box = (name: string | RegExp): Locator => tree.getByRole('checkbox', { name })
+      await expect(tree.getByText('4 of 4 files chosen')).toBeVisible()
+
+      // A folder's name ticks its box, as a file's name does: both of Season 1's files go with it,
+      // and the torrent's own folder is left part ticked.
+      await tree.getByText('Season 1', { exact: true }).click()
+      await expect(box(/^a\.bin/)).not.toBeChecked()
+      await expect(box(/^b\.bin/)).not.toBeChecked()
+      await expect(box(/^c\.bin/)).toBeChecked()
+      await expect(box('Show')).toHaveAttribute('aria-checked', 'mixed')
+      await expect(tree.getByText('2 of 4 files chosen')).toBeVisible()
+
+      // The folder icon shuts and opens it, without touching the choice.
+      await tree.getByRole('button', { name: 'Collapse Season 2' }).click()
+      await expect(box(/^c\.bin/)).toHaveCount(0)
+      await tree.getByRole('button', { name: 'Expand Season 2' }).click()
+      await expect(box(/^c\.bin/)).toBeChecked()
+
+      // None leaves nothing to download; All brings every file back.
+      const download = page.getByRole('button', { name: 'Download' })
+      await tree.getByRole('button', { name: 'None', exact: true }).click()
+      await expect(tree.getByText('0 of 4 files chosen')).toBeVisible()
+      await expect(download).toBeDisabled()
+      await tree.getByRole('button', { name: 'All', exact: true }).click()
+      await expect(tree.getByText('4 of 4 files chosen')).toBeVisible()
+      await expect(download).toBeEnabled()
+
+      // Season 1 left out, then Season 2 too once it runs: only the readme is published.
+      await tree.getByText('Season 1', { exact: true }).click()
+      await plexo.expectNextDownload(treeSha([{ path: 'readme.txt', data: files[3] }]))
+      await download.click()
+      const started = expectTorrent(await plexo.waitUntil((state) => state.kind === 'torrent'))
+      expect(started.files.selected).toEqual(indexesOf('Season 2/c.bin', 'readme.txt'))
+
+      await page.getByRole('button', { name: /^2 of 4 files/ }).click()
+      const running = page.getByRole('group', { name: 'Files' })
+      const runningBox = (name: string | RegExp): Locator => running.getByRole('checkbox', { name })
+      const selected = async (): Promise<number[] | undefined> =>
+        (await plexo.currentTorrent())?.files.selected
+
+      // None would leave nothing: refused, and nothing is sent.
+      await running.getByRole('button', { name: 'None', exact: true }).click()
+      await expect(page.getByRole('alert')).toHaveText('Keep at least one file.')
+      expect(await selected()).toEqual(indexesOf('Season 2/c.bin', 'readme.txt'))
+
+      // All asks for every file; then each season's name drops its folder, one change at a time.
+      await running.getByRole('button', { name: 'All', exact: true }).click()
+      await expect(runningBox(/^a\.bin/)).toBeChecked()
+      await expect.poll(async () => (await plexo.currentTorrent())?.files.chosen).toBe(4)
+      await running.getByText('Season 1', { exact: true }).click()
+      await expect(runningBox(/^a\.bin/)).not.toBeChecked()
+      await expect.poll(selected).toEqual(indexesOf('Season 2/c.bin', 'readme.txt'))
+      await running.getByText('Season 2', { exact: true }).click()
+      await expect(runningBox(/^c\.bin/)).not.toBeChecked()
+      await expect.poll(selected).toEqual(indexesOf('readme.txt'))
+
+      const done = await plexo.waitForTorrentStatus('completed', 60_000)
+      expect(done.files).toEqual({ chosen: 1, total: 4, selected: indexesOf('readme.txt') })
     } finally {
       await swarm.stop()
     }
@@ -272,6 +360,12 @@ test.describe('UI journeys @smoke', () => {
     await expect(page.getByRole('button', { name: 'Download' })).toBeDisabled()
   })
 
+  test('New download dialog shows free space on destination folder', async ({ plexo }) => {
+    await plexo.newDownload()
+    const dialog = plexo.page.getByRole('dialog', { name: 'New download' })
+    await expect(dialog.getByText(/\(\d+(\.\d+)?\s*(B|KB|MB|GB|TB)\s*free\)/)).toBeVisible()
+  })
+
   test('a completed download is shown again after a restart', async ({ plexo, serve }) => {
     const origin = await serve({ size: SIZE })
     await plexo.start(origin.url(), origin.sha256)
@@ -301,7 +395,9 @@ test.describe('settings @smoke', () => {
     await plexo.newDownload()
     await page().getByRole('button', { name: 'Change' }).click()
     const destinationRow = (): Locator => page().getByText('Save to', { exact: true }).locator('..')
-    const chosenDestination = await destinationRow().innerText()
+    const destination = async (): Promise<string> =>
+      (await destinationRow().innerText()).replace(/\s*\([^)]*free\)/, '')
+    const chosenDestination = await destination()
     await page().keyboard.press('Escape')
     // A function: the window, and so the page, is a new one after a relaunch.
     const networksMenu = (): Locator =>
@@ -310,7 +406,10 @@ test.describe('settings @smoke', () => {
         .first()
         .first()
     await networksMenu().click()
-    await page().getByRole('button', { name: 'Edit network' }).first().click()
+    await page()
+      .getByRole('button', { name: /^Edit / })
+      .first()
+      .click()
     await page().getByRole('textbox', { name: 'Name' }).fill('Office fibre')
     await page().getByRole('button', { name: 'Violet' }).click()
     await page().getByRole('button', { name: 'Done' }).click()
@@ -319,14 +418,14 @@ test.describe('settings @smoke', () => {
     const expectAllKept = async (): Promise<void> => {
       await expect(page().getByRole('button', { name: labelAfterSwitch })).toBeVisible()
       await plexo.newDownload()
-      await expect(destinationRow()).toHaveText(chosenDestination, { useInnerText: true })
+      await expect.poll(destination).toBe(chosenDestination)
       // Presentation may abbreviate home; persistence must retain the usable absolute path.
       const saved = JSON.parse(await readFile(join(dirs.userData, 'app-settings.json'), 'utf8'))
       expect(saved.destinationDir).toBe(dirs.dest)
       await page().keyboard.press('Escape')
       await networksMenu().click()
       await expect(page().getByText('Office fibre')).toBeVisible()
-      await page().getByRole('button', { name: 'Edit network' }).first().click()
+      await page().getByRole('button', { name: 'Edit Office fibre' }).click()
       await expect(page().getByRole('button', { name: 'Violet' })).toHaveAttribute(
         'aria-pressed',
         'true'
@@ -353,7 +452,8 @@ test.describe('settings @smoke', () => {
       await plexo.newDownload()
       const row = await plexo.page.getByText('Save to', { exact: true }).locator('..').innerText()
       await plexo.page.keyboard.press('Escape')
-      return row
+      // Free space shows up when it's ready; only the folder is compared.
+      return row.replace(/\s*\([^)]*free\)/, '')
     }
     const fresh = await choices()
 
@@ -371,6 +471,18 @@ test.describe('settings @smoke', () => {
 
 test.describe('no networks', () => {
   test.use({ appEnv: { PLEXO_E2E_INTERFACES: '' } })
+
+  test('New download says why it has no network to offer @smoke', async ({ plexo }) => {
+    await plexo.newDownload()
+    const dialog = plexo.page.getByRole('dialog', { name: 'New download' })
+    await expect(
+      dialog.getByText(
+        'No networks connected. Join a Wi-Fi network, plug in Ethernet, or connect your phone using USB tethering.'
+      )
+    ).toBeVisible()
+    await expect(dialog.getByRole('button', { name: 'Scan again', exact: true })).toBeVisible()
+    await expect(dialog.getByRole('button', { name: 'Download', exact: true })).toBeDisabled()
+  })
 
   test('a network appearing makes the list ready for downloads @smoke', async ({ plexo }) => {
     await expect(plexo.page.getByText('No networks connected')).toBeVisible()

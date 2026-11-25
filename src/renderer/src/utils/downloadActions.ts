@@ -8,6 +8,7 @@ import { linkExpired } from './format'
 export type ActionId =
   | 'pause'
   | 'resume'
+  | 'next'
   | 'retry'
   | 'fix'
   | 'again'
@@ -17,6 +18,7 @@ export type ActionId =
   | 'cancel'
   | 'remove'
   | 'trash'
+  | 'trackers'
 
 export type DownloadItem = DownloadState | FinishedDownload
 
@@ -48,8 +50,14 @@ export function failureAction(download: DownloadState): FailureAction {
 }
 
 const appliesTo: Record<ActionId, (item: DownloadItem) => boolean> = {
-  pause: (item) => !isFinished(item) && (item.status === 'downloading' || item.status === 'queued'),
+  pause: (item) =>
+    !isFinished(item) &&
+    (item.status === 'downloading' || item.status === 'queued') &&
+    // Repairing or unpacking runs to its end: it can only be cancelled.
+    !(item.kind === 'nzb' && item.postProcess?.stage),
   resume: (item) => !isFinished(item) && item.status === 'paused',
+  // Waiting its turn, it can go first in line.
+  next: (item) => !isFinished(item) && item.status === 'queued',
   retry: (item) => isFailed(item) && failureAction(item) === 'retry',
   fix: (item) => isFailed(item) && failureAction(item) === 'fix',
   again: (item) => isFailed(item) && failureAction(item) === 'again',
@@ -58,16 +66,17 @@ const appliesTo: Record<ActionId, (item: DownloadItem) => boolean> = {
   copy: (item) => /^(https?:|magnet:)/i.test(item.url),
   cancel: isCancellable,
   remove: (item) => isDone(item) || isFailed(item),
-  trash: isTrashable
+  trash: isTrashable,
+  trackers: (item) => !isFinished(item) && item.kind === 'torrent'
 }
 
 /** These make sense for one download at a time: with several selected, they aren't offered. */
-const SINGLE_ONLY: ReadonlySet<ActionId> = new Set(['fix', 'again', 'open', 'reveal'])
+const SINGLE_ONLY: ReadonlySet<ActionId> = new Set(['fix', 'again', 'open', 'reveal', 'trackers'])
 
 /** The order they're shown in, in groups: what to do with it, its link, getting rid of it.
  * Menus put a separator between groups. */
 export const ACTION_GROUPS: readonly (readonly ActionId[])[] = [
-  ['pause', 'resume', 'retry', 'fix', 'again', 'open', 'reveal'],
+  ['pause', 'resume', 'next', 'retry', 'fix', 'again', 'open', 'reveal', 'trackers'],
   ['copy'],
   ['cancel', 'remove', 'trash']
 ]
@@ -103,6 +112,7 @@ export const TOOLBAR_PRIORITY: readonly ActionId[] = [
   'again',
   'open',
   'cancel',
+  'next',
   'reveal',
   'remove',
   'trash',

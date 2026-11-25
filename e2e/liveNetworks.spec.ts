@@ -1,3 +1,5 @@
+import { readFile } from 'node:fs/promises'
+import { join } from 'node:path'
 import {
   BLOCK,
   expect,
@@ -24,6 +26,28 @@ const network = (state: DownloadState, id: string): DownloadState['networks'][nu
 const streamsOn = (state: DownloadState, id: string): number =>
   state.kind === 'http' ? state.streams.filter((stream) => stream.interfaceId === id).length : 0
 const settle = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms))
+
+test('a network whose id changes keeps what was saved under its device name @smoke', async ({
+  plexo
+}) => {
+  const proxy = { enabled: true, type: 'socks5', host: '127.0.0.1', port: 1080 } as const
+  await plexo.api.updateSettings({
+    networkPreferences: { enxdongle: { customName: 'Office dongle', proxy } }
+  })
+  await plexo.relaunch({
+    PLEXO_E2E_INTERFACES: `${interfacesEnv(NETWORKS)},usb:ABC=${LAN_ADDRESS}===enxdongle`
+  })
+
+  const savedPath = join(plexo.dirs.userData, 'app-settings.json')
+  await expect
+    .poll(async () => JSON.parse(await readFile(savedPath, 'utf8')).networkPreferences)
+    .toEqual({ 'usb:ABC': { customName: 'Office dongle', proxy } })
+  await plexo.page
+    .getByRole('button', { name: /network/ })
+    .first()
+    .click()
+  await expect(plexo.page.getByText('Office dongle')).toBeVisible()
+})
 
 test('the only network drops for a while: the download waits, then picks up where it was @smoke', async ({
   plexo,

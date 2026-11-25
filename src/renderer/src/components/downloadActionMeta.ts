@@ -1,4 +1,5 @@
 import {
+  ChevronsUp,
   Copy,
   Download,
   ExternalLink,
@@ -6,6 +7,7 @@ import {
   ListX,
   Pause,
   Play,
+  Radio,
   RotateCw,
   Trash2,
   Wrench,
@@ -53,6 +55,13 @@ export const ACTION_META: Record<ActionId, ActionMeta> = {
     working: 'Resuming',
     failure: 'Couldn’t resume',
     icon: Play
+  },
+  next: {
+    label: 'Start next',
+    many: (n) => `Start ${n} downloads next`,
+    toolbar: 'Start next',
+    failure: SOMETHING_WRONG,
+    icon: ChevronsUp
   },
   retry: {
     label: 'Retry',
@@ -118,6 +127,13 @@ export const ACTION_META: Record<ActionId, ActionMeta> = {
     failure: SOMETHING_WRONG,
     icon: Trash2,
     destructive: true
+  },
+  trackers: {
+    label: 'Trackers',
+    toolbar: 'Trackers',
+    single: true,
+    failure: SOMETHING_WRONG,
+    icon: Radio
   }
 }
 

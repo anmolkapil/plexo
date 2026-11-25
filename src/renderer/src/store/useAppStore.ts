@@ -1,4 +1,6 @@
 import { applyDownloadUpdate } from '@shared/downloadUpdate'
+import { carryOverDevicePreferences } from '@shared/networkPreferences'
+import { sameProxyEndpoint } from '@shared/proxy'
 import type {
   AppSettings,
   DownloadSchedule,
@@ -9,6 +11,7 @@ import type {
   NetworkPreference,
   NetworkPreferences,
   PendingLink,
+  ProxyConfig,
   SpeedUnit,
   ThemeSource
 } from '@shared/types'
@@ -27,6 +30,8 @@ interface AppStore {
   interfacesError: string | null
   /** User customizations (name/color) per network interface id — persisted in the main process. */
   networkPreferences: NetworkPreferences
+  /** A proxy password typed is kept only until Plexo quits: there's no keychain to seal it with. */
+  noKeychain: boolean
 
   /** Persisted in the main process alongside nativeTheme.themeSource. */
   themeSource: ThemeSource
@@ -44,6 +49,10 @@ interface AppStore {
   downloadSchedule: DownloadSchedule | undefined
   /** The New download dialog, over whatever the window shows. */
   newDownloadOpen: boolean
+  /** The Telegram dialog: sign-in, then the Saved Messages media browser. */
+  telegramOpen: boolean
+  openTelegram: () => void
+  closeTelegram: () => void
   /** Persisted — how many downloads run at once; the rest wait in the queue. */
   downloadsAtOnce: number
   /** Persisted — the speed limits (see AppSettings). */
@@ -94,8 +103,18 @@ interface AppStore {
   setSlowMode: (on: boolean) => void
   setSlowModeSpeed: (bytesPerSec: number) => void
   setSpeedUnit: (unit: SpeedUnit) => void
+  /** Pinned default destination folder. When set, new downloads start here rather than
+   * remembering one-off folder changes. */
+  defaultDestinationDir?: string
+  settingsOpen: boolean
+  settingsPage: string | null
+  settingsShowSchedule: boolean
+  openSettings: (page?: string | null, showSchedule?: boolean) => void
+  closeSettings: () => void
+  setSettingsPage: (page: string | null) => void
   setDraftUrl: (url: string) => void
   setDestinationDir: (dir: string) => void
+  setDefaultDestinationDir: (dir?: string) => void
 }
 
 // Settings saved by the main process, read once before the first paint (see InitialState).
@@ -108,6 +127,12 @@ function persist(patch: AppSettings): void {
   window.plexo.updateSettings(patch).catch(() => {})
 }
 
+/** A proxy as the window keeps it once saved: whether it has a password, not the password. None
+ * sent keeps the one it had, if main kept it: for the same proxy and username only. */
+function withoutPassword({ password, ...proxy }: ProxyConfig, had: boolean): ProxyConfig {
+  return { ...proxy, hasPassword: password === undefined ? had : password !== '' }
+}
+
 /** Links let go here: a listing main sent before it heard so would bring them back. */
 const letGo = new Set<string>()
 
@@ -116,6 +141,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
   interfacesStatus: 'idle',
   interfacesError: null,
   networkPreferences: initial.networkPreferences,
+  noKeychain: initial.noKeychain === true,
   themeSource: initial.themeSource,
 
   homeDir: initial.homeDir,
@@ -128,6 +154,16 @@ export const useAppStore = create<AppStore>((set, get) => ({
   setDownloadFilter: (downloadFilter) => set({ downloadFilter }),
   downloadSchedule: initial.downloadSchedule,
   newDownloadOpen: false,
+  telegramOpen: false,
+  openTelegram: () => set({ telegramOpen: true }),
+  closeTelegram: () => set({ telegramOpen: false }),
+  settingsOpen: false,
+  settingsPage: null,
+  settingsShowSchedule: false,
+  openSettings: (page = null, showSchedule = false) =>
+    set({ settingsOpen: true, settingsPage: page, settingsShowSchedule: showSchedule }),
+  closeSettings: () => set({ settingsOpen: false }),
+  setSettingsPage: (settingsPage) => set({ settingsPage }),
   downloadsAtOnce: initial.downloadsAtOnce,
   speedLimit: initial.speedLimit,
   slowMode: initial.slowMode,
@@ -139,6 +175,9 @@ export const useAppStore = create<AppStore>((set, get) => ({
   shownId: null,
   formKey: 0,
   startedUrl: '',
+  defaultDestinationDir: initial.defaultDestinationDir,
+  // Main has already checked this folder exists. Never fall back to the raw pinned setting here:
+  // it may point to a removed drive, while destinationDir has safely fallen back to Downloads.
   destinationDir: initial.destinationDir ?? initial.downloadsDir,
 
   loadInterfaces: async () => {
@@ -155,17 +194,33 @@ export const useAppStore = create<AppStore>((set, get) => ({
     }
   },
 
-  receiveInterfaces: (interfaces) =>
-    set({ interfaces, interfacesStatus: 'ready', interfacesError: null }),
+  receiveInterfaces: (interfaces) => {
+    set({ interfaces, interfacesStatus: 'ready', interfacesError: null })
+    // Main moves them too, with no window open; this copy is what the window saves whole.
+    const saved = get().networkPreferences
+    const networkPreferences = carryOverDevicePreferences(saved, interfaces)
+    if (networkPreferences !== saved) {
+      set({ networkPreferences })
+      persist({ networkPreferences })
+    }
+  },
 
   // An explicit `undefined` in `patch` clears that field; main drops an entry left with neither.
   setNetworkPreference: (id, patch) => {
-    const networkPreferences = {
-      ...get().networkPreferences,
-      [id]: { ...get().networkPreferences[id], ...patch }
-    }
-    set({ networkPreferences })
-    persist({ networkPreferences })
+    const preferences = get().networkPreferences
+    const preference = { ...preferences[id], ...patch }
+    // A proxy password goes to main, which seals it: the window keeps only that there is one, so
+    // what it sends next, with no password, keeps it.
+    const before = preferences[id]?.proxy
+    const had =
+      before?.hasPassword === true &&
+      preference.proxy !== undefined &&
+      sameProxyEndpoint(before, preference.proxy)
+    const shown = preference.proxy
+      ? { ...preference, proxy: withoutPassword(preference.proxy, had) }
+      : preference
+    set({ networkPreferences: { ...preferences, [id]: shown } })
+    persist({ networkPreferences: { ...preferences, [id]: preference } })
   },
 
   setThemeSource: (themeSource) => {
@@ -198,7 +253,11 @@ export const useAppStore = create<AppStore>((set, get) => ({
   setView: (view) => set({ view }),
 
   openNewDownload: (link) =>
-    set(link === undefined ? { newDownloadOpen: true } : { newDownloadOpen: true, draftUrl: link }),
+    set((state) => ({
+      newDownloadOpen: true,
+      formKey: state.formKey + 1,
+      ...(link === undefined ? {} : { draftUrl: link })
+    })),
 
   closeNewDownload: () => {
     const { links, shownId } = get()
@@ -272,6 +331,15 @@ export const useAppStore = create<AppStore>((set, get) => ({
   setDraftUrl: (draftUrl) => set({ draftUrl }),
   setDestinationDir: (destinationDir) => {
     set({ destinationDir })
-    persist({ destinationDir })
+    if (!get().defaultDestinationDir) {
+      persist({ destinationDir })
+    }
+  },
+  setDefaultDestinationDir: (defaultDestinationDir) => {
+    set({
+      defaultDestinationDir,
+      destinationDir: defaultDestinationDir ?? get().downloadsDir
+    })
+    persist({ defaultDestinationDir })
   }
 }))

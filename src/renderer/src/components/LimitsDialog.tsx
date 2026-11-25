@@ -6,14 +6,15 @@ import {
   DOWNLOADS_AT_ONCE,
   type AppSettings,
   type DataLimitPeriod,
-  type NetworkPreference
+  type NetworkPreference,
+  type UsenetServer
 } from '@shared/types'
 import { Minus, Plus } from 'lucide-react'
 import { useEffect, useId, useRef, useState } from 'react'
 import { useNetworkUsage } from '../hooks/useNetworks'
 import { useNetworkVisuals } from '../hooks/useNetworkVisuals'
 import { useAppStore } from '../store/useAppStore'
-import { describeError, formatBytes, formatDataUsage } from '../utils/format'
+import { describeError, formatBytes, formatDataUsage, toDisplayPath } from '../utils/format'
 import { useFormatSpeedLimit } from '../hooks/useFormatSpeed'
 import {
   AlertDialog,
@@ -31,6 +32,10 @@ import { Dialog, DialogContent, DialogTitle } from './ui/dialog'
 import { Input } from './ui/input'
 import { Switch } from './ui/switch'
 import { ToggleGroup, ToggleGroupItem } from './ui/toggle-group'
+import { UsenetServerDialog } from './UsenetServerDialog'
+
+/** The page key for Usenet, beside networks' interface ids. */
+const USENET_PAGE = 'usenet'
 
 /** What the dialog edits: a copy taken when it opens, written back only on Save. */
 type Draft = Pick<
@@ -41,6 +46,7 @@ type Draft = Pick<
   | 'downloadsAtOnce'
   | 'networkPreferences'
   | 'downloadSchedule'
+  | 'defaultDestinationDir'
 >
 
 /** All downloads as a fresh install has them. */
@@ -49,7 +55,8 @@ const GENERAL_DEFAULTS = {
   speedLimit: undefined,
   slowMode: false,
   slowModeSpeed: DEFAULT_SLOW_MODE_SPEED,
-  downloadsAtOnce: DOWNLOADS_AT_ONCE.default
+  downloadsAtOnce: DOWNLOADS_AT_ONCE.default,
+  defaultDestinationDir: undefined
 } satisfies Partial<Draft>
 
 const MB = 1024 ** 2
@@ -222,6 +229,33 @@ function GeneralPage({
   draft: Draft
   change: (patch: Partial<Draft>) => void
 }): React.JSX.Element {
+  const homeDir = useAppStore((store) => store.homeDir)
+  const downloadsDir = useAppStore((store) => store.downloadsDir)
+  const destinationDir = useAppStore((store) => store.destinationDir)
+  const effectiveDestinationDir = draft.defaultDestinationDir ?? (destinationDir || downloadsDir)
+  const usesSystemDefault =
+    draft.defaultDestinationDir === undefined && effectiveDestinationDir === downloadsDir
+  const [missingPath, setMissingPath] = useState<string | null>(null)
+  const pinnedFolderMissing = Boolean(
+    draft.defaultDestinationDir && missingPath === draft.defaultDestinationDir
+  )
+
+  useEffect(() => {
+    const dir = draft.defaultDestinationDir
+    if (!dir) return
+    let disposed = false
+    void window.plexo
+      .freeSpace(dir)
+      .then((bytes) => {
+        if (!disposed) setMissingPath(bytes === null ? dir : null)
+      })
+      .catch(() => {
+        if (!disposed) setMissingPath(dir)
+      })
+    return () => {
+      disposed = true
+    }
+  }, [draft.defaultDestinationDir])
   const { speedLimit, slowMode, slowModeSpeed, downloadsAtOnce } = draft
   const [confirmReset, setConfirmReset] = useState(false)
   const atDefaults = Object.entries(GENERAL_DEFAULTS).every(
@@ -236,6 +270,49 @@ function GeneralPage({
           {running === 0 ? 'No active downloads' : `${running} downloading right now`}
         </div>
       </div>
+
+      <section className={sectionClass}>
+        <h4 className={headingClass}>Default download folder</h4>
+        <p className={hintClass}>
+          New downloads start here rather than remembering one-off folder changes.
+        </p>
+        <div className="flex flex-wrap items-center gap-3">
+          <div className="min-w-0 flex-1 truncate font-mono text-[12.5px]">
+            {toDisplayPath(effectiveDestinationDir, homeDir)}
+            {usesSystemDefault && (
+              <span className="ml-2 font-sans text-[11px] text-muted-foreground">
+                (system default)
+              </span>
+            )}
+            {pinnedFolderMissing && (
+              <span className="ml-2 font-sans text-[11px] text-[var(--color-danger)]">
+                (folder missing — falls back to system default)
+              </span>
+            )}
+          </div>
+          <Button
+            type="button"
+            variant="secondary"
+            size="sm"
+            onClick={async () => {
+              const chosen = await window.plexo.chooseDestinationFolder(effectiveDestinationDir)
+              if (chosen) change({ defaultDestinationDir: chosen })
+            }}
+          >
+            Change
+          </Button>
+          {draft.defaultDestinationDir !== undefined && (
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              onClick={() => change({ defaultDestinationDir: undefined })}
+            >
+              Reset to default
+            </Button>
+          )}
+        </div>
+      </section>
 
       <section className={sectionClass}>
         <h4 className={headingClass}>Total speed</h4>
@@ -320,8 +397,8 @@ function GeneralPage({
           <AlertDialogHeader>
             <AlertDialogTitle>Reset all downloads to defaults?</AlertDialogTitle>
             <AlertDialogDescription>
-              This resets total speed, slow mode, downloads at once and the download schedule.
-              Network limits stay unchanged.
+              This resets total speed, slow mode, downloads at once, default download folder and the
+              download schedule. Network limits stay unchanged.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
@@ -499,6 +576,185 @@ function NetworkPage({
   )
 }
 
+function UsenetPage({
+  server,
+  enabled,
+  onEnabledChange,
+  onServerSaved
+}: {
+  /** As saved; null when there's none, undefined until loaded. */
+  server: UsenetServer | null | undefined
+  enabled: boolean
+  onEnabledChange: (enabled: boolean) => void
+  onServerSaved: (server: UsenetServer) => void
+}): React.JSX.Element {
+  const [editing, setEditing] = useState<'server' | 'backup' | null>(null)
+  const [removing, setRemoving] = useState(false)
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const removeBackup = async (): Promise<void> => {
+    setBusy(true)
+    setError(null)
+    try {
+      onServerSaved(await window.plexo.saveUsenetBackup(null))
+      setRemoving(false)
+    } catch (cause) {
+      setError(describeError(cause))
+    } finally {
+      setBusy(false)
+    }
+  }
+  return (
+    <>
+      <div className="flex flex-col gap-1 pb-3">
+        <h3 className="font-sans text-[18px] leading-none font-semibold">Usenet</h3>
+        <div className="font-mono text-[12px] text-muted-foreground">
+          {server ? server.host : 'No news server set up'}
+        </div>
+      </div>
+
+      <section className={sectionClass}>
+        <h4 className={headingClass}>Usenet downloads</h4>
+        <p className={hintClass}>
+          {server === null
+            ? 'NZB links and files download from your news server, once it’s set up.'
+            : 'NZB links and files download from your news server. When off, an NZB link downloads as a plain file.'}
+        </p>
+        <label className="flex w-fit items-center gap-2 text-[13px]">
+          Enabled
+          <Switch
+            aria-label="Usenet downloads"
+            checked={enabled}
+            // Kept with the server: nothing to switch until there is one.
+            disabled={!server}
+            onCheckedChange={onEnabledChange}
+          />
+        </label>
+      </section>
+
+      <section className={sectionClass}>
+        <h4 className={headingClass}>News server</h4>
+        <p className={hintClass}>
+          Where NZB downloads come from, as your Usenet provider gives it. Changes to the server are
+          saved in its own window, right away.
+        </p>
+        {server && <ServerRows server={server} />}
+        <div>
+          <Button
+            type="button"
+            variant="secondary"
+            size="sm"
+            disabled={server === undefined}
+            onClick={() => setEditing('server')}
+          >
+            {server ? 'Change server' : 'Set up server'}
+          </Button>
+        </div>
+      </section>
+
+      <section className={sectionClass}>
+        <h4 className={headingClass}>Backup server</h4>
+        <p className={hintClass}>
+          Optional, from another provider: articles your news server doesn’t have are fetched from
+          it. It’s only connected to once one is missing.
+        </p>
+        {server?.backup && <ServerRows server={server.backup} />}
+        <div className="flex flex-wrap items-center gap-2">
+          <Button
+            type="button"
+            variant="secondary"
+            size="sm"
+            // It backs up the news server: nothing to back up until there is one.
+            disabled={!server}
+            onClick={() => setEditing('backup')}
+          >
+            {server?.backup ? 'Change backup server' : 'Set up backup server'}
+          </Button>
+          {server?.backup && (
+            <Button
+              type="button"
+              variant="secondary"
+              size="sm"
+              // A failure from a remove that was then cancelled is old news.
+              onClick={() => {
+                setError(null)
+                setRemoving(true)
+              }}
+            >
+              Remove
+            </Button>
+          )}
+        </div>
+      </section>
+      <UsenetServerDialog
+        open={editing === 'server'}
+        server={server ?? null}
+        onOpenChange={(open) => setEditing(open ? 'server' : null)}
+        onSaved={onServerSaved}
+      />
+      <UsenetServerDialog
+        backup
+        open={editing === 'backup'}
+        server={server?.backup ?? null}
+        onOpenChange={(open) => setEditing(open ? 'backup' : null)}
+        onSaved={onServerSaved}
+      />
+      <AlertDialog open={removing} onOpenChange={(open) => !open && !busy && setRemoving(false)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Remove the backup server?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Articles your news server doesn’t have will count as missing. Its settings and
+              password are forgotten.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          {error && (
+            <p role="alert" className="text-[13px] text-destructive">
+              {error}
+            </p>
+          )}
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={busy}>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              disabled={busy}
+              onClick={(event) => {
+                event.preventDefault()
+                void removeBackup()
+              }}
+            >
+              Remove
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+    </>
+  )
+}
+
+/** A news server's settings, as saved. */
+function ServerRows({
+  server
+}: {
+  server: Omit<UsenetServer, 'enabled' | 'backup'>
+}): React.JSX.Element {
+  const rows: [string, string][] = [
+    ['Server', `${server.host}:${server.port}`],
+    ['SSL', server.tls ? 'On' : 'Off'],
+    ['Username', server.username || 'None'],
+    ['Connections', String(server.connections)]
+  ]
+  return (
+    <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1.5 text-[13px]">
+      {rows.map(([label, value]) => (
+        <div key={label} className="contents">
+          <dt className="text-[var(--text-secondary)]">{label}</dt>
+          <dd className="truncate font-mono">{value}</dd>
+        </div>
+      ))}
+    </dl>
+  )
+}
+
 /** "5.00 of 5 GB this month", with a bar that turns red once the limit is reached. */
 function UsageBar({
   used,
@@ -545,9 +801,9 @@ function describeLimits(
   return lines.length > 0 ? lines : ['No limit']
 }
 
-/** Speed & data limits: every download's together, and each network's. Nothing changes until
- * Save; Cancel (or Escape) leaves everything as it was. Resetting data usage is the exception:
- * it's an action, not a setting, so it happens once confirmed. */
+/** Speed & data limits: every download's together, Usenet's, and each network's. Nothing changes
+ * until Save; Cancel (or Escape) leaves everything as it was. Resetting data usage and the news
+ * server are the exceptions: each is saved once confirmed in its own dialog. */
 export function LimitsDialog({
   showSchedule = false,
   open,
@@ -558,7 +814,7 @@ export function LimitsDialog({
   showSchedule?: boolean
   open: boolean
   onOpenChange: (open: boolean) => void
-  /** The network shown, by interface id; null for General. */
+  /** The network shown, by interface id; USENET_PAGE for Usenet, null for General. */
   page: string | null
   onPageChange: (page: string | null) => void
 }): React.JSX.Element {
@@ -609,7 +865,8 @@ function LimitsEditor({
       slowModeSpeed,
       downloadsAtOnce,
       networkPreferences,
-      downloadSchedule
+      downloadSchedule,
+      defaultDestinationDir
     } = useAppStore.getState()
     return {
       speedLimit,
@@ -617,7 +874,8 @@ function LimitsEditor({
       slowModeSpeed,
       downloadsAtOnce,
       networkPreferences,
-      downloadSchedule
+      downloadSchedule,
+      defaultDestinationDir
     }
   })
   const change = (patch: Partial<Draft>): void =>
@@ -630,6 +888,16 @@ function LimitsEditor({
         [id]: { ...previous.networkPreferences[id], ...patch }
       }
     }))
+  const [usenet, setUsenet] = useState<UsenetServer | null | undefined>(undefined)
+  // The switch as drafted; the server's own until changed.
+  const [usenetEnabled, setUsenetEnabled] = useState<boolean | undefined>(undefined)
+  const shownUsenetEnabled = usenetEnabled ?? usenet?.enabled ?? true
+  useEffect(() => {
+    void window.plexo
+      .usenetServer()
+      .then(setUsenet)
+      .catch(() => setUsenet(null))
+  }, [])
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const valid = draft.downloadSchedule === undefined || validSchedule(draft.downloadSchedule)
@@ -646,6 +914,10 @@ function LimitsEditor({
       patch.downloadsAtOnce = draft.downloadsAtOnce
     if (draft.downloadSchedule !== store.downloadSchedule)
       patch.downloadSchedule = draft.downloadSchedule
+    if (draft.defaultDestinationDir !== store.defaultDestinationDir) {
+      patch.defaultDestinationDir = draft.defaultDestinationDir
+      patch.destinationDir = draft.defaultDestinationDir ?? store.downloadsDir
+    }
     for (const [id, preference] of Object.entries(draft.networkPreferences)) {
       if (preference !== store.networkPreferences[id]) {
         patch.networkPreferences ??= { ...store.networkPreferences }
@@ -655,6 +927,11 @@ function LimitsEditor({
     try {
       await window.plexo.updateSettings(patch)
       useAppStore.setState(patch)
+      // Last, as switching off stops running NZBs: not done when the rest failed to save.
+      if (usenet && usenetEnabled !== undefined && usenetEnabled !== usenet.enabled) {
+        // The server as it is, every field kept. No password given: the saved one stays.
+        setUsenet(await window.plexo.saveUsenetServer({ ...usenet, enabled: usenetEnabled }))
+      }
       onClose()
     } catch (cause) {
       setError(describeError(cause))
@@ -721,6 +998,15 @@ function LimitsEditor({
                 ]
               : [])
           ])}
+          {navItem(
+            USENET_PAGE,
+            'var(--text-secondary)',
+            'Usenet',
+            // Still loading: no line rather than a guess.
+            usenet === undefined
+              ? []
+              : [usenet === null ? 'No server' : shownUsenetEnabled ? 'On' : 'Off']
+          )}
           <div className={navLabelClass}>Networks</div>
           {interfaces.map((iface) => {
             const visual = networkVisual(iface.id, iface.kind, iface.displayName)
@@ -739,7 +1025,14 @@ function LimitsEditor({
           })}
         </nav>
         <fieldset disabled={saving} className="min-h-0 min-w-0 flex-1 overflow-y-auto px-4 py-3">
-          {shown ? (
+          {page === USENET_PAGE ? (
+            <UsenetPage
+              server={usenet}
+              enabled={shownUsenetEnabled}
+              onEnabledChange={setUsenetEnabled}
+              onServerSaved={setUsenet}
+            />
+          ) : shown ? (
             <NetworkPage
               key={shown.id}
               id={shown.id}

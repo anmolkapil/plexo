@@ -12,11 +12,17 @@ import { ThroughputChart } from '../components/ThroughputChart'
 import { TorrentFiles } from '../components/TorrentFiles'
 import { TorrentBadge } from '../components/TorrentBadge'
 import { TruncatedText } from '../components/TruncatedText'
+import { UsenetBadge } from '../components/UsenetBadge'
+import { UsenetServerButton } from '../components/UsenetServerDialog'
 import { Button } from '../components/ui/button'
 import { Tooltip, TooltipContent, TooltipTrigger } from '../components/ui/tooltip'
 import { useNetworkVisuals } from '../hooks/useNetworkVisuals'
+import { useCombineFlow, type ShownFlowChange } from '../hooks/useCombineFlow'
+import { flowStep } from '../utils/combineFlow'
+import type { NetworkVisual } from '../theme'
 import { useDownloadSchedule } from '../hooks/useDownloadSchedule'
 import { useAppStore } from '../store/useAppStore'
+import { useDownloadActions } from '../components/downloadActionsContext'
 import { KIND_PALETTE, NETWORK_ROW_GRID_COLUMNS } from '../theme'
 import {
   describeError,
@@ -55,7 +61,8 @@ function BigStat({
   value,
   unit,
   valueClass,
-  note
+  note,
+  aside
 }: {
   label: string
   value: string | number
@@ -63,6 +70,8 @@ function BigStat({
   valueClass: string
   /** Beside the label, e.g. a warning about what holds the value down. */
   note?: React.ReactNode
+  /** After the value and its unit, e.g. how much a network that just joined added to it. */
+  aside?: React.ReactNode
 }): React.JSX.Element {
   return (
     <>
@@ -81,10 +90,52 @@ function BigStat({
             {unit}
           </div>
         )}
+        {aside}
       </div>
     </>
   )
 }
+
+/** "+12 MB/s" beside the total speed for a moment after a network joins the download, or
+ * "−8 MB/s" after one drops out: the moment the total changed, and why. Always rendered, so it
+ * is a live region a screen reader is already watching when the text arrives; its text comes
+ * and goes with useCombineFlow, and only its arrival is animated (see plexo-rise-in). */
+function SpeedChange({
+  change,
+  visual,
+  formatSpeed
+}: {
+  change: ShownFlowChange | null
+  visual: NetworkVisual | undefined
+  formatSpeed: (bytesPerSec: number) => string
+}): React.JSX.Element {
+  const joined = change?.change === 'joined'
+  return (
+    <span role="status" className="self-baseline">
+      {change && visual && (
+        <span
+          key={change.key}
+          data-testid="speed-change"
+          className="inline-block font-mono text-[11px] leading-none font-semibold whitespace-nowrap tabular-nums"
+          style={{
+            color: joined ? visual.solid : 'var(--text-tertiary)',
+            animation: 'plexo-rise-in 240ms cubic-bezier(0.16, 1, 0.3, 1) both'
+          }}
+        >
+          <span className="sr-only">{`${visual.name} ${joined ? 'joined' : 'dropped out'}: `}</span>
+          {`${joined ? '+' : '−'}${formatSpeed(change.bytesPerSec)}`}
+        </span>
+      )}
+    </span>
+  )
+}
+
+/** An NZB download's files, once its articles are in (see NzbPostProcess). */
+const STAGE_LABELS = {
+  verifying: 'Verifying with par2…',
+  repairing: 'Repairing with par2…',
+  unpacking: 'Unpacking…'
+} as const
 
 /** What the download is waiting on, when no network is carrying it. */
 function waitingFor(download: DownloadState): string | null {
@@ -94,7 +145,9 @@ function waitingFor(download: DownloadState): string | null {
   if (enabled.some((network) => network.status === 'unreachable')) {
     return download.kind === 'torrent'
       ? 'Can’t reach peers. Retrying…'
-      : 'Can’t reach the server. Retrying…'
+      : download.kind === 'nzb'
+        ? 'Can’t reach the news server. Retrying…'
+        : 'Can’t reach the server. Retrying…'
   }
   return enabled.length > 0 && enabled.every((network) => network.status === 'limit')
     ? 'Every network in use has reached its data limit. Raise one in Speed & data limits.'
@@ -118,12 +171,15 @@ export const DownloadingScreen = memo(function DownloadingScreen({
   const peakSpeedBytesPerSec = download.peakSpeedBytesPerSec
   const networkVisual = useNetworkVisuals()
   const { window: scheduleWindow, message: scheduleMessage } = useDownloadSchedule()
+  const { perform } = useDownloadActions()
   const isQueued = download.status === 'queued'
   // Waiting in the queue looks like a pause: nothing moves.
   const isPaused = download.status === 'paused' || isQueued
   const isTorrent = download.kind === 'torrent'
   const percent = formatPercent(download.bytesDownloaded, wantedBytes(download))
   const knownSize = download.totalBytes > 0
+  const missingArticles =
+    download.kind === 'nzb' ? download.nzbFiles.reduce((sum, file) => sum + file.missing, 0) : 0
   const [now, setNow] = useState(() => Date.now())
 
   useEffect(() => {
@@ -167,6 +223,14 @@ export const DownloadingScreen = memo(function DownloadingScreen({
   const totalDownloadedByNetworks = rows.reduce((sum, row) => sum + row.bytesDownloaded, 0)
   const [chipModeIndex, setChipModeIndex] = useState(0)
   const waiting = waitingFor(download)
+  // Each network's path in the diagram is drawn by its share of the total right now, and the
+  // moment one joins or drops out is marked (see useCombineFlow). Its steps lag the speeds by an
+  // update at most; until it has one, a network's step comes straight from its share.
+  const flow = useCombineFlow(download.id)
+  const groupsSpeed = groups.reduce((sum, group) => sum + group.speedBytesPerSec, 0)
+  const changedVisual = flow.change
+    ? visuals[groups.findIndex((group) => group.id === flow.change?.networkId)]
+    : undefined
 
   const totalRetries = rows.reduce((sum, row) => sum + row.retries, 0)
   const remainingBytes = knownSize
@@ -222,13 +286,21 @@ export const DownloadingScreen = memo(function DownloadingScreen({
             (ml-auto) rather than stretching the merge into rails or the chart into a ribbon. */}
         <div className="flex items-center gap-[14px]">
           <CombineDiagram
-            networks={groups.map((group, index) => ({
-              solid: visuals[index].solid,
-              label: visuals[index].name,
-              speedBytesPerSec: isPaused ? 0 : group.speedBytesPerSec,
-              active: networkActive(group)
-            }))}
+            networks={groups.map((group, index) => {
+              const active = networkActive(group)
+              const share = !isPaused && groupsSpeed > 0 ? group.speedBytesPerSec / groupsSpeed : 0
+              return {
+                id: group.id,
+                solid: visuals[index].solid,
+                label: visuals[index].name,
+                speedBytesPerSec: isPaused ? 0 : group.speedBytesPerSec,
+                active,
+                share,
+                step: flow.steps[group.id] ?? flowStep(share, active)
+              }
+            })}
             paused={isPaused}
+            change={flow.change}
           />
 
           <div className="flex min-w-[130px] shrink-0 flex-col gap-[7px]">
@@ -238,6 +310,13 @@ export const DownloadingScreen = memo(function DownloadingScreen({
                 value={isPaused ? '—' : speedValue}
                 unit={isPaused ? undefined : speedUnit}
                 valueClass={isPaused ? 'text-muted-foreground' : 'text-foreground'}
+                aside={
+                  <SpeedChange
+                    change={isPaused ? null : flow.change}
+                    visual={changedVisual}
+                    formatSpeed={formatSpeed}
+                  />
+                }
                 note={
                   !isPaused &&
                   download.kind === 'http' &&
@@ -333,6 +412,7 @@ export const DownloadingScreen = memo(function DownloadingScreen({
                 className="font-sans text-[15px] leading-[1.3] font-semibold tracking-[-0.01em] text-foreground"
               />
               {isTorrent && <TorrentBadge />}
+              {download.kind === 'nzb' && <UsenetBadge />}
             </div>
             <div className="flex min-w-0 items-center gap-[7px] font-mono text-[12.5px] leading-[1.2] tabular-nums text-[var(--text-secondary)]">
               <span>
@@ -353,6 +433,66 @@ export const DownloadingScreen = memo(function DownloadingScreen({
                   </span>
                 </>
               )}
+              {download.kind === 'nzb' && (
+                <>
+                  <Dot />
+                  <span>
+                    {describeFileCount(download.nzbFiles.length, download.nzbFiles.length)}
+                  </span>
+                  <Dot />
+                  <UsenetServerButton host={download.server} />
+                </>
+              )}
+              {missingArticles > 0 && (
+                <>
+                  <Dot />
+                  <Tooltip>
+                    <TooltipTrigger
+                      render={
+                        <span tabIndex={0} className="text-destructive outline-none">
+                          {missingArticles} missing
+                        </span>
+                      }
+                    />
+                    <TooltipContent>
+                      The news server doesn’t have{' '}
+                      {missingArticles === 1 ? 'this article' : 'these articles'}. Once the download
+                      is done, Plexo repairs its files with their .par2 files, if par2 is installed.
+                    </TooltipContent>
+                  </Tooltip>
+                </>
+              )}
+              {download.kind === 'nzb' && !!download.fromBackup && (
+                <>
+                  <Dot />
+                  <span>{download.fromBackup} from backup</span>
+                </>
+              )}
+              {download.kind === 'nzb' && download.backupError && (
+                <>
+                  <Dot />
+                  <Tooltip>
+                    <TooltipTrigger
+                      render={
+                        <span tabIndex={0} className="text-destructive outline-none">
+                          backup server error
+                        </span>
+                      }
+                    />
+                    <TooltipContent>{download.backupError}</TooltipContent>
+                  </Tooltip>
+                </>
+              )}
+              {download.kind === 'nzb' && download.postProcess?.stage && !isPaused && (
+                <>
+                  <Dot />
+                  <span role="status" className="text-foreground">
+                    {STAGE_LABELS[download.postProcess.stage]}
+                    {download.postProcess.percent !== undefined &&
+                      ` ${download.postProcess.percent}%`}
+                  </span>
+                </>
+              )}
               {/* Several files: they open below. One is the name above. */}
               {download.kind === 'torrent' && download.files.total > 1 && (
                 <>
@@ -369,6 +509,20 @@ export const DownloadingScreen = memo(function DownloadingScreen({
                     <span aria-hidden className="text-[7.5px] opacity-75">
                       {filesOpen ? '▲' : '▼'}
                     </span>
+                  </Button>
+                </>
+              )}
+              {download.kind === 'torrent' && (
+                <>
+                  <Dot />
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="xs"
+                    onClick={() => void perform('trackers', [download])}
+                    className="h-auto cursor-default rounded-[4px] border-[0.5px] bg-card px-[7px] py-[3px] font-mono text-[10.5px] leading-none font-medium text-[var(--text-secondary)] hover:bg-secondary dark:bg-card"
+                  >
+                    Trackers
                   </Button>
                 </>
               )}
@@ -432,13 +586,14 @@ export const DownloadingScreen = memo(function DownloadingScreen({
       {/* Block grid: pinned with the file info. It's capped in height and scrolls itself. */}
       <div className="shrink-0 px-5 pt-3">
         <BlockGrid
-          blocks={download.kind === 'http' ? download.blocks : download.pieces}
+          blocks={download.kind === 'torrent' ? download.pieces : download.blocks}
           groups={groups}
           visuals={visuals}
           knownSize={knownSize}
           remainingBytes={remainingBytes}
           isPaused={isPaused}
           pieces={isTorrent}
+          articles={download.kind === 'nzb'}
         />
       </div>
 
@@ -500,7 +655,8 @@ export const DownloadingScreen = memo(function DownloadingScreen({
                     : 0
                 }
                 totalBytes={wantedBytes(download)}
-                blocks={download.kind === 'http' ? download.blocks : undefined}
+                blocks={download.kind === 'torrent' ? undefined : download.blocks}
+                usenet={download.kind === 'nzb'}
                 onSwitch={(enabled) =>
                   void window.plexo.setDownloadNetwork(download.id, row.id, enabled)
                 }
