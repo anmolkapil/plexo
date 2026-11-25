@@ -162,6 +162,18 @@ export class PlexoApp {
 
     this.page = await this.electronApp.firstWindow()
     await this.page.waitForLoadState('domcontentloaded')
+    if (
+      this.extraEnv.PLEXO_E2E_MANUAL_WELCOME !== '1' &&
+      (await this.page.evaluate(() => window.plexo.initialState.v1ErrorReporting === undefined))
+    ) {
+      await this.page
+        .getByRole('dialog', { name: 'Welcome to Plexo 1.0' })
+        .getByRole('button', { name: 'Continue' })
+        .click()
+      await this.page
+        .getByRole('dialog', { name: 'Welcome to Plexo 1.0' })
+        .waitFor({ state: 'hidden' })
+    }
     const session: DownloadState[] = []
     const updates: DownloadUpdate[] = []
     this.sessions.push(session)

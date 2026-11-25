@@ -1,3 +1,4 @@
+import { hookupIpc } from '@sentry/electron/preload-namespaced'
 import { contextBridge, ipcRenderer, webUtils, type IpcRendererEvent } from 'electron'
 import { IpcChannels } from '../shared/ipc-channels'
 import type { IpcContract } from '../shared/ipc-contract'
@@ -23,10 +24,14 @@ function invoke<K extends keyof IpcContract>(
   return ipcRenderer.invoke(IpcChannels[channel], ...args)
 }
 
+// Only configured builds need the SDK's sandbox-compatible forwarding bridge.
+const initialState = ipcRenderer.sendSync(IpcChannels.getInitialState) as InitialState
+if (initialState.reportingAvailability === 'configured') hookupIpc()
+
 const plexoApi = {
   platform: process.platform,
   // Sync on purpose — see InitialState. One small read, once, before the renderer's first paint.
-  initialState: ipcRenderer.sendSync(IpcChannels.getInitialState) as InitialState,
+  initialState,
 
   listInterfaces: () => invoke('listInterfaces'),
   deviceBindingSupported: () => invoke('deviceBindingSupported'),

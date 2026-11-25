@@ -195,14 +195,14 @@ export class TorrentTransfer implements Transfer {
         this.closeClient = close
         stop.addEventListener('abort', close, { once: true })
         client.on('error', (error: unknown) => {
-          this.host.failDownload(message(error))
+          this.host.failDownload(message(error), false, error)
           close()
         })
         client._connPool?.tcpServer.on('connection', (socket: Socket) => this.onIncoming(socket))
         this.add(client)
       })
     } catch (error) {
-      this.host.failDownload(message(error))
+      this.host.failDownload(message(error), false, error)
     } finally {
       for (const peer of this.peers.values()) this.removePeer(peer)
       this.peers.clear()
@@ -282,7 +282,7 @@ export class TorrentTransfer implements Transfer {
       this.selectFiles(torrent)
       this.followEngine(torrent)
     })
-    torrent.on('error', (error: unknown) => this.host.failDownload(message(error)))
+    torrent.on('error', (error: unknown) => this.host.failDownload(message(error), false, error))
   }
 
   /** The networks peers may use now. One that can't reach the swarm stays, for its one dial. */

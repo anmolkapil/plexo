@@ -6,6 +6,7 @@ afterPack: scripts/check-torrent-package.mjs
 directories:
   buildResources: build
 files:
+  - '!**/*.map'
   - '!**/.vscode/*'
   - '!src/*'
   - '!electron.vite.config.{js,ts,mjs,cjs}'

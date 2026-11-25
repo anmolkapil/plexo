@@ -1,3 +1,4 @@
+import { reportFailure } from '../../reporting'
 import { spawn } from 'node:child_process'
 import { constants } from 'node:fs'
 import { access, lstat, mkdtemp, readdir, rm, stat, statfs } from 'node:fs/promises'
@@ -168,6 +169,7 @@ export async function postProcess(job: {
   signal: AbortSignal
 }): Promise<void> {
   const { folder, missing, state, signal } = job
+  let operation: 'repair' | 'unpack' = 'repair'
   const at = (stage: NzbPostProcess['stage'], percent?: number): void => {
     state.stage = stage
     state.percent = percent
@@ -218,8 +220,13 @@ export async function postProcess(job: {
     }
     // With gaps left in them, its archives can't be unpacked.
     if (missing > 0 && !state.repaired) return
+    operation = 'unpack'
     await unpack(job, par2Files, at)
+  } catch (error) {
+    if (!signal.aborted) reportFailure(operation, error)
+    throw error
   } finally {
+    if (!signal.aborted && state.note) reportFailure(operation, state.note)
     // Stopped by a quit or a cancel, the stage stays: it tells a relaunch it isn't done.
     if (!signal.aborted) {
       state.stage = undefined

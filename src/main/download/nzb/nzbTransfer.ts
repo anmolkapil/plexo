@@ -1,3 +1,4 @@
+import { reportFailure } from '../../reporting'
 import type {
   DownloadStatus,
   HttpDownloadNetwork,
@@ -154,7 +155,7 @@ export class NzbTransfer implements Transfer {
           if (server.backup) this.retryMissing()
           this.host.reconcile()
         },
-        (error) => this.host.failDownload(message(error))
+        (error) => this.host.failDownload(message(error), false, error)
       )
       return
     }
@@ -170,7 +171,9 @@ export class NzbTransfer implements Transfer {
     ) {
       // None of the networks in use has a route to it: out of this run (see backupFailed).
       this.backupDown = true
-      this.runtime.state.backupError = `The backup server couldn’t be used. (${new NoCompatibleRouteError(this.server.backup.host).message})`
+      const error = new NoCompatibleRouteError(this.server.backup.host)
+      reportFailure('network', error)
+      this.runtime.state.backupError = `The backup server couldn’t be used. (${error.message})`
     }
     if (this.backupDown) {
       // What waits for the backup server now has nowhere to come from.
@@ -681,12 +684,14 @@ export class NzbTransfer implements Transfer {
 
     if (error instanceof NntpAuthError) {
       this.host.failDownload(
-        `The news server didn’t accept the username or password. Check them in the server’s settings, then try again. (${error.message})`
+        `The news server didn’t accept the username or password. Check them in the server’s settings, then try again. (${error.message})`,
+        false,
+        error
       )
       return 'stop'
     }
     if (error instanceof NoCompatibleRouteError) {
-      this.host.failNetwork(network, error.message)
+      this.host.failNetwork(network, error)
       return 'stop'
     }
     if (error instanceof NntpRefusedError && this.turnedAway(connection)) return 'stop'
@@ -699,14 +704,14 @@ export class NzbTransfer implements Transfer {
     ) {
       // Nothing through this network for a while, and its connections failing: it can't reach
       // the server. It keeps one connection trying (see reconcile).
+      reportFailure('network', error)
       network.status = 'unreachable'
       this.host.reconcile()
     }
     if (!(error instanceof ConnectionError) && !(error instanceof NntpRefusedError)) {
       if (++connection.strikes > MAX_STRIKES) {
         connection.retiring = true
-        if (this.liveStreams(network.id).length === 0)
-          this.host.failNetwork(network, message(error))
+        if (this.liveStreams(network.id).length === 0) this.host.failNetwork(network, error)
         return 'stop'
       }
     }
@@ -772,6 +777,7 @@ export class NzbTransfer implements Transfer {
       connection.strikes += 1
     }
     if (error instanceof NntpAuthError || connection.strikes > MAX_STRIKES) {
+      if (!this.backupDown) reportFailure('network', error)
       this.backupDown = true
       this.runtime.state.backupError =
         error instanceof NntpAuthError
@@ -782,6 +788,7 @@ export class NzbTransfer implements Transfer {
     }
     const unreachable = this.backupUnreachable()
     if (unreachable) {
+      if (!this.runtime.state.backupError) reportFailure('network', error)
       this.runtime.state.backupError = `The backup server can’t be reached. Plexo keeps trying. (${message(error)})`
       // Down to one connection.
       this.host.reconcile()

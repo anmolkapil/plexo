@@ -1,3 +1,4 @@
+import { reportFailure } from './reporting'
 import {
   app,
   dialog,
@@ -57,9 +58,10 @@ function download(): void {
 function setAutoUpdate(on: boolean): void {
   autoUpdater.autoDownload = on
   set({ autoUpdate: on })
-  saveSettings({ autoUpdate: on }).catch((error) =>
+  saveSettings({ autoUpdate: on }).catch((error) => {
+    reportFailure('preferences', error)
     console.error('[plexo] failed to save the automatic updates setting', error)
-  )
+  })
   if (on && state.status === 'available') download()
 }
 
@@ -161,6 +163,7 @@ export function startUpdater(window: () => BrowserWindow | null, autoUpdate: boo
   })
   autoUpdater.on('update-downloaded', ({ version }) => set({ status: 'ready', version }))
   autoUpdater.on('error', (error) => {
+    reportFailure('updater', error)
     console.error('[plexo] update failed', error)
     // Before an update is found (offline, GitHub down) there's nothing to show. After, the
     // website still has it — the way an unsigned Mac build, which can't install it, gets it.

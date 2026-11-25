@@ -9,6 +9,7 @@ import {
   type BrowserWindow,
   type IpcMainInvokeEvent
 } from 'electron'
+import { reportFailure, reportingAvailability, setReporting } from '../reporting'
 import { IpcChannels } from '../../shared/ipc-channels'
 import type { IpcContract } from '../../shared/ipc-contract'
 import {
@@ -70,10 +71,14 @@ function handle<K extends keyof IpcContract>(
     ...args: IpcContract[K]['args']
   ) => IpcContract[K]['result'] | Promise<IpcContract[K]['result']>
 ): void {
-  ipcMain.handle(
-    IpcChannels[channel],
-    listener as (event: IpcMainInvokeEvent, ...args: unknown[]) => unknown
-  )
+  ipcMain.handle(IpcChannels[channel], async (event, ...args: IpcContract[K]['args']) => {
+    try {
+      return await listener(event, ...args)
+    } catch (error) {
+      reportFailure(channel, error)
+      throw error
+    }
+  })
 }
 
 const DESTINATION_CHECK_MS = 300
@@ -94,6 +99,7 @@ export function registerIpcHandlers(getWindow: () => BrowserWindow | null): Down
     try {
       if (await carryOverNetworkPreferences(list)) await manager.applySettings(await loadSettings())
     } catch (error) {
+      reportFailure('preferences', error)
       console.error('[plexo] carrying network settings over failed', error)
     }
     manager.networksChanged()
@@ -111,7 +117,10 @@ export function registerIpcHandlers(getWindow: () => BrowserWindow | null): Down
       window.webContents.send(IpcChannels.telegramAuthChanged, state)
     }
   }
-  void telegram.restore().catch((error) => console.error('[plexo] telegram restore', error))
+  void telegram.restore().catch((error) => {
+    reportFailure('telegram', error)
+    console.error('[plexo] telegram restore', error)
+  })
   const manager = new DownloadManager(getWindow, networks, telegram)
   // Waking from sleep, the networks may have changed without a poll in between to see it.
   powerMonitor.on('resume', () => {
@@ -131,13 +140,19 @@ export function registerIpcHandlers(getWindow: () => BrowserWindow | null): Down
   const currentThemeSource = (): ThemeSource =>
     nativeTheme.themeSource === 'dark' ? 'dark' : 'light'
 
+  let privacyRevision = 0
   handle('updateSettings', async (_event, patch) => {
     // The one setting main also applies — before saving, so a failed write still switches the
     // window to the theme the toggle now shows.
     if (patch?.themeSource === 'light' || patch?.themeSource === 'dark') {
       nativeTheme.themeSource = patch.themeSource
     }
+    const choice = patch?.v1ErrorReporting
+    const revision = typeof choice === 'boolean' ? ++privacyRevision : undefined
+    if (choice === false) void setReporting(false)
     await saveSettings(patch)
+    if (revision === privacyRevision && choice === true) await setReporting(true)
+    if (revision !== undefined && Object.keys(patch).length === 1) return
     // Read back rather than taken from the patch: what was saved is what passed the checks.
     await manager.applySettings(await loadSettings())
   })
@@ -161,6 +176,8 @@ export function registerIpcHandlers(getWindow: () => BrowserWindow | null): Down
           new Promise<boolean>((resolve) => setTimeout(resolve, DESTINATION_CHECK_MS, false))
         ]))
       event.returnValue = {
+        v1ErrorReporting: settings.v1ErrorReporting,
+        reportingAvailability: reportingAvailability(),
         downloadSchedule: settings.downloadSchedule,
         homeDir: getHomeDir(),
         downloadsDir: getDefaultDownloadsDir(),
@@ -180,6 +197,7 @@ export function registerIpcHandlers(getWindow: () => BrowserWindow | null): Down
       console.error('[plexo] failed to read initial state', error)
       // No getPath() here — it may be what threw. An empty destination just keeps Start disabled.
       event.returnValue = {
+        reportingAvailability: 'unconfigured',
         homeDir: '',
         downloadsDir: '',
         themeSource: currentThemeSource(),

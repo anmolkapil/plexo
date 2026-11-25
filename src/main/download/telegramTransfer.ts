@@ -40,9 +40,10 @@ export class TelegramFileError extends Error {
     readonly kind: TelegramFileErrorKind,
     message: string,
     /** For 'rate': how long Telegram asked to be left alone, in seconds. */
-    readonly waitSeconds?: number
+    readonly waitSeconds?: number,
+    cause?: unknown
   ) {
-    super(message)
+    super(message, { cause })
   }
 }
 
@@ -255,7 +256,7 @@ export class TelegramTransfer implements Transfer {
     try {
       source = await this.source()
     } catch (cause) {
-      this.host.failDownload(describeError(cause))
+      this.host.failDownload(describeError(cause), false, cause)
       reader.status = 'cancelled'
       return
     }
@@ -313,7 +314,7 @@ export class TelegramTransfer implements Transfer {
         continue
       }
       // give-up: the reader is done, and the download fails with it.
-      this.host.failDownload(describeError(outcome.error))
+      this.host.failDownload(describeError(outcome.error), false, outcome.error)
       reader.status = 'cancelled'
       reader.currentBlockIndex = undefined
       break
@@ -422,7 +423,7 @@ export class TelegramTransfer implements Transfer {
         if (next) await next.promise
         this.handBack(block)
         if (next && next.block !== block) this.handBack(next.block)
-        this.host.failDownload(describeError(error))
+        this.host.failDownload(describeError(error), false, error)
         return { type: 'stopped' }
       }
 

@@ -97,6 +97,16 @@ Besides the downloads, a release carries what the app's updater reads (`src/main
 
 macOS only installs signed updates. The release workflow signs and notarizes the Mac build when these repository secrets are set: `MAC_CERTIFICATE_P12_BASE64` and `MAC_CERTIFICATE_PASSWORD` (a Developer ID Application certificate), and `APPLE_API_KEY_P8`, `APPLE_API_KEY_ID` and `APPLE_API_ISSUER` (an App Store Connect API key). Without them a Mac that finds an update sends you to the website for it.
 
+### Sentry for desktop releases
+
+Use one Electron project for all platforms and processes. The release workflow reads the public `SENTRY_DSN` at build time. Set `SENTRY_AUTH_TOKEN`, `SENTRY_ORG` and `SENTRY_PROJECT` for that same project to upload hidden source maps. The build injects matching Debug IDs into each JavaScript bundle and map. Uploads use the release `plexo@<package version>`. The packager excludes the maps. The upload token is available only to the upload step.
+
+The main process owns the destination, consent check and outgoing envelope allowlist in `src/main/reporting.ts`. The renderer uses the Electron SDK’s global handlers and its sandbox-compatible preload bridge. Electron SDK 8.4.0 defaults to a disk queue of 30 envelopes for 30 days with startup replay. Its transport exposes send/flush and its store exposes push/unshift/shift, without a live purge or replay cancellation operation. Plexo uses the SDK’s direct `makeElectronTransport` instead. Failed sends leave no offline backlog. Turning reporting off drops subsequent events and removes the empty local run marker. An interrupted run can include a force quit or power loss.
+
+`npx playwright test e2e/reporting.spec.ts` exercises the real SDK against an ephemeral loopback sink. An unpackaged test build accepts a port in `PLEXO_E2E_SENTRY_PORT`. Packaged builds use the compiled DSN. `DO_NOT_TRACK=1` takes precedence in both.
+
+In Sentry, create a saved issue view for new and regressed production errors, filtered by `level:[error,fatal]`, and alert on new or regressed issues in that view. A second view for `level:warning` can group routine failures by the `cause` tag. Compare counts by release, operation and OS. These are event counts from consenting installations.
+
 ## Reporting bugs
 
 Open a GitHub issue with:
