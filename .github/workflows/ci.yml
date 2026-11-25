@@ -97,7 +97,7 @@ jobs:
         env:
           PLEXO_E2E_SKIP_BUILD: '1'
 
-      - name: Check sparse staging files
-        run: npx playwright test e2e/sparseFile.spec.ts
+      - name: Check sparse staging files and adapter binding
+        run: npx playwright test e2e/sparseFile.spec.ts e2e/windowsBinding.spec.ts
         env:
           PLEXO_E2E_SKIP_BUILD: '1'
