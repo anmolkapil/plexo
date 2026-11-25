@@ -4,7 +4,9 @@ import { acceptedLink } from '../src/renderer/src/utils/format'
 test('pasted local download paths may use forward slashes or Explorer quotes', () => {
   expect(acceptedLink('C:/Downloads/a.torrent')).toBe('C:/Downloads/a.torrent')
   expect(acceptedLink('c:/Downloads/a.torrent')).toBe('c:/Downloads/a.torrent')
-  expect(acceptedLink('  "C:\\Downloads\\my file.torrent"  ')).toBe('C:\\Downloads\\my file.torrent')
+  expect(acceptedLink('  "C:\\Downloads\\my file.torrent"  ')).toBe(
+    'C:\\Downloads\\my file.torrent'
+  )
   expect(acceptedLink('C:/Downloads/a.nzb')).toBe('C:/Downloads/a.nzb')
   expect(acceptedLink('/tmp/a.nzb')).toBe('/tmp/a.nzb')
   expect(acceptedLink('\\\\server\\share\\a.torrent')).toBeNull()
