@@ -626,15 +626,20 @@ export class DownloadManager {
    * whenever one might have room: a run ended, a queued one went, the count went up. */
   private pump(): void {
     if (this.suspending || !this.scheduleAllowsDownloads()) return
-    const queued = [...this.runtimes.values()]
-      .filter((runtime) => runtime.state.status === 'queued' && !runtime.scheduleStopping)
-      .sort((a, b) => (a.state.queuedAt ?? 0) - (b.state.queuedAt ?? 0))
+    const queued = this.queuedInOrder().filter((runtime) => !runtime.scheduleStopping)
     for (const runtime of queued) {
       if (this.runningCount() >= this.downloadsAtOnce) return
       // Each would only fail on the switch, making room for the next to fail too.
       if (runtime.kind === 'nzb' && !this.usenetOn) continue
       this.begin(runtime)
     }
+  }
+
+  /** The queued downloads, in the order they'll start. */
+  private queuedInOrder(): DownloadRuntime[] {
+    return [...this.runtimes.values()]
+      .filter((runtime) => runtime.state.status === 'queued')
+      .sort((a, b) => (a.state.queuedAt ?? 0) - (b.state.queuedAt ?? 0))
   }
 
   /** Puts a download in the queue: at its end, or at its front when the user asked for it. */
@@ -1660,6 +1665,25 @@ export class DownloadManager {
     this.enqueue(runtime, true)
     this.pushUpdate(runtime)
     await this.persistNow(runtime)
+  }
+
+  /** Moves a queued download one place earlier (`-1`) or later (`1`) in the queue, by swapping
+   * its place with its neighbour's. Like Start next, it only reorders the waiting: nothing
+   * running is touched. At either end of the queue there's nowhere to go. */
+  async moveInQueue(id: string, by: -1 | 1): Promise<void> {
+    const runtime = this.runtimes.get(id)
+    // It arrives over IPC: one place either way, nothing else.
+    if (by !== -1 && by !== 1) return
+    if (!runtime || runtime.cancelPromise || runtime.state.status !== 'queued') return
+    const queue = this.queuedInOrder()
+    const neighbour = queue[queue.indexOf(runtime) + by]
+    if (!neighbour) return
+    const place = runtime.state.queuedAt
+    runtime.state.queuedAt = neighbour.state.queuedAt
+    neighbour.state.queuedAt = place
+    this.pushUpdate(runtime)
+    this.pushUpdate(neighbour)
+    await Promise.all([this.persistNow(runtime), this.persistNow(neighbour)])
   }
 
   // A file that changed on the server while this download was paused is caught by the first
