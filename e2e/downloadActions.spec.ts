@@ -41,6 +41,7 @@ test.describe('what each state offers', () => {
   test('downloading', () => {
     expect(ids([download({ status: 'downloading' })])).toEqual([
       'pause',
+      'refreshLink',
       'reveal',
       'copy',
       'cancel'
@@ -53,6 +54,7 @@ test.describe('what each state offers', () => {
       'next',
       'earlier',
       'later',
+      'refreshLink',
       'reveal',
       'copy',
       'cancel'
@@ -88,15 +90,30 @@ test.describe('what each state offers', () => {
   })
 
   test('paused', () => {
-    expect(ids([download({ status: 'paused' })])).toEqual(['resume', 'reveal', 'copy', 'cancel'])
+    expect(ids([download({ status: 'paused' })])).toEqual([
+      'resume',
+      'refreshLink',
+      'reveal',
+      'copy',
+      'cancel'
+    ])
   })
 
-  test('failed with saved data can be retried', () => {
+  test('failed with saved data can be retried or forcefully refreshed', () => {
     expect(ids([download({ status: 'error', error: 'reset' })])).toEqual([
       'retry',
+      'refreshLink',
       'copy',
       'remove'
     ])
+    expect(
+      ids([
+        download({
+          status: 'error',
+          error: 'Unexpected status 400 for range request'
+        })
+      ])
+    ).toEqual(['retry', 'refreshLink', 'copy', 'remove'])
   })
 
   test('failed with a refused link can be fixed', () => {
@@ -105,7 +122,7 @@ test.describe('what each state offers', () => {
       error: 'Server answered with status 403 for range request'
     })
     expect(failureAction(item as DownloadState)).toBe('fix')
-    expect(ids([item])).toEqual(['fix', 'copy', 'remove'])
+    expect(ids([item])).toEqual(['fix', 'refreshLink', 'copy', 'remove'])
   })
 
   test('failed with a range no longer satisfiable can be fixed', () => {
@@ -114,10 +131,10 @@ test.describe('what each state offers', () => {
       error: 'Server answered with status 416 for range request'
     })
     expect(failureAction(item as DownloadState)).toBe('fix')
-    expect(ids([item])).toEqual(['fix', 'copy', 'remove'])
+    expect(ids([item])).toEqual(['fix', 'refreshLink', 'copy', 'remove'])
   })
 
-  test('failed with nothing to resume starts over', () => {
+  test('failed with nothing to resume starts over and cannot refresh link', () => {
     expect(ids([download({ status: 'error', error: 'reset', resumable: false })])).toEqual([
       'again',
       'copy',
@@ -236,20 +253,20 @@ test.describe('the selection toolbar', () => {
   test('two buttons for every state, the rest behind More', () => {
     expect(shown([download({ status: 'downloading' })])).toEqual({
       buttons: ['pause', 'cancel'],
-      more: ['reveal', 'copy']
+      more: ['refreshLink', 'reveal', 'copy']
     })
     // Start next, Move up and Move down go under More: Pause and Cancel stay the buttons.
     expect(shown([download({ status: 'queued' })])).toEqual({
       buttons: ['pause', 'cancel'],
-      more: ['next', 'earlier', 'later', 'reveal', 'copy']
+      more: ['next', 'earlier', 'later', 'refreshLink', 'reveal', 'copy']
     })
     expect(shown([download({ status: 'paused' })])).toEqual({
       buttons: ['resume', 'cancel'],
-      more: ['reveal', 'copy']
+      more: ['refreshLink', 'reveal', 'copy']
     })
     expect(shown([download({ status: 'error', error: 'reset' })])).toEqual({
       buttons: ['retry', 'remove'],
-      more: ['copy']
+      more: ['refreshLink', 'copy']
     })
     expect(
       shown([download({ status: 'error', error: 'reset', resumable: false })]).buttons

@@ -10,6 +10,7 @@ import {
   Pause,
   Play,
   Radio,
+  RefreshCw,
   RotateCw,
   Trash2,
   Wrench,
@@ -93,6 +94,13 @@ export const ACTION_META: Record<ActionId, ActionMeta> = {
     single: true,
     failure: SOMETHING_WRONG,
     icon: Wrench
+  },
+  refreshLink: {
+    label: 'Refresh link (forced)',
+    toolbar: 'Refresh link (forced)',
+    single: true,
+    failure: SOMETHING_WRONG,
+    icon: RefreshCw
   },
   again: {
     label: 'Download again',

@@ -59,3 +59,33 @@ export function retractBlock(block: Block, position: number, blamed?: string): n
   block.bytesDownloaded = position
   return removed
 }
+
+function resetBlock(block: HttpBlockState): void {
+  block.status = 'pending'
+  block.bytesDownloaded = 0
+  block.bytesByInterface = {}
+  block.interfaceId = undefined
+}
+
+/** Resets every in-progress block plus up to `completedCount` of the highest-index completed
+ * blocks so a forced link refresh re-downloads the boundary region cleanly. Returns blocks reset. */
+export function rewindBlocks(blocks: HttpBlockState[], completedCount: number): number {
+  let reset = 0
+  for (const block of blocks) {
+    if (
+      block.status !== 'completed' &&
+      (block.bytesDownloaded > 0 || block.status === 'downloading')
+    ) {
+      resetBlock(block)
+      reset += 1
+    }
+  }
+  let remaining = Math.max(0, Math.floor(completedCount))
+  for (let i = blocks.length - 1; i >= 0 && remaining > 0; i -= 1) {
+    if (blocks[i].status !== 'completed') continue
+    resetBlock(blocks[i])
+    reset += 1
+    remaining -= 1
+  }
+  return reset
+}

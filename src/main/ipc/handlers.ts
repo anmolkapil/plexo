@@ -310,7 +310,9 @@ export function registerIpcHandlers(getWindow: () => BrowserWindow | null): Down
 
   handle('moveInQueue', async (_event, id, by) => manager.moveInQueue(id, by))
 
-  handle('relinkDownload', async (_event, id, url) => manager.relink(id, url))
+  handle('relinkDownload', async (_event, id, url, options) =>
+    manager.relink(id, url, options?.force === true ? { force: true } : undefined)
+  )
 
   handle('setDownloadNetwork', async (_event, id, networkId, enabled) => {
     await manager.setNetworkEnabled(id, networkId, enabled)
