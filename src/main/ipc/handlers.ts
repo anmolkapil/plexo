@@ -44,6 +44,7 @@ import {
   networkPreferencesForWindow,
   saveSettings
 } from '../settings'
+import { applyAutostart, isAutostartRegistered } from '../autostart'
 import { showUpdateMenu, updateState } from '../updater'
 
 async function openNetworkSettings(): Promise<void> {
@@ -154,7 +155,14 @@ export function registerIpcHandlers(getWindow: () => BrowserWindow | null): Down
     if (revision === privacyRevision && choice === true) await setReporting(true)
     if (revision !== undefined && Object.keys(patch).length === 1) return
     // Read back rather than taken from the patch: what was saved is what passed the checks.
-    await manager.applySettings(await loadSettings())
+    const applied = await loadSettings()
+    if (patch?.openAtLogin !== undefined || patch?.startMinimized !== undefined) {
+      await applyAutostart({
+        openAtLogin: Boolean(applied.openAtLogin),
+        startMinimized: Boolean(applied.startMinimized)
+      })
+    }
+    await manager.applySettings(applied)
   })
 
   // Answered via sendSync from the preload, which blocks the page until returnValue is set — so a
@@ -191,7 +199,9 @@ export function registerIpcHandlers(getWindow: () => BrowserWindow | null): Down
         speedUnit: settings.speedUnit ?? 'bytes',
         destinationDir: destinationExists ? effectiveDir : undefined,
         defaultDestinationDir: settings.defaultDestinationDir,
-        ...(!canSealPasswords() && { noKeychain: true })
+        ...(!canSealPasswords() && { noKeychain: true }),
+        openAtLogin: settings.openAtLogin ?? isAutostartRegistered(),
+        startMinimized: settings.startMinimized ?? false
       } satisfies InitialState
     } catch (error) {
       console.error('[plexo] failed to read initial state', error)

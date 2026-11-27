@@ -592,6 +592,10 @@ export interface AppSettings {
   /** How speeds are shown everywhere; sizes stay in bytes either way. */
   speedUnit?: SpeedUnit
   browserExtensionUsed?: boolean
+  /** Whether Plexo launches automatically on system startup. */
+  openAtLogin?: boolean
+  /** Whether Plexo starts minimized to the system tray. */
+  startMinimized?: boolean
 }
 
 /** bytes: MB/s. bits: Mbps, as internet plans and speed tests count them. */
@@ -624,6 +628,8 @@ export interface InitialState {
   /** This computer has no keychain to seal a proxy's password with: one typed is kept only until
    * Plexo quits (see main/settings.ts). */
   noKeychain?: boolean
+  openAtLogin?: boolean
+  startMinimized?: boolean
 }
 
 interface StartDownloadRequestBase {

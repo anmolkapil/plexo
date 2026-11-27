@@ -116,6 +116,8 @@ interface AppStore {
   setDraftUrl: (url: string) => void
   setDestinationDir: (dir: string) => void
   setDefaultDestinationDir: (dir?: string) => void
+  openAtLogin: boolean
+  startMinimized: boolean
 }
 
 // Settings saved by the main process, read once before the first paint (see InitialState).
@@ -181,6 +183,8 @@ export const useAppStore = create<AppStore>((set, get) => ({
   // Main has already checked this folder exists. Never fall back to the raw pinned setting here:
   // it may point to a removed drive, while destinationDir has safely fallen back to Downloads.
   destinationDir: initial.destinationDir ?? initial.downloadsDir,
+  openAtLogin: initial.openAtLogin ?? false,
+  startMinimized: initial.startMinimized ?? false,
 
   loadInterfaces: async () => {
     // A re-scan keeps showing the last result rather than flashing back to 'loading'.

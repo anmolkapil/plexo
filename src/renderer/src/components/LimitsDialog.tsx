@@ -48,6 +48,8 @@ type Draft = Pick<
   | 'networkPreferences'
   | 'downloadSchedule'
   | 'defaultDestinationDir'
+  | 'openAtLogin'
+  | 'startMinimized'
 >
 
 /** All downloads as a fresh install has them. */
@@ -257,7 +259,8 @@ function GeneralPage({
       disposed = true
     }
   }, [draft.defaultDestinationDir])
-  const { speedLimit, slowMode, slowModeSpeed, downloadsAtOnce } = draft
+  const { speedLimit, slowMode, slowModeSpeed, downloadsAtOnce, openAtLogin, startMinimized } =
+    draft
   const [confirmReset, setConfirmReset] = useState(false)
   const atDefaults = Object.entries(GENERAL_DEFAULTS).every(
     ([key, value]) => draft[key as keyof typeof GENERAL_DEFAULTS] === value
@@ -383,6 +386,36 @@ function GeneralPage({
         schedule={draft.downloadSchedule ?? DEFAULT_DOWNLOAD_SCHEDULE}
         onChange={(downloadSchedule) => change({ downloadSchedule })}
       />
+      <section className={sectionClass}>
+        <div className="flex items-center justify-between gap-4">
+          <div className="flex flex-col gap-1">
+            <h4 className={headingClass}>Launch on startup</h4>
+            <p className={hintClass}>Automatically start Plexo when your computer turns on.</p>
+          </div>
+          <Switch
+            checked={openAtLogin}
+            onCheckedChange={(openAtLogin) => change({ openAtLogin })}
+            aria-label="Launch on startup"
+          />
+        </div>
+      </section>
+
+      <section className={sectionClass}>
+        <div className="flex items-center justify-between gap-4">
+          <div className="flex flex-col gap-1">
+            <h4 className={headingClass}>Start minimized</h4>
+            <p className={hintClass}>
+              When launched at startup, open Plexo in the system tray without showing the main
+              window.
+            </p>
+          </div>
+          <Switch
+            checked={startMinimized}
+            onCheckedChange={(startMinimized) => change({ startMinimized })}
+            aria-label="Start minimized"
+          />
+        </div>
+      </section>
       <div className="flex flex-wrap items-center gap-2 border-t-[0.5px] border-border pt-3">
         <Button
           variant="secondary"
@@ -867,7 +900,9 @@ function LimitsEditor({
       downloadsAtOnce,
       networkPreferences,
       downloadSchedule,
-      defaultDestinationDir
+      defaultDestinationDir,
+      openAtLogin,
+      startMinimized
     } = useAppStore.getState()
     return {
       speedLimit,
@@ -876,7 +911,9 @@ function LimitsEditor({
       downloadsAtOnce,
       networkPreferences,
       downloadSchedule,
-      defaultDestinationDir
+      defaultDestinationDir,
+      openAtLogin,
+      startMinimized
     }
   })
   const change = (patch: Partial<Draft>): void =>
@@ -919,6 +956,8 @@ function LimitsEditor({
       patch.defaultDestinationDir = draft.defaultDestinationDir
       patch.destinationDir = draft.defaultDestinationDir ?? store.downloadsDir
     }
+    if (draft.openAtLogin !== store.openAtLogin) patch.openAtLogin = draft.openAtLogin
+    if (draft.startMinimized !== store.startMinimized) patch.startMinimized = draft.startMinimized
     for (const [id, preference] of Object.entries(draft.networkPreferences)) {
       if (preference !== store.networkPreferences[id]) {
         patch.networkPreferences ??= { ...store.networkPreferences }
