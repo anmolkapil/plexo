@@ -12,8 +12,10 @@ import {
 } from '../shared/types'
 import { readJson, updateJson } from './jsonFile'
 import { DEFAULT_DOWNLOAD_SCHEDULE, validSchedule } from '../shared/downloadSchedule'
+import { isLocaleCode } from '../shared/i18n'
 import { carryOverDevicePreferences } from '../shared/networkPreferences'
 import { sameProxyEndpoint } from '../shared/proxy'
+import { resolveMainLanguage } from './i18n'
 
 function settingsPath(): string {
   return join(app.getPath('userData'), 'app-settings.json')
@@ -265,6 +267,9 @@ function sanitizeSettings(parsed: unknown): AppSettings {
   if (parsed.speedUnit === 'bytes' || parsed.speedUnit === 'bits') {
     settings.speedUnit = parsed.speedUnit
   }
+  if (isLocaleCode(parsed.language)) {
+    settings.language = parsed.language.trim()
+  }
   if (parsed.browserExtensionUsed === true) settings.browserExtensionUsed = true
   return settings
 }
@@ -340,6 +345,12 @@ export async function loadThemeSource(): Promise<ThemeSource> {
   const { themeSource } = await loadSettings()
   // First run — follow whatever the OS appearance is right now rather than a fixed theme.
   return themeSource ?? (nativeTheme.shouldUseDarkColors ? 'dark' : 'light')
+}
+
+export async function loadLanguage(): Promise<string> {
+  const { language } = await loadSettings()
+  const systemLanguages = app.getPreferredSystemLanguages()
+  return resolveMainLanguage(language ? [language, ...systemLanguages] : systemLanguages)
 }
 
 /** Network names/colors lived in their own network-preferences.json up to 1.0.0-rc.8. Folds

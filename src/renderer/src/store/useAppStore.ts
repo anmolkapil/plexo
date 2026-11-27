@@ -62,6 +62,8 @@ interface AppStore {
   slowModeSpeed: number
   /** Persisted — MB/s or Mbps, for every speed shown. */
   speedUnit: SpeedUnit
+  /** Persisted — active UI language code. */
+  language: string
 
   /** Lifted out of the Idle screen so it survives a swap to/from the No-connections screen. */
   draftUrl: string
@@ -104,6 +106,7 @@ interface AppStore {
   setSlowMode: (on: boolean) => void
   setSlowModeSpeed: (bytesPerSec: number) => void
   setSpeedUnit: (unit: SpeedUnit) => void
+  setLanguage: (language: string) => void
   /** Pinned default destination folder. When set, new downloads start here rather than
    * remembering one-off folder changes. */
   defaultDestinationDir?: string
@@ -171,6 +174,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
   slowMode: initial.slowMode,
   slowModeSpeed: initial.slowModeSpeed,
   speedUnit: initial.speedUnit,
+  language: initial.language,
 
   draftUrl: '',
   links: [],
@@ -328,6 +332,11 @@ export const useAppStore = create<AppStore>((set, get) => ({
   setSpeedUnit: (speedUnit) => {
     set({ speedUnit })
     persist({ speedUnit })
+  },
+
+  setLanguage: (language) => {
+    set({ language })
+    persist({ language })
   },
 
   setDraftUrl: (draftUrl) => set({ draftUrl }),

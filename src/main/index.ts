@@ -15,12 +15,14 @@ import { registerIpcHandlers } from './ipc/handlers'
 import { keepsRunningForBrowser, startBridge } from './browserBridge'
 import { acceptedLink, bringForward, linkFromArgs, offerLink } from './openLinks'
 import {
+  loadLanguage,
   loadSettings,
   loadThemeSource,
   migrateLegacyNetworkPreferences,
   sealProxyPasswords
 } from './settings'
-import { startUpdater } from './updater'
+import { initMainI18n, tMain } from './i18n'
+import { refreshUpdateMenus, startUpdater } from './updater'
 import { testKnobs } from './testKnobs'
 import type { DownloadManager } from './download/downloadManager'
 
@@ -45,25 +47,31 @@ let tray: Tray | null = null
 let isQuitting = false
 let hasShownTrayNotification = false
 
+function buildTrayMenu(): Menu {
+  return Menu.buildFromTemplate([
+    { label: tMain('tray.open'), click: () => bringForward(ensureWindow()) },
+    { type: 'separator' },
+    {
+      label: tMain('tray.quit'),
+      click: () => {
+        isQuitting = true
+        app.quit()
+      }
+    }
+  ])
+}
+
+function refreshTrayMenu(): void {
+  if (tray && !tray.isDestroyed()) tray.setContextMenu(buildTrayMenu())
+}
+
 function ensureTray(): Tray {
   if (tray && !tray.isDestroyed()) return tray
   tray = new Tray(nativeImage.createFromPath(icon).resize({ width: 16, height: 16 }))
   tray.setToolTip('Plexo')
   tray.on('click', () => bringForward(ensureWindow()))
   tray.on('double-click', () => bringForward(ensureWindow()))
-  tray.setContextMenu(
-    Menu.buildFromTemplate([
-      { label: 'Open Plexo', click: () => bringForward(ensureWindow()) },
-      { type: 'separator' },
-      {
-        label: 'Quit Plexo',
-        click: () => {
-          isQuitting = true
-          app.quit()
-        }
-      }
-    ])
-  )
+  tray.setContextMenu(buildTrayMenu())
   return tray
 }
 
@@ -169,8 +177,8 @@ function createWindow(): void {
         hasShownTrayNotification = true
         if (!testKnobs.userDataDir && Notification.isSupported()) {
           new Notification({
-            title: 'Plexo is still downloading',
-            body: 'Downloads will continue in the background. Open Plexo again, or use its tray icon, to quit.'
+            title: tMain('tray.stillDownloadingTitle'),
+            body: tMain('tray.stillDownloadingBody')
           }).show()
         }
       }
@@ -237,12 +245,19 @@ app.whenReady().then(async () => {
   // Applied before the window is created so the initial background/icon already match —
   // the saved preference otherwise only takes effect on the next 'updated' event.
   nativeTheme.themeSource = await loadThemeSource()
+  await initMainI18n(await loadLanguage())
 
   app.on('browser-window-created', (_, window) => {
     optimizer.watchWindowShortcuts(window)
   })
 
-  downloadManager = registerIpcHandlers(() => mainWindow)
+  downloadManager = registerIpcHandlers(
+    () => mainWindow,
+    () => {
+      refreshTrayMenu()
+      refreshUpdateMenus()
+    }
+  )
   void startBridge({
     manager: downloadManager,
     offer: (link) => offerLink(link, ensureWindow())

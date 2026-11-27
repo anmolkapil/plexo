@@ -591,6 +591,8 @@ export interface AppSettings {
   slowModeSpeed?: number
   /** How speeds are shown everywhere; sizes stay in bytes either way. */
   speedUnit?: SpeedUnit
+  /** Active UI language code (BCP-47, matching `src/locales/<code>.json`). */
+  language?: string
   browserExtensionUsed?: boolean
 }
 
@@ -618,6 +620,7 @@ export interface InitialState {
   slowMode: boolean
   slowModeSpeed: number
   speedUnit: SpeedUnit
+  language: string
   /** The last folder picked, if it still exists — otherwise the renderer uses downloadsDir. */
   destinationDir?: string
   defaultDestinationDir?: string

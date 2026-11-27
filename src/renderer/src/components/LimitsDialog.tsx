@@ -10,8 +10,10 @@ import {
   type NetworkPreference,
   type UsenetServer
 } from '@shared/types'
-import { Minus, Plus } from 'lucide-react'
+import { ChevronDown, Minus, Plus } from 'lucide-react'
 import { useEffect, useId, useRef, useState } from 'react'
+import { useTranslation } from 'react-i18next'
+import { AVAILABLE_LOCALES, changeRendererLanguage } from '../i18n'
 import { useNetworkUsage } from '../hooks/useNetworks'
 import { useNetworkVisuals } from '../hooks/useNetworkVisuals'
 import { useAppStore } from '../store/useAppStore'
@@ -30,6 +32,13 @@ import {
 import { Alert, AlertDescription } from './ui/alert'
 import { Button } from './ui/button'
 import { Dialog, DialogContent, DialogTitle } from './ui/dialog'
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
+  DropdownMenuTrigger
+} from './ui/dropdown-menu'
 import { Input } from './ui/input'
 import { Switch } from './ui/switch'
 import { ToggleGroup, ToggleGroupItem } from './ui/toggle-group'
@@ -48,6 +57,7 @@ type Draft = Pick<
   | 'networkPreferences'
   | 'downloadSchedule'
   | 'defaultDestinationDir'
+  | 'language'
 >
 
 /** All downloads as a fresh install has them. */
@@ -230,6 +240,7 @@ function GeneralPage({
   draft: Draft
   change: (patch: Partial<Draft>) => void
 }): React.JSX.Element {
+  const { t } = useTranslation()
   const homeDir = useAppStore((store) => store.homeDir)
   const downloadsDir = useAppStore((store) => store.downloadsDir)
   const destinationDir = useAppStore((store) => store.destinationDir)
@@ -257,7 +268,9 @@ function GeneralPage({
       disposed = true
     }
   }, [draft.defaultDestinationDir])
-  const { speedLimit, slowMode, slowModeSpeed, downloadsAtOnce } = draft
+  const { speedLimit, slowMode, slowModeSpeed, downloadsAtOnce, language } = draft
+  const selectedLocale =
+    AVAILABLE_LOCALES.find((locale) => locale.code === language) ?? AVAILABLE_LOCALES[0]
   const [confirmReset, setConfirmReset] = useState(false)
   const atDefaults = Object.entries(GENERAL_DEFAULTS).every(
     ([key, value]) => draft[key as keyof typeof GENERAL_DEFAULTS] === value
@@ -383,6 +396,39 @@ function GeneralPage({
         schedule={draft.downloadSchedule ?? DEFAULT_DOWNLOAD_SCHEDULE}
         onChange={(downloadSchedule) => change({ downloadSchedule })}
       />
+      <section className={sectionClass}>
+        <h4 className={headingClass}>{t('settings.language.title')}</h4>
+        <p className={hintClass}>{t('settings.language.hint')}</p>
+        <div className="flex items-center">
+          <DropdownMenu>
+            <DropdownMenuTrigger
+              render={
+                <Button
+                  type="button"
+                  variant="secondary"
+                  size="sm"
+                  aria-label={t('settings.language.title')}
+                >
+                  <span>{selectedLocale?.name ?? language}</span>
+                  <ChevronDown className="size-3.5 text-muted-foreground" />
+                </Button>
+              }
+            />
+            <DropdownMenuContent align="start">
+              <DropdownMenuRadioGroup
+                value={language}
+                onValueChange={(nextLanguage) => change({ language: nextLanguage })}
+              >
+                {AVAILABLE_LOCALES.map((locale) => (
+                  <DropdownMenuRadioItem key={locale.code} value={locale.code}>
+                    {locale.name}
+                  </DropdownMenuRadioItem>
+                ))}
+              </DropdownMenuRadioGroup>
+            </DropdownMenuContent>
+          </DropdownMenu>
+        </div>
+      </section>
       <div className="flex flex-wrap items-center gap-2 border-t-[0.5px] border-border pt-3">
         <Button
           variant="secondary"
@@ -867,7 +913,8 @@ function LimitsEditor({
       downloadsAtOnce,
       networkPreferences,
       downloadSchedule,
-      defaultDestinationDir
+      defaultDestinationDir,
+      language
     } = useAppStore.getState()
     return {
       speedLimit,
@@ -876,7 +923,8 @@ function LimitsEditor({
       downloadsAtOnce,
       networkPreferences,
       downloadSchedule,
-      defaultDestinationDir
+      defaultDestinationDir,
+      language
     }
   })
   const change = (patch: Partial<Draft>): void =>
@@ -919,6 +967,7 @@ function LimitsEditor({
       patch.defaultDestinationDir = draft.defaultDestinationDir
       patch.destinationDir = draft.defaultDestinationDir ?? store.downloadsDir
     }
+    if (draft.language !== store.language) patch.language = draft.language
     for (const [id, preference] of Object.entries(draft.networkPreferences)) {
       if (preference !== store.networkPreferences[id]) {
         patch.networkPreferences ??= { ...store.networkPreferences }
@@ -927,6 +976,7 @@ function LimitsEditor({
     }
     try {
       await window.plexo.updateSettings(patch)
+      if (patch.language) await changeRendererLanguage(patch.language)
       useAppStore.setState(patch)
       // Last, as switching off stops running NZBs: not done when the rest failed to save.
       if (usenet && usenetEnabled !== undefined && usenetEnabled !== usenet.enabled) {

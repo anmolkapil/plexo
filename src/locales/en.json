@@ -1,0 +1,30 @@
+{
+  "_meta": {
+    "name": "English"
+  },
+  "settings": {
+    "language": {
+      "title": "Language",
+      "hint": "Changes menus, dialogs and notifications right away."
+    }
+  },
+  "tray": {
+    "open": "Open Plexo",
+    "quit": "Quit Plexo",
+    "stillDownloadingTitle": "Plexo is still downloading",
+    "stillDownloadingBody": "Downloads will continue in the background. Open Plexo again, or use its tray icon, to quit."
+  },
+  "updates": {
+    "restartToUpdate": "Restart to Update to {{version}}",
+    "downloading": "Downloading {{version}}…",
+    "download": "Download Plexo {{version}}",
+    "getFromWebsite": "Get Plexo {{version}} from the Website…",
+    "checking": "Checking for Updates…",
+    "check": "Check for Updates…",
+    "autoUpdate": "Update Automatically",
+    "upToDateTitle": "You’re up to date",
+    "upToDateDetail": "Plexo {{version}} is the newest version.",
+    "checkFailedTitle": "Couldn’t check for updates",
+    "checkFailedDetail": "Check your connection and try again."
+  }
+}

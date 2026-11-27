@@ -1,5 +1,6 @@
 import './assets/main.css'
 
+import { initRendererI18n } from './i18n'
 import { useAppStore } from './store/useAppStore'
 
 async function enableRendererReporting(): Promise<void> {
@@ -18,6 +19,8 @@ async function enableRendererReporting(): Promise<void> {
 }
 
 async function start(): Promise<void> {
+  await initRendererI18n(window.plexo.initialState.language)
+
   if (window.plexo.initialState.reportingAvailability === 'configured') {
     // No renderer client until the first consent. Main checks again at the transport boundary.
     if (useAppStore.getState().v1ErrorReporting) await enableRendererReporting()
