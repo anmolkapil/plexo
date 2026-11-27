@@ -251,7 +251,13 @@ export function downloadChunk(options: ChunkDownloadOptions): Promise<void> {
 
           if (status >= 300 && status < 400) {
             res.resume()
-            if (!res.headers.location || redirectsLeft <= 0) {
+            // A redirect with no Location isn't a chain at all: there is nowhere to go. Said
+            // apart from a real loop, it points at the server rather than at a redirect budget.
+            if (!res.headers.location) {
+              fail(new Error('The server sent a redirect with no address to follow'))
+              return
+            }
+            if (redirectsLeft <= 0) {
               fail(new Error('Too many redirects for range request'))
               return
             }

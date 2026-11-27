@@ -1,4 +1,5 @@
 import { BLOCK, expect, LAN_ADDRESS, test } from './fixtures'
+import { isProbe } from './origin'
 
 // A. Downloads that should simply work. Every test also runs the automatic checks in
 // fixtures.ts: completed ⇒ the file's SHA-256 matches the source, nothing stray left behind.
@@ -179,6 +180,21 @@ test.describe('happy paths @smoke', () => {
     await plexo.start(next.url(), next.sha256)
     await plexo.waitForHttpStatus('completed')
     expect(redirected).toBeGreaterThan(0)
+  })
+
+  test('a chunk redirect with no Location says so instead of blaming a redirect limit', async ({
+    plexo,
+    serve
+  }) => {
+    const origin = await serve({ size: 12 * BLOCK })
+    // What a Telegram Web link answers outside the browser: a 302 with no Location at all.
+    origin.setRule(({ range }) =>
+      range && !isProbe(range) ? { status: 302, headers: { 'Content-Length': '0' } } : 'ok'
+    )
+    await plexo.start(origin.url(), origin.sha256)
+    const state = await plexo.waitForHttpStatus('error')
+    expect(state.error).toMatch(/redirect with no address to follow/)
+    expect(state.error).not.toMatch(/Too many redirects/)
   })
 })
 
