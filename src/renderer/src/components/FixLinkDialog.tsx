@@ -16,9 +16,11 @@ import { Input } from './ui/input'
  * stopped (see DownloadManager.relink). Open while `download` is set. */
 export function FixLinkDialog({
   download,
+  force = false,
   onClose
 }: {
   download: DownloadState | null
+  force?: boolean
   onClose: () => void
 }): React.JSX.Element {
   const [url, setUrl] = useState('')
@@ -36,7 +38,11 @@ export function FixLinkDialog({
     setFixing(true)
     setError(null)
     try {
-      await window.plexo.relinkDownload(download.id, url.trim())
+      await window.plexo.relinkDownload(
+        download.id,
+        url.trim(),
+        force ? { force: true } : undefined
+      )
       close()
     } catch (failure) {
       setError(describeError(failure))
@@ -49,15 +55,19 @@ export function FixLinkDialog({
     <Dialog
       disablePointerDismissal
       open={download !== null}
-      onOpenChange={(open) => !open && close()}
+      onOpenChange={(open) => !open && !fixing && close()}
     >
       <DialogContent showCloseButton={false}>
         <DialogHeader>
-          <DialogTitle>Paste a new link</DialogTitle>
+          <DialogTitle>{force ? 'Refresh link (forced)' : 'Paste a new link'}</DialogTitle>
           <DialogDescription>
-            {download &&
-              `Paste a new link to the same file: ${download.fileName}${download.totalBytes > 0 ? ` (${formatBytes(download.totalBytes)})` : ''}. Plexo resumes from where the download stopped.`}
-            {download?.kind === 'http' &&
+            {force
+              ? download &&
+                `Paste a new link for ${download.fileName}${download.totalBytes > 0 ? ` (${formatBytes(download.totalBytes)})` : ''}. Skips byte-matching against disk, re-downloads the last 4 chunks to guard against corruption, and resumes. Only use this if you are sure it points to the exact same file.`
+              : download &&
+                `Paste a new link to the same file: ${download.fileName}${download.totalBytes > 0 ? ` (${formatBytes(download.totalBytes)})` : ''}. Plexo resumes from where the download stopped.`}
+            {!force &&
+              download?.kind === 'http' &&
               download.fromBrowser &&
               ` Or download it again in ${download.fromBrowser} and choose Resume it.`}
           </DialogDescription>
@@ -79,11 +89,11 @@ export function FixLinkDialog({
           />
           {error && <div className="text-[12px] text-[var(--color-danger)]">{error}</div>}
           <DialogFooter>
-            <Button type="button" variant="secondary" onClick={close}>
+            <Button type="button" variant="secondary" disabled={fixing} onClick={close}>
               Cancel
             </Button>
             <Button type="submit" disabled={fixing || !url.trim()}>
-              {fixing ? 'Checking' : 'Continue download'}
+              {fixing ? 'Checking' : force ? 'Resume download' : 'Continue download'}
             </Button>
           </DialogFooter>
         </form>

@@ -1,4 +1,4 @@
-import { BLOCK, expect, LAN_ADDRESS, test } from './fixtures'
+import { BLOCK, expect, expectHttp, LAN_ADDRESS, test } from './fixtures'
 
 // A. Downloads that should simply work. Every test also runs the automatic checks in
 // fixtures.ts: completed ⇒ the file's SHA-256 matches the source, nothing stray left behind.
@@ -291,7 +291,7 @@ test.describe('edge cases', () => {
     await held
     origin.setRule(() => ({ status: 403 }))
     origin.release()
-    const failed = await plexo.waitUntil((state) => state.status === 'error', 30_000)
+    const failed = expectHttp(await plexo.waitUntil((state) => state.status === 'error', 30_000))
     expect(failed.error).toMatch(/status 403/)
     const kept = failed.bytesDownloaded
     expect(kept).toBeGreaterThan(0)
@@ -339,5 +339,82 @@ test.describe('edge cases', () => {
     for (let index = 0; index < 3; index++) {
       await expect.poll(() => status(index), { timeout: 20_000 }).toBe('completed')
     }
+  })
+
+  test('forced link refresh resumes from a new link after status 400 and rewinds boundary chunks', async ({
+    plexo,
+    serve
+  }) => {
+    const SIZE = 16 * BLOCK
+    const origin = await serve({ size: SIZE, seed: 11, etag: '"old-etag"' })
+    const held = origin.hold(8 * BLOCK)
+    const id = await plexo.start(origin.url(), origin.sha256, { connections: 2 })
+    await held
+    origin.setRule(() => ({ status: 400 }))
+    origin.release()
+
+    const failed = expectHttp(await plexo.waitUntil((state) => state.status === 'error', 30_000))
+    expect(failed.error).toMatch(/status 400/)
+    const kept = failed.bytesDownloaded
+    expect(kept).toBeGreaterThanOrEqual(8 * BLOCK)
+
+    // Corrupt bytes inside the highest completed block on disk: normal relink would refuse and
+    // without boundary rewind the final file's SHA-256 check would fail.
+    const { open } = await import('node:fs/promises')
+    const completedBlocks = failed.blocks!.filter((b) => b.status === 'completed')
+    const lastCompleted = completedBlocks.at(-1)!
+    const handle = await open(`${failed.destinationPath}.plexo`, 'r+')
+    try {
+      await handle.write(Buffer.alloc(128, 0xff), 0, 128, lastCompleted.rangeStart)
+    } finally {
+      await handle.close()
+    }
+
+    const other = await serve({ size: 8 * BLOCK, seed: 12 })
+    await expect(plexo.api.relinkDownload(id, other.url(), { force: true })).rejects.toThrow(
+      /different file/
+    )
+
+    const fresh = await serve({ size: SIZE, seed: 11, etag: '"new-etag"' })
+    const page = plexo.page
+    await page.getByRole('button', { name: `Open ${failed.fileName}`, exact: true }).click({
+      button: 'right'
+    })
+    const menuItems = page.getByRole('menuitem')
+    await expect(menuItems.nth(0)).toHaveText('Retry')
+    await expect(menuItems.nth(1)).toHaveText('Refresh link (forced)')
+    await menuItems.nth(1).click()
+
+    const dialog = page.getByRole('dialog')
+    await expect(dialog.getByText('Refresh link (forced)', { exact: true })).toBeVisible()
+    await dialog.getByRole('textbox', { name: 'New link' }).fill(fresh.url())
+    await dialog.getByRole('button', { name: 'Resume download', exact: true }).click()
+
+    await plexo.waitForHttpStatus('completed', 30_000)
+    const fetched = fresh.chunkRequests().reduce((sum, entry) => sum + entry.bytesSent, 0)
+    expect(fetched).toBeLessThan(SIZE)
+    expect(fetched).toBeGreaterThanOrEqual(
+      SIZE - kept + Math.min(4, completedBlocks.length) * BLOCK
+    )
+  })
+
+  test('forced link refresh works on a paused download with a new ETag', async ({
+    plexo,
+    serve
+  }) => {
+    const SIZE = 16 * BLOCK
+    const origin = await serve({ size: SIZE, seed: 21, etag: '"v1"' })
+    const held = origin.hold(6 * BLOCK)
+    const id = await plexo.start(origin.url(), origin.sha256, { connections: 2 })
+    await held
+    await plexo.api.pauseDownload(id)
+    origin.release()
+    await plexo.waitForHttpStatus('paused')
+
+    const fresh = await serve({ size: SIZE, seed: 21, etag: '"v2"' })
+    await plexo.api.relinkDownload(id, fresh.url(), { force: true })
+    await plexo.waitForHttpStatus('completed', 30_000)
+    const fetched = fresh.chunkRequests().reduce((sum, entry) => sum + entry.bytesSent, 0)
+    expect(fetched).toBeLessThan(SIZE)
   })
 })

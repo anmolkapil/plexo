@@ -65,8 +65,9 @@ export interface IpcContract {
   startNext: { args: [id: string]; result: void }
   /** Moves a queued download one place earlier (-1) or later (1) in the queue. */
   moveInQueue: { args: [id: string, by: -1 | 1]; result: void }
-  /** A fresh link to the same file, for a download whose link stopped working; it resumes. */
-  relinkDownload: { args: [id: string, url: string]; result: void }
+  /** A fresh link to the same file, for a download whose link stopped working; it resumes.
+   * `force`: skip disk byte verification, adopt the new link's validators, and rewind boundary blocks. */
+  relinkDownload: { args: [id: string, url: string, options?: { force?: boolean }]; result: void }
   setDownloadNetwork: { args: [id: string, networkId: string, enabled: boolean]; result: void }
   cancelDownload: { args: [id: string]; result: void }
   /** Removes a download, cancelling one under way. A finished one's file stays, unless

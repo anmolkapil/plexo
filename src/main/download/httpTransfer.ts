@@ -463,6 +463,11 @@ export class HttpTransfer implements Transfer {
     this.servedLinks.clear()
   }
 
+  /** Replaces accepted versions with the download's current requestPayload after a forced link refresh. */
+  resetAcceptedVersion(): void {
+    this.acceptedVersions = [requestedVersion(this.runtime.requestPayload)]
+  }
+
   systemResumed(now: number): void {
     for (const traffic of this.traffic.values()) traffic.aliveAt = now
     for (const self of this.chunkRuntimes.values()) {

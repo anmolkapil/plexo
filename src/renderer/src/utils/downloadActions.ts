@@ -13,6 +13,7 @@ export type ActionId =
   | 'later'
   | 'retry'
   | 'fix'
+  | 'refreshLink'
   | 'again'
   | 'open'
   | 'reveal'
@@ -64,6 +65,12 @@ const appliesTo: Record<ActionId, (item: DownloadItem) => boolean> = {
   later: (item) => !isFinished(item) && item.status === 'queued',
   retry: (item) => isFailed(item) && failureAction(item) === 'retry',
   fix: (item) => isFailed(item) && failureAction(item) === 'fix',
+  refreshLink: (item) =>
+    !isFinished(item) &&
+    item.kind === 'http' &&
+    item.resumable !== false &&
+    (['downloading', 'queued', 'paused'].includes(item.status) ||
+      (item.status === 'error' && item.bytesDownloaded > 0)),
   again: (item) => isFailed(item) && failureAction(item) === 'again',
   open: (item) => isDone(item) && !isMissing(item),
   reveal: (item) => (isDone(item) && !isMissing(item)) || isCancellable(item),
@@ -79,6 +86,7 @@ const SINGLE_ONLY: ReadonlySet<ActionId> = new Set([
   'earlier',
   'later',
   'fix',
+  'refreshLink',
   'again',
   'open',
   'reveal',
@@ -96,6 +104,7 @@ export const ACTION_GROUPS: readonly (readonly ActionId[])[] = [
     'later',
     'retry',
     'fix',
+    'refreshLink',
     'again',
     'open',
     'reveal',
@@ -142,7 +151,8 @@ export const TOOLBAR_PRIORITY: readonly ActionId[] = [
   'reveal',
   'remove',
   'trash',
-  'copy'
+  'copy',
+  'refreshLink'
 ]
 
 /** How many go on the toolbar as buttons. */

@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os'
 import { basename, join } from 'node:path'
 import { expect, test } from '@playwright/test'
 import fc from 'fast-check'
-import { advanceBlock, retractBlock } from '../src/main/download/blockProgress'
+import { advanceBlock, retractBlock, rewindBlocks } from '../src/main/download/blockProgress'
 import { DownloadFile } from '../src/main/download/downloadFile'
 import { reserveDestinationPath } from '../src/main/download/paths'
 import type { HttpBlockState } from '../src/shared/types'
@@ -73,6 +73,41 @@ test.describe('block progress', () => {
         }
       })
     )
+  })
+
+  test('rewindBlocks resets partial blocks and the last N completed blocks', () => {
+    const blocks: HttpBlockState[] = Array.from({ length: 6 }, (_, index): HttpBlockState => ({
+      kind: 'http',
+      index,
+      rangeStart: index * LENGTH,
+      rangeEnd: (index + 1) * LENGTH - 1,
+      status: index < 3 ? 'completed' : index === 3 ? 'downloading' : 'pending',
+      interfaceId: index < 4 ? 'a' : undefined,
+      bytesDownloaded: index < 3 ? LENGTH : index === 3 ? 400 : 0,
+      bytesByInterface: index < 3 ? { a: LENGTH } : index === 3 ? { a: 400 } : {}
+    }))
+
+    expect(rewindBlocks(blocks, 2)).toBe(3)
+    expect(blocks[0]).toMatchObject({
+      status: 'completed',
+      bytesDownloaded: LENGTH,
+      bytesByInterface: { a: LENGTH },
+      interfaceId: 'a'
+    })
+    for (const i of [1, 2, 3]) {
+      expect(blocks[i]).toMatchObject({
+        status: 'pending',
+        bytesDownloaded: 0,
+        bytesByInterface: {},
+        interfaceId: undefined
+      })
+    }
+    expect(blocks[4].status).toBe('pending')
+
+    // Edge cases: N = 0 only clears partials; N > completed count clears all remaining completed.
+    expect(rewindBlocks(blocks, 0)).toBe(0)
+    expect(rewindBlocks(blocks, 10)).toBe(1)
+    expect(blocks[0].status).toBe('pending')
   })
 })
 

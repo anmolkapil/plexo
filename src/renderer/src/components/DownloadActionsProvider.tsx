@@ -25,7 +25,7 @@ export function DownloadActionsProvider({
     items: DownloadItem[]
     clearAll: boolean
   } | null>(null)
-  const [fixing, setFixing] = useState<DownloadState | null>(null)
+  const [fixing, setFixing] = useState<{ download: DownloadState; force: boolean } | null>(null)
   const [managingTrackers, setManagingTrackers] = useState<DownloadState | null>(null)
   const [busy, setBusy] = useState(false)
   const [failure, setFailure] = useState<{ title: string; message: string } | null>(null)
@@ -69,7 +69,10 @@ export function DownloadActionsProvider({
             return fail(cause)
           }
         case 'fix':
-          setFixing(targets[0] as DownloadState)
+          setFixing({ download: targets[0] as DownloadState, force: false })
+          return true
+        case 'refreshLink':
+          setFixing({ download: targets[0] as DownloadState, force: true })
           return true
         case 'trackers':
           setManagingTrackers(targets[0] as DownloadState)
@@ -183,7 +186,11 @@ export function DownloadActionsProvider({
           error={dialogError}
           onConfirm={() => void confirmRemoval()}
         />
-        <FixLinkDialog download={fixing} onClose={() => setFixing(null)} />
+        <FixLinkDialog
+          download={fixing?.download ?? null}
+          force={fixing?.force}
+          onClose={() => setFixing(null)}
+        />
         <TrackersDialog download={managingTrackers} onClose={() => setManagingTrackers(null)} />
         <ActionErrorDialog failure={failure} onClose={() => setFailure(null)} />
       </StateContext.Provider>

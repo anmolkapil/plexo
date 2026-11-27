@@ -50,6 +50,7 @@ import { loadSettings } from '../settings'
 import type { TelegramServiceApi } from '../telegram/service'
 import { addToHistory, findInHistory, removeFromHistory } from './history'
 import { testKnobs } from '../testKnobs'
+import { rewindBlocks } from './blockProgress'
 import { DownloadFile } from './downloadFile'
 import { compareSamples, HttpTransfer, pickedStreams, splittable } from './httpTransfer'
 import { normalizeEtag } from './fileVersion'
@@ -88,7 +89,6 @@ import {
   unwantedBytes,
   updateSpeeds,
   updateTimeLeft,
-  type Transfer,
   type TransferHost,
   type HttpTransferTarget,
   type NzbTransferTarget,
@@ -141,7 +141,7 @@ interface RuntimeFields {
 
 interface HttpDownloadRuntime extends RuntimeFields, HttpTransferTarget {
   kind: 'http'
-  transfer: Transfer
+  transfer: HttpTransfer
 }
 
 interface TorrentDownloadRuntime extends RuntimeFields, TorrentTransferTarget {
@@ -227,6 +227,10 @@ function savedRequest(
     browser: runtime.state.status === 'completed' ? undefined : sealBrowser(browser)
   }
 }
+
+// Bounds every case where a forced link replacement needs to overwrite the frontier against
+// partial or boundary-corrupted data: 4 blocks (32 MiB on 8 MiB-block downloads) plus partial blocks.
+const FORCE_RELINK_REWIND_BLOCKS = 4
 
 const UI_UPDATE_MS = 200
 /** How often a running download takes stock (see run). */
@@ -1500,11 +1504,11 @@ export class DownloadManager {
 
   /** Gives a download whose link stopped working (a signed link ran out, say) a fresh link to the
    * same file, and resumes it from where it stopped. `given`: a link already checked, with the
-   * browser sign-in it came with. */
+   * browser sign-in it came with, or `{ force: true }` to skip byte verification and rewind boundary blocks. */
   async relink(
     id: string,
     url: string,
-    given?: { probe?: HttpProbeResult; browser?: BrowserContext }
+    given?: { probe?: HttpProbeResult; browser?: BrowserContext; force?: boolean }
   ): Promise<void> {
     const runtime = this.runtimes.get(id)
     if (runtime?.kind !== 'http') throw new Error('Only web downloads support replacing a link.')
@@ -1519,10 +1523,20 @@ export class DownloadManager {
     if (runtime.state.resumable === false) {
       throw new Error('This download can’t resume. Start it again.')
     }
-    if (!replaceable()) throw new Error('Pause the download before replacing its link.')
+    const canAutoPause =
+      given?.force === true &&
+      (runtime.state.status === 'downloading' || runtime.state.status === 'queued')
+    if (!replaceable() && !canAutoPause) {
+      throw new Error('Pause the download before replacing its link.')
+    }
     if (this.relinking.has(id)) throw new Error('A new link for this download is being checked.')
     this.relinking.add(id)
     try {
+      if (canAutoPause) {
+        await this.pause(id)
+        if (!replaceable())
+          throw new Error('The download changed before its link could be replaced.')
+      }
       await this.replaceLink(runtime, url, replaceable, given)
     } finally {
       this.relinking.delete(id)
@@ -1533,7 +1547,7 @@ export class DownloadManager {
     runtime: HttpDownloadRuntime,
     url: string,
     replaceable: () => boolean,
-    given?: { probe?: HttpProbeResult; browser?: BrowserContext }
+    given?: { probe?: HttpProbeResult; browser?: BrowserContext; force?: boolean }
   ): Promise<void> {
     await this.adoptLink(runtime, url, replaceable, given)
     this.resume(runtime.state.id)
@@ -1573,8 +1587,9 @@ export class DownloadManager {
     runtime: HttpDownloadRuntime,
     url: string,
     current: () => boolean,
-    given?: { probe?: HttpProbeResult; browser?: BrowserContext }
+    given?: { probe?: HttpProbeResult; browser?: BrowserContext; force?: boolean }
   ): Promise<string> {
+    if (!given?.probe && !webLink(url)) throw new Error('That isn’t a link to a file')
     // A fresh link from the same site usually needs the same sign-in, so the old one carries over
     // unless the browser sent a new one.
     const browser = given?.browser ?? runtime.requestPayload.browser
@@ -1593,13 +1608,17 @@ export class DownloadManager {
     }
     // An ETag or date from another link proves nothing about its bytes: two different files can
     // share them. Once resumed, only a label this download hasn't seen would make it compare
-    // bytes, so they're compared now, before anything from the new link is written.
-    const verdict = await this.compareWithDisk(runtime, probe.finalUrl, browser)
-    if (verdict === 'different') {
-      throw new Error('That link is to a different file: its bytes don’t match what’s downloaded.')
-    }
-    if (verdict === 'unknown') {
-      throw new Error('Plexo couldn’t check that link against what’s downloaded. Try again.')
+    // bytes, so they're compared now, before anything from the new link is written (unless forced).
+    if (!given?.force) {
+      const verdict = await this.compareWithDisk(runtime, probe.finalUrl, browser)
+      if (verdict === 'different') {
+        throw new Error(
+          'That link is to a different file: its bytes don’t match what’s downloaded.'
+        )
+      }
+      if (verdict === 'unknown') {
+        throw new Error('Plexo couldn’t check that link against what’s downloaded. Try again.')
+      }
     }
     if (!current()) throw new Error('The download changed while its new link was checked.')
     // The link given is the one asked for a fresh link next time.
@@ -1609,7 +1628,17 @@ export class DownloadManager {
     runtime.requestPayload.browser = browser
     runtime.state.url = probe.finalUrl
     runtime.state.requestedUrl = requestedUrl
+    if (given?.force) {
+      runtime.requestPayload.etag = probe.etag
+      runtime.requestPayload.lastModified = probe.lastModified
+      runtime.transfer.resetAcceptedVersion()
+      if (splittable(runtime.requestPayload)) {
+        rewindBlocks(runtime.blocks, FORCE_RELINK_REWIND_BLOCKS)
+        recomputeAggregates(runtime.state, runtime.blocks)
+      }
+    }
     await this.persistNow(runtime)
+    if (given?.force) this.pushUpdate(runtime)
     return probe.finalUrl
   }
 
