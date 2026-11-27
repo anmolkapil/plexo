@@ -18,13 +18,17 @@ import type {
 
 /** The request/response half of the IPC surface (every IpcChannels entry except the
  * main->renderer push events, downloadUpdated, networksChanged, magnetCheckStatus, historyChanged,
- * linkReceived and updateStateChanged) — one source of truth for
+ * linkReceived, updateStateChanged and windowMaximizedChanged) — one source of truth for
  * both plexoApi (preload) and registerIpcHandlers (main), so a signature drift between the two
  * is a compile error instead of a runtime one. */
 export interface IpcContract {
   listInterfaces: { args: []; result: NetworkInterfaceInfo[] }
   deviceBindingSupported: { args: []; result: boolean }
   openNetworkSettings: { args: []; result: void }
+  windowMinimize: { args: []; result: void }
+  windowToggleMaximize: { args: []; result: boolean }
+  windowClose: { args: []; result: void }
+  windowIsMaximized: { args: []; result: boolean }
   updateSettings: { args: [patch: AppSettings]; result: void }
   probeUrl: { args: [url: string]; result: ProbeResult }
   chooseDestinationFolder: { args: [defaultPath: string]; result: string | null }

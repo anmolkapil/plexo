@@ -342,6 +342,26 @@ export function registerIpcHandlers(getWindow: () => BrowserWindow | null): Down
   handle('updateState', () => updateState())
   handle('showUpdateMenu', () => showUpdateMenu())
 
+  handle('windowMinimize', () => {
+    const window = getWindow()
+    if (window && !window.isDestroyed()) window.minimize()
+  })
+  handle('windowToggleMaximize', () => {
+    const window = getWindow()
+    if (!window || window.isDestroyed()) return false
+    if (window.isMaximized()) window.unmaximize()
+    else window.maximize()
+    return window.isMaximized()
+  })
+  handle('windowClose', () => {
+    const window = getWindow()
+    if (window && !window.isDestroyed()) window.close()
+  })
+  handle('windowIsMaximized', () => {
+    const window = getWindow()
+    return window && !window.isDestroyed() ? window.isMaximized() : false
+  })
+
   handle('telegramState', () => telegram.authState())
   handle('telegramStartLogin', async (_event, credentials) => {
     await telegram.startLogin(credentials)

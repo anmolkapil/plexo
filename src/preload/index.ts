@@ -36,6 +36,10 @@ const plexoApi = {
   listInterfaces: () => invoke('listInterfaces'),
   deviceBindingSupported: () => invoke('deviceBindingSupported'),
   openNetworkSettings: () => invoke('openNetworkSettings'),
+  windowMinimize: () => invoke('windowMinimize'),
+  windowToggleMaximize: () => invoke('windowToggleMaximize'),
+  windowClose: () => invoke('windowClose'),
+  windowIsMaximized: () => invoke('windowIsMaximized'),
   updateSettings: (patch: AppSettings) => invoke('updateSettings', patch),
   probeUrl: (url: string) => invoke('probeUrl', url),
   chooseDestinationFolder: (defaultPath: string) => invoke('chooseDestinationFolder', defaultPath),
@@ -135,6 +139,12 @@ const plexoApi = {
     const listener = (_event: IpcRendererEvent, status: MagnetCheckStatus): void => callback(status)
     ipcRenderer.on(IpcChannels.magnetCheckStatus, listener)
     return () => ipcRenderer.removeListener(IpcChannels.magnetCheckStatus, listener)
+  },
+
+  onWindowMaximizedChanged: (callback: (maximized: boolean) => void): (() => void) => {
+    const listener = (_event: IpcRendererEvent, maximized: boolean): void => callback(maximized)
+    ipcRenderer.on(IpcChannels.windowMaximizedChanged, listener)
+    return () => ipcRenderer.removeListener(IpcChannels.windowMaximizedChanged, listener)
   }
 }
 

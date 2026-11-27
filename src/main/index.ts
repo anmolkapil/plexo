@@ -11,6 +11,7 @@ import {
 } from 'electron'
 import { join } from 'path'
 import icon from '../../resources/icon-dark.png?asset'
+import { IpcChannels } from '../shared/ipc-channels'
 import { registerIpcHandlers } from './ipc/handlers'
 import { keepsRunningForBrowser, startBridge } from './browserBridge'
 import { acceptedLink, bringForward, linkFromArgs, offerLink } from './openLinks'
@@ -100,8 +101,9 @@ app.on('open-file', (event, path) => {
 const launchLink = linkFromArgs(process.argv)
 if (launchLink) offer(launchLink)
 
-/** The Windows/Linux window controls, in the title bar's colors (main.css's --bg-secondary and
- * --text) for the theme in use, at its height. */
+/** The Linux window controls, in the title bar's colors (main.css's --bg-secondary and
+ * --text) for the theme in use, at its height. Windows renders its own caption controls in
+ * TitleBar.tsx instead of titleBarOverlay to avoid the Windows 10 double caption tooltip bug. */
 function titleBarOverlay(): Electron.TitleBarOverlayOptions {
   const dark = nativeTheme.shouldUseDarkColors
   return {
@@ -125,14 +127,16 @@ function createWindow(): void {
     // (which briefly exposes the raw window background) doesn't flash white.
     backgroundColor: nativeTheme.shouldUseDarkColors ? '#1c1c1e' : '#ffffff',
     ...(process.platform !== 'darwin' ? { icon } : {}),
-    // One title bar on every OS: the renderer's own strip (see TitleBar.tsx), with the OS's
-    // window controls over it — macOS's traffic lights, or the minimize/maximize/close that
-    // Windows and Linux draw over the strip's right end.
+    // One title bar on every OS: the renderer's own strip (see TitleBar.tsx), with macOS's
+    // traffic lights on the left, Linux's titleBarOverlay on the right, and renderer-drawn
+    // Windows caption controls on win32 (avoiding Electron's Windows 10 double caption tooltip).
     titleBarStyle: 'hidden',
     ...(process.platform === 'darwin'
       ? // Center the 14px native buttons in the renderer’s 32px macOS title bar.
         { trafficLightPosition: { x: 16, y: 9 } }
-      : { titleBarOverlay: titleBarOverlay() }),
+      : process.platform === 'linux'
+        ? { titleBarOverlay: titleBarOverlay() }
+        : {}),
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
       // A hidden e2e window would otherwise have its timers throttled.
@@ -180,6 +184,16 @@ function createWindow(): void {
   mainWindow.on('closed', () => {
     mainWindow = null
   })
+
+  if (process.platform === 'win32') {
+    const sendMaximized = (maximized: boolean): void => {
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send(IpcChannels.windowMaximizedChanged, maximized)
+      }
+    }
+    mainWindow.on('maximize', () => sendMaximized(true))
+    mainWindow.on('unmaximize', () => sendMaximized(false))
+  }
 
   mainWindow.webContents.setWindowOpenHandler((details) => {
     // Only hand http(s) links to the OS shell — an arbitrary scheme (e.g. a custom protocol
@@ -256,7 +270,7 @@ app.whenReady().then(async () => {
 
   nativeTheme.on('updated', () => {
     mainWindow?.setBackgroundColor(nativeTheme.shouldUseDarkColors ? '#1c1c1e' : '#ffffff')
-    if (process.platform !== 'darwin') mainWindow?.setTitleBarOverlay(titleBarOverlay())
+    if (process.platform === 'linux') mainWindow?.setTitleBarOverlay(titleBarOverlay())
   })
 
   createWindow()
