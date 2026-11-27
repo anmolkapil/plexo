@@ -10,6 +10,7 @@ import {
 import { autoUpdater } from 'electron-updater'
 import { IpcChannels } from '../shared/ipc-channels'
 import type { UpdateState } from '../shared/types'
+import { tMain } from './i18n'
 import { saveSettings } from './settings'
 
 const CHECK_EVERY_MS = 4 * 60 * 60_000
@@ -73,27 +74,27 @@ function menuItems(): MenuItemConstructorOptions[] {
   if (status === 'ready') {
     // Silent, and opened again after: the installer's own pages were all answered the first time.
     items.push({
-      label: `Restart to Update to ${version}`,
+      label: tMain('updates.restartToUpdate', { version }),
       click: () => autoUpdater.quitAndInstall(true, true)
     })
   } else if (status === 'downloading') {
-    items.push({ label: `Downloading ${version}…`, enabled: false })
+    items.push({ label: tMain('updates.downloading', { version }), enabled: false })
   } else if (status === 'available') {
-    items.push({ label: `Download Plexo ${version}`, click: download })
+    items.push({ label: tMain('updates.download', { version }), click: download })
   } else if (status === 'error') {
     items.push({
-      label: `Get Plexo ${version} from the Website…`,
+      label: tMain('updates.getFromWebsite', { version }),
       click: () => void shell.openExternal(DOWNLOAD_PAGE)
     })
   }
   items.push(
     {
-      label: status === 'checking' ? 'Checking for Updates…' : 'Check for Updates…',
+      label: status === 'checking' ? tMain('updates.checking') : tMain('updates.check'),
       enabled: status === 'idle' || status === 'available' || status === 'error',
       click: () => check(true)
     },
     {
-      label: 'Update Automatically',
+      label: tMain('updates.autoUpdate'),
       type: 'checkbox',
       checked: state.autoUpdate,
       click: (item) => setAutoUpdate(item.checked)
@@ -105,6 +106,10 @@ function menuItems(): MenuItemConstructorOptions[] {
 export function showUpdateMenu(): void {
   const window = getWindow()
   if (window) Menu.buildFromTemplate(menuItems()).popup({ window })
+}
+
+export function refreshUpdateMenus(): void {
+  setAppMenu()
 }
 
 /** Electron's default macOS menu, with the update items under the app's name. */
@@ -151,7 +156,10 @@ export function startUpdater(window: () => BrowserWindow | null, autoUpdate: boo
   autoUpdater.on('checking-for-update', () => set({ status: 'checking' }))
   autoUpdater.on('update-not-available', () => {
     set({ status: 'idle', version: undefined })
-    answer('You’re up to date', `Plexo ${app.getVersion()} is the newest version.`)
+    answer(
+      tMain('updates.upToDateTitle'),
+      tMain('updates.upToDateDetail', { version: app.getVersion() })
+    )
   })
   autoUpdater.on('update-available', ({ version }) => {
     asked = false
@@ -168,7 +176,7 @@ export function startUpdater(window: () => BrowserWindow | null, autoUpdate: boo
     // Before an update is found (offline, GitHub down) there's nothing to show. After, the
     // website still has it — the way an unsigned Mac build, which can't install it, gets it.
     set({ status: state.version ? 'error' : 'idle' })
-    answer('Couldn’t check for updates', 'Check your connection and try again.')
+    answer(tMain('updates.checkFailedTitle'), tMain('updates.checkFailedDetail'))
   })
 
   setAppMenu()

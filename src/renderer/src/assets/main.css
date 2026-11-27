@@ -114,7 +114,9 @@
    property *values* (e.g. --color-accent) without colliding with their names, since only the
    left-hand names below become Tailwind tokens. */
 @theme inline {
-  --font-sans: 'Manrope', -apple-system, 'SF Pro Text', 'Helvetica Neue', Helvetica, sans-serif;
+  --font-sans:
+    'Manrope', -apple-system, 'SF Pro Text', 'Helvetica Neue', Helvetica, 'PingFang SC',
+    'Hiragino Sans GB', 'Microsoft YaHei', 'Noto Sans CJK SC', sans-serif;
   --font-mono: 'Roboto Mono', 'SF Mono', ui-monospace, Menlo, monospace;
 
   --color-background: var(--bg);

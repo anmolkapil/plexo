@@ -10,6 +10,7 @@ import {
   type IpcMainInvokeEvent
 } from 'electron'
 import { reportFailure, reportingAvailability, setReporting } from '../reporting'
+import { FALLBACK_LANGUAGE, isLocaleCode } from '../../shared/i18n'
 import { IpcChannels } from '../../shared/ipc-channels'
 import type { IpcContract } from '../../shared/ipc-contract'
 import {
@@ -40,10 +41,12 @@ import { NetworkMonitor } from '../network/interfaces'
 import {
   canSealPasswords,
   carryOverNetworkPreferences,
+  loadLanguage,
   loadSettings,
   networkPreferencesForWindow,
   saveSettings
 } from '../settings'
+import { changeMainLanguage } from '../i18n'
 import { showUpdateMenu, updateState } from '../updater'
 
 async function openNetworkSettings(): Promise<void> {
@@ -92,7 +95,10 @@ async function freeSpace(dir: string): Promise<number | null> {
   }
 }
 
-export function registerIpcHandlers(getWindow: () => BrowserWindow | null): DownloadManager {
+export function registerIpcHandlers(
+  getWindow: () => BrowserWindow | null,
+  onLanguageChanged?: () => void
+): DownloadManager {
   // The main process keeps the network list, for downloads and the window alike.
   const networks = new NetworkMonitor(async (list) => {
     // First, so no connection opens without a proxy saved under the network's old id.
@@ -147,6 +153,10 @@ export function registerIpcHandlers(getWindow: () => BrowserWindow | null): Down
     if (patch?.themeSource === 'light' || patch?.themeSource === 'dark') {
       nativeTheme.themeSource = patch.themeSource
     }
+    if (isLocaleCode(patch?.language)) {
+      await changeMainLanguage(patch.language)
+      onLanguageChanged?.()
+    }
     const choice = patch?.v1ErrorReporting
     const revision = typeof choice === 'boolean' ? ++privacyRevision : undefined
     if (choice === false) void setReporting(false)
@@ -189,6 +199,7 @@ export function registerIpcHandlers(getWindow: () => BrowserWindow | null): Down
         slowMode: settings.slowMode ?? false,
         slowModeSpeed: settings.slowModeSpeed ?? DEFAULT_SLOW_MODE_SPEED,
         speedUnit: settings.speedUnit ?? 'bytes',
+        language: await loadLanguage(),
         destinationDir: destinationExists ? effectiveDir : undefined,
         defaultDestinationDir: settings.defaultDestinationDir,
         ...(!canSealPasswords() && { noKeychain: true })
@@ -205,7 +216,8 @@ export function registerIpcHandlers(getWindow: () => BrowserWindow | null): Down
         downloadsAtOnce: DOWNLOADS_AT_ONCE.default,
         slowMode: false,
         slowModeSpeed: DEFAULT_SLOW_MODE_SPEED,
-        speedUnit: 'bytes'
+        speedUnit: 'bytes',
+        language: FALLBACK_LANGUAGE
       } satisfies InitialState
     }
   })
