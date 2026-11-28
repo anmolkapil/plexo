@@ -46,6 +46,15 @@ export function expectNzb(state: DownloadState): NzbDownloadState {
   return state
 }
 
+/** Pages through the first-run welcome from wherever it is, keeping the reporting choice shown. */
+export async function finishWelcome(page: Page): Promise<void> {
+  const welcome = page.getByRole('dialog')
+  const next = welcome.getByRole('button', { name: 'Next' })
+  await welcome.waitFor()
+  while (await next.isVisible()) await next.click()
+  await welcome.getByRole('button', { name: 'Start downloading' }).click()
+}
+
 export const PROJECT_ROOT = resolve(__dirname, '..')
 
 /** Every raw Electron launch needs the same CI sandbox policy. */
@@ -166,12 +175,9 @@ export class PlexoApp {
       this.extraEnv.PLEXO_E2E_MANUAL_WELCOME !== '1' &&
       (await this.page.evaluate(() => window.plexo.initialState.v1ErrorReporting === undefined))
     ) {
+      await finishWelcome(this.page)
       await this.page
-        .getByRole('dialog', { name: 'Welcome to Plexo 1.0' })
-        .getByRole('button', { name: 'Continue' })
-        .click()
-      await this.page
-        .getByRole('dialog', { name: 'Welcome to Plexo 1.0' })
+        .getByRole('dialog')
         .waitFor({ state: 'hidden' })
     }
     const session: DownloadState[] = []

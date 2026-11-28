@@ -6,7 +6,7 @@ import { SourceMap } from 'node:module'
 import { join } from 'node:path'
 import { gunzipSync } from 'node:zlib'
 import type { Event } from '@sentry/electron/main'
-import { BLOCK, LAN_ADDRESS, makeDirs, PlexoApp, PROJECT_ROOT } from './fixtures'
+import { BLOCK, finishWelcome, LAN_ADDRESS, makeDirs, PlexoApp, PROJECT_ROOT } from './fixtures'
 import { NewsServer } from './newsServer'
 import { isProbe, Origin } from './origin'
 
@@ -89,7 +89,7 @@ async function privacy(app: PlexoApp): Promise<Locator> {
   await app.page.keyboard.press(process.platform === 'darwin' ? 'Meta+,' : 'Control+,')
   const settings = app.page.getByRole('dialog', { name: 'Settings' })
   await settings.getByRole('button', { name: 'Privacy' }).click()
-  return settings.getByRole('switch', { name: 'Send error reports to Sentry' })
+  return settings.getByRole('switch', { name: 'Send crash reports' })
 }
 
 function verifyMaps(event: Event): Promise<void[]> {
@@ -120,17 +120,18 @@ function verifyMaps(event: Event): Promise<void[]> {
 
 test('consent, live opt-out, offline loss, restart and DNT @smoke', async ({ app, sink }) => {
   await app.launch()
-  const welcome = app.page.getByRole('dialog', { name: 'Welcome to Plexo 1.0' })
+  const welcome = app.page.getByRole('dialog')
+  await welcome.getByRole('button', { name: 'Next' }).click()
   await expect(welcome.getByRole('switch')).toBeChecked()
   await welcome.getByText('What’s sent').click()
-  await expect(welcome.getByText(/Unexpected errors can include/)).toBeVisible()
+  await expect(welcome.getByText(/Your links, files or downloads/)).toBeVisible()
   const refused = (): Promise<void> =>
     expect(
       app.api.probeUrl('http://127.0.0.1:' + sink.port + '/private-link-canary')
     ).rejects.toThrow('403')
   await refused()
   await welcome.getByRole('switch').click()
-  await welcome.getByRole('button', { name: 'Continue' }).click()
+  await finishWelcome(app.page)
   await welcome.waitFor({ state: 'hidden' })
   await refused()
   await app.relaunch()
@@ -180,7 +181,7 @@ test('upgrade and main, renderer and child failures emit only allowlisted envelo
     JSON.stringify({ speedUnit: 'bits' })
   )
   await app.launch()
-  await app.page.getByRole('button', { name: 'Continue' }).click()
+  await finishWelcome(app.page)
   await expect(app.page.getByRole('dialog')).toHaveCount(0)
   expect(
     JSON.parse(await readFile(join(app.dirs.userData, 'app-settings.json'), 'utf8'))
@@ -255,7 +256,7 @@ test('a refused adapter reports once while another finishes the download @smoke'
   const origin = await new Origin({ size: 24 * BLOCK, bytesPerSecond: 256 * 1024 }).start()
   try {
     await app.launch()
-    await app.page.getByRole('button', { name: 'Continue' }).click()
+    await finishWelcome(app.page)
     await expect(app.page.getByRole('dialog')).toHaveCount(0)
     origin.setRule(({ range, from }) =>
       !isProbe(range) && from === '127.0.0.1' ? { status: 403 } : 'ok'
@@ -279,7 +280,7 @@ test('abrupt main exit is reported only on the next consenting launch @smoke', a
   sink
 }) => {
   await app.launch()
-  await app.page.getByRole('button', { name: 'Continue' }).click()
+  await finishWelcome(app.page)
   await expect(app.page.getByRole('dialog')).toHaveCount(0)
   await app.kill()
   await app.launch()
@@ -299,7 +300,7 @@ test('main exceptions, updater errors and no-space setup failures use the same p
   sink
 }) => {
   await app.launch()
-  await app.page.getByRole('button', { name: 'Continue' }).click()
+  await finishWelcome(app.page)
   await expect(app.page.getByRole('dialog')).toHaveCount(0)
   await app.electronApp.evaluate(({ app, dialog }, secret) => {
     // Keep the native fatal-error dialog from blocking the hidden test window.
@@ -355,7 +356,7 @@ for (const step of ['repair', 'unpack'] as const) {
     }).start()
     try {
       await app.launch()
-      await app.page.getByRole('button', { name: 'Continue' }).click()
+      await finishWelcome(app.page)
       await expect(app.page.getByRole('dialog')).toHaveCount(0)
       await app.api.saveUsenetServer({
         host: '127.0.0.1',
@@ -386,7 +387,7 @@ test('failure publishing a completed file preserves the original error and UI ou
   const origin = await new Origin({ size: BLOCK }).start()
   try {
     await app.launch()
-    await app.page.getByRole('button', { name: 'Continue' }).click()
+    await finishWelcome(app.page)
     await expect(app.page.getByRole('dialog')).toHaveCount(0)
     await app.electronApp.evaluate((_electron, message) => {
       const fs = process.getBuiltinModule('node:fs/promises')
@@ -408,15 +409,16 @@ test('failure publishing a completed file preserves the original error and UI ou
   }
 })
 
-test('Continue with Do Not Track saves the displayed off choice; unconfigured builds keep the bridge closed', async ({
+test('Finishing the welcome with Do Not Track saves the displayed off choice; unconfigured builds keep the bridge closed', async ({
   app,
   sink
 }) => {
   await app.launch({ DO_NOT_TRACK: '1' })
-  const toggle = app.page.getByRole('switch', { name: 'Send error reports to Sentry' })
+  await app.page.getByRole('button', { name: 'Next' }).click()
+  const toggle = app.page.getByRole('switch', { name: 'Send crash reports' })
   await expect(toggle).toBeDisabled()
   await expect(toggle).not.toBeChecked()
-  await app.page.getByRole('button', { name: 'Continue' }).click()
+  await finishWelcome(app.page)
   await expect(app.page.getByRole('dialog')).toHaveCount(0)
   await app.relaunch({ DO_NOT_TRACK: '0', PLEXO_E2E_SENTRY_PORT: 'invalid-host:9000' })
   expect(await app.page.evaluate(() => window.plexo.initialState)).toMatchObject({
