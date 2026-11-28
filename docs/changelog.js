@@ -10,6 +10,76 @@
 
   root.PlexoChangelog = [
     {
+      version: 'v1.0.0',
+      items: [
+        {
+          kind: 'new',
+          title: 'Telegram downloads',
+          text: 'Save videos and files from your Telegram Saved Messages.'
+        },
+        {
+          kind: 'new',
+          title: 'Usenet support',
+          text: 'Add an NZB file and Plexo downloads it from your news server, then repairs and unpacks it for you. Add a backup server for anything the main one is missing.'
+        },
+        {
+          kind: 'new',
+          title: 'Just the files you want',
+          text: 'Pick files from a torrent’s folder tree, before it starts or while it runs. You can also see and add trackers.'
+        },
+        {
+          kind: 'new',
+          title: 'Runs in the background',
+          text: 'Close the window and your downloads keep going from the tray. Progress shows on the taskbar, and a finished download opens in its folder.'
+        },
+        {
+          kind: 'new',
+          title: 'Never run out of space',
+          text: 'Plexo shows the free space where you save, and warns you before a download won’t fit.'
+        },
+        {
+          kind: 'new',
+          title: 'Your queue, your order',
+          text: 'Move a queued download up or down, or start it next.'
+        },
+        {
+          kind: 'new',
+          title: 'Find any download',
+          text: 'Search and filter your downloads as you type.'
+        },
+        {
+          kind: 'new',
+          title: 'Refresh a link',
+          text: 'Give a stuck download a fresh link and it carries on from where it was.'
+        },
+        {
+          kind: 'new',
+          title: 'Crash reports',
+          text: 'If something goes wrong, Plexo can send a short report so it can be fixed. Your links, files and networks are never sent. Turn it off anytime in Settings → Privacy.'
+        },
+        {
+          kind: 'improved',
+          title: 'See how your networks combine',
+          text: 'The combine diagram shows each network’s share, and marks when one joins or drops.'
+        },
+        {
+          kind: 'improved',
+          title: 'A default download folder',
+          text: 'Pin the folder new downloads go to.'
+        },
+        {
+          kind: 'faster',
+          title: 'Smoother downloads',
+          text: 'Fewer, larger disk writes, and the window only redraws what changed.'
+        },
+        {
+          kind: 'fixed',
+          title: '27 bugs',
+          text: 'The little things that used to get in your way.'
+        }
+      ]
+    },
+    {
       version: 'v1.0.0-rc.15',
       items: [
         {
