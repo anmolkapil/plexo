@@ -176,9 +176,7 @@ export class PlexoApp {
       (await this.page.evaluate(() => window.plexo.initialState.v1ErrorReporting === undefined))
     ) {
       await finishWelcome(this.page)
-      await this.page
-        .getByRole('dialog')
-        .waitFor({ state: 'hidden' })
+      await this.page.getByRole('dialog').waitFor({ state: 'hidden' })
     }
     const session: DownloadState[] = []
     const updates: DownloadUpdate[] = []

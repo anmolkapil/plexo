@@ -35,7 +35,7 @@ jobs:
         run: npm ci
 
       - name: Build
-        run: npx electron-vite build
+        run: npm run build:app
 
       # The @disk tests mount small tmpfs volumes, which needs passwordless sudo (GitHub's
       # Linux runners have it); elsewhere they skip themselves.
