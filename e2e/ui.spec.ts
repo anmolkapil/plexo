@@ -136,12 +136,15 @@ test.describe('a torrent through the UI', () => {
     plexo,
     dirs
   }) => {
+    // The throttled seeders below need longer than the default to finish the readme.
+    test.slow()
     const swarm = await new Swarm().start()
     try {
       const names = ['Season 1/a.bin', 'Season 1/b.bin', 'Season 2/c.bin', 'readme.txt']
       const files = names.map((name, index) => named(seededBytes(1024 * 1024, 91 + index), name))
-      // Slow enough that nothing is in before the running download's choice is changed.
-      const options = { folder: 'Show', pieceLength: 64 * 1024, uploadLimit: 100 * 1024 }
+      // Slow enough that nothing is in before the running download's choice is changed, even on
+      // slow CI runners: None keeps finished files, so one done early lets it through.
+      const options = { folder: 'Show', pieceLength: 64 * 1024, uploadLimit: 25 * 1024 }
       await swarm.seed(files, options)
       const torrentPath = await torrentFileOnDisk(await swarm.seed(files, options))
       // Main is sent indexes in the torrent's own order, which needn't be the order seeded.
