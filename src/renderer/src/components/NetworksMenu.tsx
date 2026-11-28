@@ -50,7 +50,7 @@ export function NetworksMenu({
             type="button"
             variant="secondary"
             aria-label={networkLabel}
-            className="gap-1.5 px-2 text-[13px] md:gap-2.5 md:px-3"
+            className="min-w-8 gap-1.5 px-2 text-[13px] md:gap-2.5 md:px-3"
           />
         }
       >
