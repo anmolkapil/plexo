@@ -1,5 +1,6 @@
 import { DEFAULT_DOWNLOAD_SCHEDULE, scheduleTime, validSchedule } from '@shared/downloadSchedule'
 import { PrivacyPage } from './ReportingPreference'
+import { UpdatesPage } from './UpdateIndicator'
 import { ScheduleFields } from './ScheduleFields'
 import { DATA_LIMIT_PERIODS, dataUsageLabel, nextDataReset } from '@shared/dataLimits'
 import {
@@ -1009,6 +1010,7 @@ function LimitsEditor({
               : [usenet === null ? 'No server' : shownUsenetEnabled ? 'On' : 'Off']
           )}
           {navItem('privacy', 'var(--text-secondary)', 'Privacy', [])}
+          {navItem('updates', 'var(--text-secondary)', 'Updates', [])}
           <div className={navLabelClass}>Networks</div>
           {interfaces.map((iface) => {
             const visual = networkVisual(iface.id, iface.kind, iface.displayName)
@@ -1029,6 +1031,8 @@ function LimitsEditor({
         <fieldset disabled={saving} className="min-h-0 min-w-0 flex-1 overflow-y-auto px-4 py-3">
           {page === 'privacy' ? (
             <PrivacyPage />
+          ) : page === 'updates' ? (
+            <UpdatesPage />
           ) : page === USENET_PAGE ? (
             <UsenetPage
               server={usenet}

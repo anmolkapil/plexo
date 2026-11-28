@@ -74,8 +74,13 @@ export interface IpcContract {
    * `trashFile`: then it goes to the Trash. */
   removeDownload: { args: [id: string, options?: { trashFile?: boolean }]; result: void }
   updateState: { args: []; result: UpdateState }
-  /** The update menu, as a native menu at the pointer. */
-  showUpdateMenu: { args: []; result: void }
+  /** Downloads the update found while automatic updates are off. */
+  downloadUpdate: { args: []; result: void }
+  /** Installs a downloaded update by restarting Plexo. */
+  restartToUpdate: { args: []; result: void }
+  /** Answers with a dialog even when there's nothing new. */
+  checkForUpdates: { args: []; result: void }
+  setAutoUpdate: { args: [on: boolean]; result: void }
   /** Oldest first: every link not yet started or dismissed. */
   pendingLinks: { args: []; result: PendingLink[] }
   /** Resumes the failed download a link was matched to, from that link (see relinkDownload). */

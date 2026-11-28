@@ -44,7 +44,13 @@ import {
   networkPreferencesForWindow,
   saveSettings
 } from '../settings'
-import { showUpdateMenu, updateState } from '../updater'
+import {
+  checkForUpdates,
+  downloadUpdate,
+  restartToUpdate,
+  setAutoUpdate,
+  updateState
+} from '../updater'
 
 async function openNetworkSettings(): Promise<void> {
   if (process.platform === 'win32') {
@@ -342,7 +348,10 @@ export function registerIpcHandlers(getWindow: () => BrowserWindow | null): Down
   })
 
   handle('updateState', () => updateState())
-  handle('showUpdateMenu', () => showUpdateMenu())
+  handle('downloadUpdate', () => downloadUpdate())
+  handle('restartToUpdate', () => restartToUpdate())
+  handle('checkForUpdates', () => checkForUpdates())
+  handle('setAutoUpdate', (_event, on) => setAutoUpdate(on === true))
 
   handle('telegramState', () => telegram.authState())
   handle('telegramStartLogin', async (_event, credentials) => {

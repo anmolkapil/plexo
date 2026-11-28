@@ -9,16 +9,15 @@ import {
 } from 'electron'
 import { autoUpdater } from 'electron-updater'
 import { IpcChannels } from '../shared/ipc-channels'
+import { DOWNLOAD_PAGE } from '../shared/links'
 import type { UpdateState } from '../shared/types'
 import { saveSettings } from './settings'
 
 const CHECK_EVERY_MS = 4 * 60 * 60_000
-/** Where an update the app couldn't install itself is downloaded from instead. */
-const DOWNLOAD_PAGE = 'https://getplexo.app/'
 
 let state: UpdateState = { status: 'idle', autoUpdate: true }
 let getWindow: () => BrowserWindow | null = () => null
-/** A check asked for from the menu answers even when there's nothing new. */
+/** A check the user asked for answers even when there's nothing new. */
 let asked = false
 
 export function updateState(): UpdateState {
@@ -39,13 +38,13 @@ function answer(message: string, detail?: string): void {
   void dialog.showMessageBox({ message, detail })
 }
 
-function check(fromMenu = false): void {
+function check(byUser = false): void {
   const { status } = state
   // A failed install isn't retried on a timer: on an unsigned Mac it would fail again, after
   // downloading the whole update again.
   if (status === 'checking' || status === 'downloading' || status === 'ready') return
-  if (status === 'error' && !fromMenu) return
-  asked = fromMenu
+  if (status === 'error' && !byUser) return
+  asked = byUser
   // A failure is reported by the 'error' event too. Unpackaged (dev, e2e), this does nothing.
   autoUpdater.checkForUpdates().catch(() => {})
 }
@@ -55,7 +54,7 @@ function download(): void {
   autoUpdater.downloadUpdate().catch(() => {})
 }
 
-function setAutoUpdate(on: boolean): void {
+export function setAutoUpdate(on: boolean): void {
   autoUpdater.autoDownload = on
   set({ autoUpdate: on })
   saveSettings({ autoUpdate: on }).catch((error) => {
@@ -65,17 +64,13 @@ function setAutoUpdate(on: boolean): void {
   if (on && state.status === 'available') download()
 }
 
-/** The same items in the macOS app menu and in the menu the status bar's update button opens —
- * Windows and Linux windows show no menu bar, so that button is their only way to these. */
+/** The macOS app menu's update items. Windows and Linux windows show no menu bar, so Settings →
+ * Updates offers the last two too, and the status bar's button the restart. */
 function menuItems(): MenuItemConstructorOptions[] {
   const { status, version } = state
   const items: MenuItemConstructorOptions[] = []
   if (status === 'ready') {
-    // Silent, and opened again after: the installer's own pages were all answered the first time.
-    items.push({
-      label: `Restart to Update to ${version}`,
-      click: () => autoUpdater.quitAndInstall(true, true)
-    })
+    items.push({ label: `Restart to Update to ${version}`, click: restartToUpdate })
   } else if (status === 'downloading') {
     items.push({ label: `Downloading ${version}…`, enabled: false })
   } else if (status === 'available') {
@@ -102,9 +97,17 @@ function menuItems(): MenuItemConstructorOptions[] {
   return items
 }
 
-export function showUpdateMenu(): void {
-  const window = getWindow()
-  if (window) Menu.buildFromTemplate(menuItems()).popup({ window })
+export function checkForUpdates(): void {
+  check(true)
+}
+
+export function downloadUpdate(): void {
+  if (state.status === 'available') download()
+}
+
+export function restartToUpdate(): void {
+  // Silent, and opened again after: the installer's own pages were all answered the first time.
+  if (state.status === 'ready') autoUpdater.quitAndInstall(true, true)
 }
 
 /** Electron's default macOS menu, with the update items under the app's name. */

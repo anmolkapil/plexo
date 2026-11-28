@@ -71,7 +71,10 @@ const plexoApi = {
   removeDownload: (downloadId: string, options?: { trashFile?: boolean }) =>
     invoke('removeDownload', downloadId, options),
   updateState: () => invoke('updateState'),
-  showUpdateMenu: () => invoke('showUpdateMenu'),
+  downloadUpdate: () => invoke('downloadUpdate'),
+  restartToUpdate: () => invoke('restartToUpdate'),
+  checkForUpdates: () => invoke('checkForUpdates'),
+  setAutoUpdate: (on: boolean) => invoke('setAutoUpdate', on),
   pendingLinks: () => invoke('pendingLinks'),
   resumeFromLink: (linkId: string, downloadId: string) =>
     invoke('resumeFromLink', linkId, downloadId),
