@@ -103,7 +103,6 @@ export function PrivacyPage(): React.JSX.Element {
         disabled={saving}
         change={(choice) => void change(choice)}
       />
-      <p className="text-sm text-muted-foreground">Changes to reporting apply immediately.</p>
       {error && <p role="alert">Couldn’t save this preference. Try again.</p>}
     </div>
   )
