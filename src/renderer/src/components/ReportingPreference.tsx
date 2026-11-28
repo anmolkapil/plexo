@@ -194,7 +194,7 @@ export function WelcomeDialog(): React.JSX.Element {
               ))}
             </ul>
             <p className="text-sm text-muted-foreground">
-              We fixed the little things that used to get in your way: 26 bugs fixed and 2 speed
+              We fixed the little things that used to get in your way: 27 bugs fixed and 2 speed
               boosts.
             </p>
           </>
